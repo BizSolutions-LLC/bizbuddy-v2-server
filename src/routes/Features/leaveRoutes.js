@@ -15,6 +15,7 @@ const {
   deleteLeave,
   getBalance,
   listBalances,
+  getAffectedSchedules,
 } = require("@controllers/Features/leaveController");
 
 const { getAvailablePolicies } = require("@controllers/Features/leavePolicyController");
@@ -73,6 +74,13 @@ router.delete(
   authenticate,
   authorizeRoles("admin", "supervisor", "superadmin"),
   deleteLeave
+);
+
+router.get(
+  "/affected-schedules",
+  authenticate,
+  authorizeRoles("employee", "admin", "supervisor", "superadmin"),
+  getAffectedSchedules
 );
 
 router.get(
