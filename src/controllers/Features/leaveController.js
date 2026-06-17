@@ -50,6 +50,9 @@ async function _attachPolicyNames(leaves) {
 
 // ─── Deduct leave balance (shared between single and final approval) ──────────
 async function _deductBalance(leave, policy, companyId) {
+  // Unpaid leave — no balance deduction needed
+  if (!leave.isPaid) return { error: false, requestedHours: 0 };
+
   const requestedHours = await calcRequestedHours(
     leave.userId,
     leave.startDate,
@@ -81,7 +84,7 @@ async function _deductBalance(leave, policy, companyId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const submitLeaveRequest = async (req, res) => {
-  const { type, fromDate, toDate, approverId, leaveReason, isPaid } = req.body;
+  const { type, fromDate, toDate, approverId, leaveReason, isPaid, affectedShiftIds } = req.body;
 
   if (!type || !fromDate || !toDate || !approverId)
     return res.status(400).json({ message: "All fields are required." });
@@ -107,6 +110,34 @@ const submitLeaveRequest = async (req, res) => {
   if (!policy)
     return res.status(400).json({ message: "Leave policy not found for this type." });
 
+  // Snapshot the affected shift details if IDs were provided
+  let affectedShifts = null;
+  if (Array.isArray(affectedShiftIds) && affectedShiftIds.length > 0) {
+    const shifts = await prisma.userShift.findMany({
+      where: { id: { in: affectedShiftIds }, userId: req.user.id },
+      select: {
+        id: true,
+        assignedDate: true,
+        shift: { select: { shiftName: true, startTime: true, endTime: true, crossesMidnight: true } },
+      },
+    });
+    affectedShifts = shifts.map((us) => {
+      const s = us.shift;
+      let scheduledHours = null;
+      if (s) {
+        let hrs = (s.endTime.getTime() - s.startTime.getTime()) / 36e5;
+        if (s.crossesMidnight || hrs < 0) hrs += 24;
+        scheduledHours = +hrs.toFixed(2);
+      }
+      return {
+        userShiftId:   us.id,
+        assignedDate:  us.assignedDate,
+        shiftName:     s?.shiftName ?? null,
+        scheduledHours,
+      };
+    });
+  }
+
   const data = await prisma.leave.create({
     data: {
       userId:     req.user.id,
@@ -117,6 +148,7 @@ const submitLeaveRequest = async (req, res) => {
       status:     "pending",
       isPaid:     isPaid !== undefined ? Boolean(isPaid) : true,
       leaveReason,
+      ...(affectedShifts !== null && { affectedShifts }),
     },
   });
 
@@ -656,6 +688,63 @@ const listBalances = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+const getAffectedSchedules = async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate)
+    return res.status(400).json({ message: "startDate and endDate are required." });
+
+  if (new Date(startDate) > new Date(endDate))
+    return res.status(400).json({ message: "startDate cannot be after endDate." });
+
+  const userShifts = await prisma.userShift.findMany({
+    where: {
+      userId:       req.user.id,
+      assignedDate: {
+        gte: new Date(startDate),
+        lte: new Date(endDate),
+      },
+      status: { not: "cancelled" },
+    },
+    select: {
+      id:          true,
+      assignedDate: true,
+      shift: {
+        select: {
+          shiftName:      true,
+          startTime:      true,
+          endTime:        true,
+          crossesMidnight: true,
+        },
+      },
+    },
+    orderBy: { assignedDate: "asc" },
+  });
+
+  const data = userShifts.map((us) => {
+    const s = us.shift;
+    let scheduledHours = null;
+    if (s) {
+      let hrs = (s.endTime.getTime() - s.startTime.getTime()) / 36e5;
+      if (s.crossesMidnight || hrs < 0) hrs += 24;
+      scheduledHours = +hrs.toFixed(2);
+    }
+    return {
+      userShiftId:    us.id,
+      assignedDate:   us.assignedDate,
+      shiftName:      s?.shiftName ?? null,
+      startTime:      s?.startTime ?? null,
+      endTime:        s?.endTime ?? null,
+      crossesMidnight: s?.crossesMidnight ?? false,
+      scheduledHours,
+    };
+  });
+
+  return res.json({ data });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 module.exports = {
   submitLeaveRequest,
   getUserLeaves,
@@ -667,4 +756,5 @@ module.exports = {
   getLeavesForApprover,
   getBalance,
   listBalances,
+  getAffectedSchedules,
 };

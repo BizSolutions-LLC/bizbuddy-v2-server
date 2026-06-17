@@ -47,12 +47,8 @@ const deletePolicy = async (req, res) => {
 
 const getAvailablePolicies = async (req, res) => {
   try {
-    console.log('Fetching policies for user:', req.user.id, 'company:', req.user.companyId);
-    
     const policies = await prisma.leavePolicy.findMany({
-      where: { 
-        companyId: req.user.companyId 
-      },
+      where: { companyId: req.user.companyId },
       select: {
         id: true,
         leaveType: true,
@@ -63,17 +59,30 @@ const getAvailablePolicies = async (req, res) => {
         carryOverLimit: true,
         negativeAllowed: true,
         createdAt: true,
-        updatedAt: true
+        updatedAt: true,
+        balances: {
+          where: { userId: req.user.id },
+          select: { balanceHours: true },
+        },
       },
-      orderBy: {
-        leaveType: 'asc' 
-      }
+      orderBy: { leaveType: 'asc' },
     });
-        
-    res.json({
-      success: true,
-      data: policies
-    });
+
+    const data = policies.map((p) => ({
+      id:               p.id,
+      leaveType:        p.leaveType,
+      annualAllocation: p.annualAllocation,
+      accrualUnit:      p.accrualUnit,
+      accrualFrequency: p.accrualFrequency,
+      carryOverAllowed: p.carryOverAllowed,
+      carryOverLimit:   p.carryOverLimit,
+      negativeAllowed:  p.negativeAllowed,
+      createdAt:        p.createdAt,
+      updatedAt:        p.updatedAt,
+      balanceHours:     p.balances[0] ? Number(p.balances[0].balanceHours) : 0,
+    }));
+
+    res.json({ success: true, data });
   } catch (error) {
     console.error('Error fetching available policies:', error);
     res.status(500).json({

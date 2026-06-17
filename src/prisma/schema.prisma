@@ -1091,6 +1091,7 @@ model Leave {
   approverComments          String?
   secondaryApproverId       String?
   secondaryApproverComments String?
+  affectedShifts            Json?
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   approver         User?    @relation("approver", fields: [approverId], references: [id])
