@@ -1,4 +1,10 @@
 // server.js
+// Node 22+ removed SlowBuffer; legacy jwa/buffer-equal-constant-time still expects it.
+const buffer = require("buffer");
+if (!buffer.SlowBuffer) {
+  buffer.SlowBuffer = buffer.Buffer;
+}
+
 require("module-alias/register");
 const dotenv = require("dotenv");
 dotenv.config();
