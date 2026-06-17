@@ -4,6 +4,7 @@ const { prisma } = require("@config/connection");
 
 const VALIDATION_RULES = {
   MAX_LABEL_LENGTH: 100,
+  MAX_DEDUCTION_TYPES: 50,
   VALID_PAY_FREQUENCIES: ['weekly', 'biweekly', 'semimonthly', 'monthly'],
 };
 
@@ -84,6 +85,7 @@ exports.getCompanySettings = async (req, res) => {
           ptoLabel: 'PTO',
           futaEnabled: false,
           sutaEnabled: false,
+          futaRate: 7,
         }
       });
     }
@@ -122,6 +124,7 @@ exports.getCompanySettings = async (req, res) => {
           ptoLabel: payrollConfig.ptoLabel,
           futaEnabled: payrollConfig.futaEnabled,
           sutaEnabled: payrollConfig.sutaEnabled,
+          futaRate: parseFloat(payrollConfig.futaRate),
         },
         earningTypes: earningTypes.map(et => ({
           id: et.id,
@@ -158,7 +161,7 @@ exports.getCompanySettings = async (req, res) => {
 exports.updatePayrollConfig = async (req, res) => {
   try {
     const { companyId } = req.user;
-    const { payFrequency, ptoEnabled, ptoLabel, futaEnabled, sutaEnabled } = req.body;
+    const { payFrequency, ptoEnabled, ptoLabel, futaEnabled, sutaEnabled, futaRate } = req.body;
 
     if (!companyId) {
       return res.status(400).json({ 
@@ -196,6 +199,16 @@ exports.updatePayrollConfig = async (req, res) => {
     if (ptoLabel) updateData.ptoLabel = ptoLabel.trim();
     if (futaEnabled !== undefined) updateData.futaEnabled = Boolean(futaEnabled);
     if (sutaEnabled !== undefined) updateData.sutaEnabled = Boolean(sutaEnabled);
+    if (futaRate !== undefined) {
+      const rate = parseFloat(futaRate);
+      if (Number.isNaN(rate) || rate < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid non-negative futaRate is required.",
+        });
+      }
+      updateData.futaRate = rate;
+    }
 
     // Update or create
     const payrollConfig = await prisma.payrollConfiguration.upsert({
@@ -208,6 +221,10 @@ exports.updatePayrollConfig = async (req, res) => {
         ptoLabel: ptoLabel?.trim() || 'PTO',
         futaEnabled: futaEnabled !== undefined ? Boolean(futaEnabled) : false,
         sutaEnabled: sutaEnabled !== undefined ? Boolean(sutaEnabled) : false,
+        futaRate:
+          futaRate !== undefined && !Number.isNaN(parseFloat(futaRate))
+            ? parseFloat(futaRate)
+            : 7,
       }
     });
 
@@ -221,6 +238,7 @@ exports.updatePayrollConfig = async (req, res) => {
         ptoLabel: payrollConfig.ptoLabel,
         futaEnabled: payrollConfig.futaEnabled,
         sutaEnabled: payrollConfig.sutaEnabled,
+        futaRate: parseFloat(payrollConfig.futaRate),
       }
     });
 
@@ -544,43 +562,39 @@ exports.createDeductionType = async (req, res) => {
     const { code, label, isPreTax = false } = req.body;
 
     if (!companyId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: "Company ID is required." 
+        message: "Company ID is required.",
       });
     }
 
-    // Validate code
     const codeValidation = validateCode(code);
     if (!codeValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: codeValidation.error
+        message: codeValidation.error,
       });
     }
 
-    // Validate label
     const labelValidation = validateLabel(label);
     if (!labelValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: labelValidation.error
+        message: labelValidation.error,
       });
     }
 
-    // Check max limit
     const count = await prisma.deductionType.count({
-      where: { companyId }
+      where: { companyId },
     });
 
     if (count >= VALIDATION_RULES.MAX_DEDUCTION_TYPES) {
       return res.status(400).json({
         success: false,
-        message: `Maximum ${VALIDATION_RULES.MAX_DEDUCTION_TYPES} deduction types allowed per company.`
+        message: `Maximum ${VALIDATION_RULES.MAX_DEDUCTION_TYPES} deduction types allowed per company.`,
       });
     }
 
-    // Create deduction type
     const deductionType = await prisma.deductionType.create({
       data: {
         companyId,
@@ -588,7 +602,7 @@ exports.createDeductionType = async (req, res) => {
         label: label.trim(),
         isPreTax: Boolean(isPreTax),
         enabled: true,
-      }
+      },
     });
 
     return res.status(201).json({
@@ -600,23 +614,22 @@ exports.createDeductionType = async (req, res) => {
         label: deductionType.label,
         isPreTax: deductionType.isPreTax,
         enabled: deductionType.enabled,
-      }
+      },
     });
-
   } catch (err) {
     console.error("createDeductionType error:", err);
 
-    if (err.code === 'P2002') {
+    if (err.code === "P2002") {
       return res.status(400).json({
         success: false,
-        message: "A deduction type with this code already exists."
+        message: "A deduction type with this code already exists.",
       });
     }
 
-    return res.status(500).json({ 
+    return res.status(500).json({
       success: false,
       message: "Internal server error.",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 };
@@ -632,25 +645,23 @@ exports.updateDeductionType = async (req, res) => {
     const { code, label, isPreTax, enabled } = req.body;
 
     if (!companyId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: "Company ID is required." 
+        message: "Company ID is required.",
       });
     }
 
-    // Verify ownership
     const existing = await prisma.deductionType.findFirst({
-      where: { id, companyId }
+      where: { id, companyId },
     });
 
     if (!existing) {
       return res.status(404).json({
         success: false,
-        message: "Deduction type not found."
+        message: "Deduction type not found.",
       });
     }
 
-    // Build update data
     const updateData = {};
 
     if (code !== undefined) {
@@ -658,7 +669,7 @@ exports.updateDeductionType = async (req, res) => {
       if (!codeValidation.valid) {
         return res.status(400).json({
           success: false,
-          message: codeValidation.error
+          message: codeValidation.error,
         });
       }
       updateData.code = code.toLowerCase().trim();
@@ -669,7 +680,7 @@ exports.updateDeductionType = async (req, res) => {
       if (!labelValidation.valid) {
         return res.status(400).json({
           success: false,
-          message: labelValidation.error
+          message: labelValidation.error,
         });
       }
       updateData.label = label.trim();
@@ -678,10 +689,9 @@ exports.updateDeductionType = async (req, res) => {
     if (isPreTax !== undefined) updateData.isPreTax = Boolean(isPreTax);
     if (enabled !== undefined) updateData.enabled = Boolean(enabled);
 
-    // Update
     const deductionType = await prisma.deductionType.update({
       where: { id },
-      data: updateData
+      data: updateData,
     });
 
     return res.status(200).json({
@@ -693,23 +703,22 @@ exports.updateDeductionType = async (req, res) => {
         label: deductionType.label,
         isPreTax: deductionType.isPreTax,
         enabled: deductionType.enabled,
-      }
+      },
     });
-
   } catch (err) {
     console.error("updateDeductionType error:", err);
 
-    if (err.code === 'P2002') {
+    if (err.code === "P2002") {
       return res.status(400).json({
         success: false,
-        message: "A deduction type with this code already exists."
+        message: "A deduction type with this code already exists.",
       });
     }
 
-    return res.status(500).json({ 
+    return res.status(500).json({
       success: false,
       message: "Internal server error.",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 };
@@ -724,41 +733,38 @@ exports.deleteDeductionType = async (req, res) => {
     const { id } = req.params;
 
     if (!companyId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: "Company ID is required." 
+        message: "Company ID is required.",
       });
     }
 
-    // Verify ownership
     const existing = await prisma.deductionType.findFirst({
-      where: { id, companyId }
+      where: { id, companyId },
     });
 
     if (!existing) {
       return res.status(404).json({
         success: false,
-        message: "Deduction type not found."
+        message: "Deduction type not found.",
       });
     }
 
-    // Soft delete (set enabled to false)
     await prisma.deductionType.update({
       where: { id },
-      data: { enabled: false }
+      data: { enabled: false },
     });
 
     return res.status(200).json({
       success: true,
-      message: "Deduction type disabled successfully"
+      message: "Deduction type disabled successfully",
     });
-
   } catch (err) {
     console.error("deleteDeductionType error:", err);
-    return res.status(500).json({ 
+    return res.status(500).json({
       success: false,
       message: "Internal server error.",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 };
