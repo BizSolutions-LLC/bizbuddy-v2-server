@@ -258,15 +258,35 @@ async function approveSingle(approvalId, {
   let finalClockIn  = editedClockIn  ? new Date(editedClockIn)  : new Date(timeLog.timeIn);
   let finalClockOut = editedClockOut ? new Date(editedClockOut) : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
   let scheduledHours = null;
+  const rawClockIn  = new Date(timeLog.timeIn);
+
+  const localDateStr        = moment.tz(timeLog.timeIn, companyTz).format("YYYY-MM-DD");
+  const dateOnlyForSchedule = moment.tz(timeLog.timeIn, companyTz).startOf("day").toDate();
+
+  const userShift = await fetchScheduleForDate(
+    timeLog.userId, dateOnlyForSchedule, timeLog.user?.departmentId, companyId, localDateStr
+  );
 
   if (approvalMode === "raw") {
-    // ── APPROVE RAW: honour actual punch times, no schedule snapping ──────────
-    // Times are already set to raw timeIn/timeOut above — just compute hours.
+    // ── APPROVE RAW: grace-period snap affects computation only ──────────────
+    // The raw punch time (timeIn) is preserved in the DB and shown as-is.
+    // If clock-in falls within the grace window, hours are credited from the
+    // scheduled start — but the displayed clock-in remains the actual punch.
+    if (userShift?.shift) {
+      const startTime        = userShift.customStartTime || userShift.shift.startTime;
+      const tz               = userShift.shift.timeZone  || companyTz;
+      const scheduledClockIn = combineDateTime(localDateStr, startTime, tz);
+
+      if (finalClockIn > scheduledClockIn) {
+        const rawLateMs = finalClockIn - scheduledClockIn;
+        if (rawLateMs <= graceMs) finalClockIn = scheduledClockIn;
+      }
+    }
+
     scheduledHours = finalClockIn && finalClockOut
       ? calculateHours(finalClockIn, finalClockOut)
       : null;
 
-    // Mark approved; preserve originals but do NOT overwrite timeIn/timeOut.
     await prisma.timeLog.update({
       where: { id: timeLog.id },
       data: {
@@ -277,13 +297,6 @@ async function approveSingle(approvalId, {
     });
   } else {
     // ── APPROVE SCHEDULE (default): snap to shift schedule ────────────────────
-    const localDateStr        = moment.tz(timeLog.timeIn, companyTz).format("YYYY-MM-DD");
-    const dateOnlyForSchedule = moment.tz(timeLog.timeIn, companyTz).startOf("day").toDate();
-
-    const userShift = await fetchScheduleForDate(
-      timeLog.userId, dateOnlyForSchedule, timeLog.user?.departmentId, companyId, localDateStr
-    );
-
     if (userShift?.shift) {
       const startTime = userShift.customStartTime || userShift.shift.startTime;
       const endTime   = userShift.customEndTime   || userShift.shift.endTime;
@@ -342,7 +355,7 @@ async function approveSingle(approvalId, {
       status:           "approved",
       approvedBy:       userId,
       approvedAt:       new Date(),
-      approvedClockIn:  finalClockIn,
+      approvedClockIn:  approvalMode === "raw" ? rawClockIn : finalClockIn,
       approvedClockOut: finalClockOut,
       scheduledHours:   scheduledHours != null ? parseFloat(scheduledHours.toFixed(2)) : null,
       actualHours:      actualHours    != null ? parseFloat(actualHours.toFixed(2))    : null,
@@ -477,9 +490,28 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
       let finalClockIn  = new Date(timeLog.timeIn);
       let finalClockOut = timeLog.timeOut ? new Date(timeLog.timeOut) : null;
       let scheduledHours = null;
+      const rawClockIn  = new Date(timeLog.timeIn);
+
+      const localDateStr        = moment.tz(timeLog.timeIn, companyTz).format("YYYY-MM-DD");
+      const dateOnlyForSchedule = moment.tz(timeLog.timeIn, companyTz).startOf("day").toDate();
+
+      const userShift = await fetchScheduleForDate(
+        timeLog.userId, dateOnlyForSchedule, timeLog.user?.departmentId, companyId, localDateStr
+      );
 
       if (approvalMode === "raw") {
-        // ── APPROVE RAW: honour actual punch times, no schedule snapping ──────
+        // ── APPROVE RAW: grace-period snap affects computation only ───────────
+        if (userShift?.shift) {
+          const startTime        = userShift.customStartTime || userShift.shift.startTime;
+          const tz               = userShift.shift.timeZone  || companyTz;
+          const scheduledClockIn = combineDateTime(localDateStr, startTime, tz);
+
+          if (finalClockIn > scheduledClockIn) {
+            const rawLateMs = finalClockIn - scheduledClockIn;
+            if (rawLateMs <= graceMs) finalClockIn = scheduledClockIn;
+          }
+        }
+
         scheduledHours = finalClockIn && finalClockOut
           ? calculateHours(finalClockIn, finalClockOut)
           : null;
@@ -494,13 +526,6 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
         });
       } else {
         // ── APPROVE SCHEDULE (default): snap to shift schedule ────────────────
-        const localDateStr        = moment.tz(timeLog.timeIn, companyTz).format("YYYY-MM-DD");
-        const dateOnlyForSchedule = moment.tz(timeLog.timeIn, companyTz).startOf("day").toDate();
-
-        const userShift = await fetchScheduleForDate(
-          timeLog.userId, dateOnlyForSchedule, timeLog.user?.departmentId, companyId, localDateStr
-        );
-
         if (userShift?.shift) {
           const startTime = userShift.customStartTime || userShift.shift.startTime;
           const endTime   = userShift.customEndTime   || userShift.shift.endTime;
@@ -545,7 +570,7 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
           status:           "approved",
           approvedBy:       userId,
           approvedAt:       new Date(),
-          approvedClockIn:  finalClockIn,
+          approvedClockIn:  approvalMode === "raw" ? rawClockIn : finalClockIn,
           approvedClockOut: finalClockOut,
           scheduledHours:   scheduledHours != null ? parseFloat(scheduledHours.toFixed(2)) : null,
           actualHours:      actualHours    != null ? parseFloat(actualHours.toFixed(2))    : null,
