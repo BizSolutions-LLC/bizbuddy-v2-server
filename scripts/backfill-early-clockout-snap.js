@@ -1,7 +1,7 @@
 // Backfill: apply early clock-out snap to all affected logs (BB-024)
 // Company : cmnegwuxm0004rf7fzo6wjrw2
-// Period  : 2026-05-13 → 2026-05-26
-// Grace   : 20 minutes (default)
+// Period  : 2026-05-13 → 2026-06-09
+// Grace   : 45 minutes
 //
 // STEP 1 — Run the estimate script first to confirm count.
 // STEP 2 — Run this script. A rollback SQL file is written before any changes.
@@ -20,8 +20,8 @@ const { computeTimeLogSummary } = require("@services/timeLogComputeService");
 
 const COMPANY_ID  = "cmnegwuxm0004rf7fzo6wjrw2";
 const DATE_FROM   = new Date("2026-05-13T00:00:00.000Z");
-const DATE_TO     = new Date("2026-05-26T23:59:59.999Z");
-const GRACE_MIN   = 20;
+const DATE_TO     = new Date("2026-06-09T23:59:59.999Z");
+const GRACE_MIN   = 45;
 
 async function main() {
   // ── 1. Resolve PM shift end ──────────────────────────────────────────────────

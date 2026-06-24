@@ -574,11 +574,14 @@ async function computeTimeLogSummary(timeLogId) {
 
   if (!isDriverLog) {
     // ── Regular path ──────────────────────────────────────────────────────────
-    // Snap effective start to shiftStart only when within the early grace window.
-    // isTooEarlyPunch = true means the employee clocked in too far before shift start —
-    // their actual timeIn is kept so the inflated hours are visible for admin review.
-    // Falls back to raw timeIn when no shift is assigned (shiftStart = null).
-    const effectiveTimeIn = !isTooEarlyPunch && shiftStart && timeIn < shiftStart
+    // Snap effective start to shiftStart in two cases:
+    //   1. Early clock-in within the early grace window (timeIn < shiftStart, not too early)
+    //   2. Late clock-in within the grace period (timeIn > shiftStart but within graceMs)
+    // isTooEarlyPunch = true means too far before shift — raw timeIn is kept for admin review.
+    // The stored timeIn is NEVER modified here; only the local effectiveTimeIn changes.
+    const lateByMs         = shiftStart ? Math.max(0, timeIn.getTime() - shiftStart.getTime()) : 0;
+    const isLateWithinGrace = lateByMs > 0 && lateByMs <= graceMs;
+    const effectiveTimeIn  = shiftStart && ((!isTooEarlyPunch && timeIn < shiftStart) || isLateWithinGrace)
       ? shiftStart
       : timeIn;
     const effectiveMs  = timeOut.getTime() - effectiveTimeIn.getTime();

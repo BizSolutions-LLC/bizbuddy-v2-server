@@ -33,17 +33,36 @@ const adjustBalance = async (req, res) => {
 
   const out = [];
   for (const pol of policies) {
+    const existing = await prisma.leaveBalance.findUnique({
+      where: { userId_policyId: { userId: targetUserId, policyId: pol.id } },
+    });
+    const balanceBefore = existing ? Number(existing.balanceHours) : 0;
+    const balanceAfter  = hours > 0 ? balanceBefore + hours : Math.max(0, balanceBefore + hours);
+
     const bal = await prisma.leaveBalance.upsert({
       where: { userId_policyId: { userId: targetUserId, policyId: pol.id } },
       update: { balanceHours: { increment: hours } },
       create: {
-        userId: targetUserId,
-        policyId: pol.id,
+        userId:       targetUserId,
+        policyId:     pol.id,
         balanceHours: hours > 0 ? hours : 0,
       },
     });
+
+    await prisma.leaveTransaction.create({
+      data: {
+        userId:        targetUserId,
+        policyId:      pol.id,
+        type:          "adjustment",
+        hours,
+        balanceBefore,
+        balanceAfter:  Number(bal.balanceHours),
+        performedById: req.user.id,
+      },
+    });
+
     out.push({
-      leaveType: pol.leaveType,
+      leaveType:    pol.leaveType,
       balanceHours: bal.balanceHours.toNumber(),
     });
   }
@@ -95,4 +114,75 @@ const listMatrix = async (req, res) => {
   res.json({ data: rows, leaveTypes: policies.map((p) => p.leaveType) });
 };
 
-module.exports = { adjustBalance, listMatrix };
+const getTransactions = async (req, res) => {
+  const companyId = req.user.companyId;
+  const isManagement = ["admin", "superadmin", "supervisor"].includes(req.user.role);
+
+  const { userId, policyId, type } = req.query;
+  const limit  = Math.min(parseInt(req.query.limit) || 50, 200);
+  const offset = parseInt(req.query.offset) || 0;
+
+  // Non-management can only see their own transactions
+  const targetUserId = isManagement && userId ? userId : req.user.id;
+
+  // Verify the target user belongs to this company
+  if (isManagement && userId) {
+    const member = await prisma.user.findFirst({
+      where: { id: userId, companyId },
+    });
+    if (!member) return res.status(404).json({ message: "User not found in this company" });
+  }
+
+  const where = {
+    userId: targetUserId,
+    policy: { companyId },
+    ...(policyId ? { policyId } : {}),
+    ...(type     ? { type }     : {}),
+  };
+
+  const [transactions, total] = await Promise.all([
+    prisma.leaveTransaction.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take:    limit,
+      skip:    offset,
+      select: {
+        id:            true,
+        type:          true,
+        hours:         true,
+        balanceBefore: true,
+        balanceAfter:  true,
+        leaveId:       true,
+        note:          true,
+        createdAt:     true,
+        policy: { select: { id: true, leaveType: true } },
+        performedBy: {
+          select: {
+            id: true, email: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    }),
+    prisma.leaveTransaction.count({ where }),
+  ]);
+
+  const data = transactions.map((t) => ({
+    ...t,
+    hours:         Number(t.hours),
+    balanceBefore: Number(t.balanceBefore),
+    balanceAfter:  Number(t.balanceAfter),
+    performedBy: t.performedBy
+      ? {
+          id:   t.performedBy.id,
+          name: t.performedBy.profile
+            ? `${t.performedBy.profile.firstName || ""} ${t.performedBy.profile.lastName || ""}`.trim()
+            : t.performedBy.email,
+        }
+      : null,
+  }));
+
+  res.json({ data, pagination: { total, limit, offset, hasMore: offset + limit < total } });
+};
+
+module.exports = { adjustBalance, listMatrix, getTransactions };

@@ -4,6 +4,7 @@ const { prisma } = require("@config/connection");
 const { calcRequestedHours } = require("@utils/leaveUtils");
 const { createNotification } = require("@services/notificationService");
 const { getIO } = require("@config/socket");
+const moment = require("moment-timezone");
 
 const _format = (l) => ({
   ...l,
@@ -48,8 +49,58 @@ async function _attachPolicyNames(leaves) {
   }));
 }
 
+// ─── Attach deduction transactions to a list of leave records ────────────────
+async function _attachTransactions(leaves) {
+  const leaveIds = leaves.map((l) => l.id).filter(Boolean);
+  if (!leaveIds.length) return leaves.map((l) => ({ ...l, transaction: null }));
+
+  const txns = await prisma.leaveTransaction.findMany({
+    where: { leaveId: { in: leaveIds }, type: "deduction" },
+    select: {
+      id:            true,
+      leaveId:       true,
+      hours:         true,
+      balanceBefore: true,
+      balanceAfter:  true,
+      note:          true,
+      createdAt:     true,
+      performedBy: {
+        select: {
+          id: true, email: true,
+          profile: { select: { firstName: true, lastName: true } },
+        },
+      },
+    },
+  });
+
+  const txnMap = Object.fromEntries(txns.map((t) => [t.leaveId ?? "", t]));
+
+  return leaves.map((l) => {
+    const t = txnMap[l.id] ?? null;
+    return {
+      ...l,
+      transaction: t
+        ? {
+            ...t,
+            hours:         Number(t.hours),
+            balanceBefore: Number(t.balanceBefore),
+            balanceAfter:  Number(t.balanceAfter),
+            performedBy: t.performedBy
+              ? {
+                  id:   t.performedBy.id,
+                  name: t.performedBy.profile
+                    ? `${t.performedBy.profile.firstName || ""} ${t.performedBy.profile.lastName || ""}`.trim()
+                    : t.performedBy.email,
+                }
+              : null,
+          }
+        : null,
+    };
+  });
+}
+
 // ─── Deduct leave balance (shared between single and final approval) ──────────
-async function _deductBalance(leave, policy, companyId) {
+async function _deductBalance(leave, policy, companyId, approverId, approverComments) {
   // Unpaid leave — no balance deduction needed
   if (!leave.isPaid) return { error: false, requestedHours: 0 };
 
@@ -73,9 +124,26 @@ async function _deductBalance(leave, policy, companyId) {
     };
   }
 
+  const balanceBefore = Number(bal.balanceHours);
+  const balanceAfter  = balanceBefore - requestedHours;
+
   await prisma.leaveBalance.update({
     where: { id: bal.id },
     data:  { balanceHours: { decrement: requestedHours } },
+  });
+
+  await prisma.leaveTransaction.create({
+    data: {
+      userId:        leave.userId,
+      policyId:      policy.id,
+      type:          "deduction",
+      hours:         -requestedHours,
+      balanceBefore,
+      balanceAfter,
+      leaveId:       leave.id,
+      performedById: approverId ?? null,
+      note:          approverComments ?? null,
+    },
   });
 
   return { error: false, requestedHours };
@@ -89,7 +157,11 @@ const submitLeaveRequest = async (req, res) => {
   if (!type || !fromDate || !toDate || !approverId)
     return res.status(400).json({ message: "All fields are required." });
 
-  if (new Date(fromDate) > new Date(toDate))
+  // Normalise to YYYY-MM-DD regardless of what the client sends
+  const fromDateStr = String(fromDate).slice(0, 10);
+  const toDateStr   = String(toDate).slice(0, 10);
+
+  if (fromDateStr > toDateStr)
     return res.status(400).json({ message: "From Date cannot be after To Date." });
 
   const approver = await prisma.user.findFirst({
@@ -104,11 +176,18 @@ const submitLeaveRequest = async (req, res) => {
   if (approverId === req.user.id)
     return res.status(400).json({ message: "Cannot set yourself as approver." });
 
-  const policy = await prisma.leavePolicy.findFirst({
-    where: { companyId: req.user.companyId, leaveType: type },
-  });
+  const [policy, company] = await Promise.all([
+    prisma.leavePolicy.findFirst({ where: { companyId: req.user.companyId, leaveType: type } }),
+    prisma.company.findUnique({ where: { id: req.user.companyId }, select: { timeZone: true } }),
+  ]);
   if (!policy)
     return res.status(400).json({ message: "Leave policy not found for this type." });
+
+  const companyTz = company?.timeZone || "America/Los_Angeles";
+  // Store dates as noon in company timezone — prevents UTC conversion from drifting
+  // the date across a day boundary for any timezone offset (UTC-12 to UTC+12).
+  const startDateUTC = moment.tz(fromDateStr, companyTz).hour(12).minute(0).second(0).millisecond(0).toISOString();
+  const endDateUTC   = moment.tz(toDateStr,   companyTz).hour(12).minute(0).second(0).millisecond(0).toISOString();
 
   // Snapshot the affected shift details if IDs were provided
   let affectedShifts = null;
@@ -143,8 +222,8 @@ const submitLeaveRequest = async (req, res) => {
       userId:     req.user.id,
       approverId: approver.id,
       leaveType:  policy.id,
-      startDate:  new Date(fromDate).toISOString(),
-      endDate:    new Date(toDate).toISOString(),
+      startDate:  startDateUTC,
+      endDate:    endDateUTC,
       status:     "pending",
       isPaid:     isPaid !== undefined ? Boolean(isPaid) : true,
       leaveReason,
@@ -161,8 +240,8 @@ const submitLeaveRequest = async (req, res) => {
     const employeeName = employee?.profile
       ? `${employee.profile.firstName || ""} ${employee.profile.lastName || ""}`.trim()
       : req.user.email;
-    const startDateStr = new Date(fromDate).toLocaleDateString();
-    const endDateStr   = new Date(toDate).toLocaleDateString();
+    const startDateStr = fromDateStr;
+    const endDateStr   = toDateStr;
 
     const managementUsers = await prisma.user.findMany({
       where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
@@ -299,7 +378,7 @@ const approveLeave = async (req, res) => {
     }
 
     // No escalation — single approver, deduct balance and fully approve
-    const result = await _deductBalance(leave, policy, req.user.companyId);
+    const result = await _deductBalance(leave, policy, req.user.companyId, req.user.id, approverComments);
     if (result.error) return res.status(400).json({ message: result.message, debug: result.debug });
 
     const data = await prisma.leave.update({
@@ -331,7 +410,7 @@ const approveLeave = async (req, res) => {
 
   // ── SECONDARY (FINAL) APPROVER ────────────────────────────────────────────
   if (isSecondaryApprover) {
-    const result = await _deductBalance(leave, policy, req.user.companyId);
+    const result = await _deductBalance(leave, policy, req.user.companyId, req.user.id, approverComments);
     if (result.error) return res.status(400).json({ message: result.message, debug: result.debug });
 
     const data = await prisma.leave.update({
@@ -432,7 +511,8 @@ const getUserLeaves = async (req, res) => {
 
   const withNames = await _attachPolicyNames(leaves);
   const withHours = await _attachRequestedHours(withNames);
-  const data = withHours.map((l) => {
+  const withTxns  = await _attachTransactions(withHours);
+  const data = withTxns.map((l) => {
     const raw = leaves.find((r) => r.id === l.id);
     return {
       ...l,
@@ -489,7 +569,8 @@ const getPendingLeavesForApprover = async (req, res) => {
 
   const withNames = await _attachPolicyNames(leaves);
   const withHours = await _attachRequestedHours(withNames);
-  const data = withHours.map((l) => {
+  const withTxns  = await _attachTransactions(withHours);
+  const data = withTxns.map((l) => {
     const raw = leaves.find((r) => r.id === l.id);
     const canAct =
       (raw.status === "pending"           && raw.approverId          === req.user.id) ||
@@ -571,7 +652,8 @@ const getLeavesForApprover = async (req, res) => {
 
   const withNames = await _attachPolicyNames(leaves);
   const withHours = await _attachRequestedHours(withNames);
-  const data = withHours.map((l) => {
+  const withTxns  = await _attachTransactions(withHours);
+  const data = withTxns.map((l) => {
     const raw = leaves.find((r) => r.id === l.id);
     const canAct =
       (raw.status === "pending"           && raw.approverId          === req.user.id) ||
@@ -670,17 +752,73 @@ const getBalance = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const listBalances = async (req, res) => {
+  const isManagement = ["admin", "superadmin", "supervisor"].includes(req.user.role);
+
+  let targetUserId = req.user.id;
+  if (isManagement && req.query.userId) {
+    const member = await prisma.user.findFirst({
+      where: { id: req.query.userId, companyId: req.user.companyId },
+      select: { id: true },
+    });
+    if (!member) return res.status(404).json({ message: "User not found in this company." });
+    targetUserId = member.id;
+  }
+
   const policies = await prisma.leavePolicy.findMany({
     where:   { companyId: req.user.companyId },
-    include: { company: true, balances: { where: { userId: req.user.id } } },
+    include: { company: true, balances: { where: { userId: targetUserId } } },
   });
+
+  const policyIds = policies.map((p) => p.id);
+
+  const [recentTxns, deductionTotals] = await Promise.all([
+    prisma.leaveTransaction.findMany({
+      where:   { userId: targetUserId, policyId: { in: policyIds } },
+      orderBy: { createdAt: "desc" },
+      take:    100,
+      select: {
+        id:            true,
+        policyId:      true,
+        type:          true,
+        hours:         true,
+        balanceBefore: true,
+        balanceAfter:  true,
+        leaveId:       true,
+        note:          true,
+        createdAt:     true,
+      },
+    }),
+    prisma.leaveTransaction.groupBy({
+      by:    ["policyId"],
+      where: { userId: targetUserId, policyId: { in: policyIds }, type: "deduction" },
+      _sum:  { hours: true },
+    }),
+  ]);
+
+  const usedMap = Object.fromEntries(
+    deductionTotals.map((d) => [d.policyId, Math.abs(Number(d._sum.hours ?? 0))])
+  );
+
+  const txnsByPolicy = {};
+  recentTxns.forEach((t) => {
+    if (!txnsByPolicy[t.policyId]) txnsByPolicy[t.policyId] = [];
+    txnsByPolicy[t.policyId].push({
+      ...t,
+      hours:         Number(t.hours),
+      balanceBefore: Number(t.balanceBefore),
+      balanceAfter:  Number(t.balanceAfter),
+    });
+  });
+
   const map = {};
   policies.forEach((p) => {
     const sum = p.balances.reduce((s, b) => s + Number(b.balanceHours), 0);
     map[p.leaveType] = {
       leaveType:    p.leaveType,
       balanceHours: sum,
+      usedHours:    usedMap[p.id] ?? 0,
       shiftHours:   Number(p.company.defaultShiftHours || 8),
+      transactions: txnsByPolicy[p.id] ?? [],
     };
   });
   res.json({ data: Object.values(map) });

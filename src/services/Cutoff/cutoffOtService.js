@@ -130,11 +130,16 @@ async function computeOtForCutoffBasis(cutoffPeriodId, userId, companyId) {
   });
   if (!cutoffPeriod) return;
 
+  // Training records ARE included — their actualHours is already capped at
+  // defaultShiftHours by the approval strategy, so they cannot inflate OT
+  // beyond the approved amount. "No OT for training" means the training day
+  // itself cannot exceed the cap; the capped hours still count toward the
+  // period threshold.
   const approved = await prisma.timeLogApproval.findMany({
     where: {
       cutoffPeriodId,
       status:  "approved",
-      timeLog: { userId, punchType: { not: "TRAINING" } },
+      timeLog: { userId },
     },
     select: {
       actualHours:      true,

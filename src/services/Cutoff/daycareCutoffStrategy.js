@@ -219,20 +219,33 @@ async function approveSingle(approvalId, {
     };
     const segHours = segHoursMap[approval.segmentType];
 
-    // "schedule" → snap clock-in to segment window start.
-    // "raw"      → use the actual punch-in time, but still cap at segment end —
-    //              raw means don't snap clock-in, not ignore the window boundary.
+    // "schedule" → snap clock-in to segment window start (full window credited).
+    // "raw"      → use max(actual punch-in, segmentStart) — never go before the segment
+    //              begins (the global clock-in precedes PM/Regular windows).
     const approvedIn  = approvalMode === "schedule" && approval.segmentStart
       ? new Date(approval.segmentStart)
-      : new Date(timeLog.timeIn);
-    const approvedOut = approval.segmentEnd
-      ? new Date(approval.segmentEnd)
-      : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
+      : approval.segmentStart
+        ? new Date(Math.max(new Date(timeLog.timeIn).getTime(), new Date(approval.segmentStart).getTime()))
+        : new Date(timeLog.timeIn);
+    // PM is the last segment — Raw pays through actual clock-out (no subsequent segment to
+    // capture that time). AM/Regular still cap at segmentEnd to avoid double-counting.
+    const approvedOut = (approvalMode === "raw" && approval.segmentType === "driver_pm" && timeLog.timeOut)
+      ? new Date(timeLog.timeOut)
+      : approval.segmentEnd
+        ? new Date(approval.segmentEnd)
+        : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
 
     // Recalculate hours from actual approved window (raw in → segment end may differ).
-    const approvedSegHours = approvedIn && approvedOut
+    const rawSegHours = approvedIn && approvedOut
       ? calculateHours(approvedIn, approvedOut)
       : (segHours != null ? parseFloat(segHours.toString()) : null);
+
+    // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
+    // Driving segments (driver_am, driver_pm) use actual elapsed time.
+    const defaultShiftHours   = parseFloat((company?.defaultShiftHours ?? 8).toString());
+    const approvedSegHours    = (approval.segmentType === "regular" && rawSegHours != null)
+      ? Math.min(rawSegHours, defaultShiftHours)
+      : rawSegHours;
 
     const updated = await prisma.timeLogApproval.update({
       where: { id: approvalId },
@@ -460,14 +473,24 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
 
         const approvedIn  = approvalMode === "schedule" && approval.segmentStart
           ? new Date(approval.segmentStart)
-          : new Date(timeLog.timeIn);
-        const approvedOut = approval.segmentEnd
-          ? new Date(approval.segmentEnd)
-          : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
+          : approval.segmentStart
+            ? new Date(Math.max(new Date(timeLog.timeIn).getTime(), new Date(approval.segmentStart).getTime()))
+            : new Date(timeLog.timeIn);
+        const approvedOut = (approvalMode === "raw" && approval.segmentType === "driver_pm" && timeLog.timeOut)
+          ? new Date(timeLog.timeOut)
+          : approval.segmentEnd
+            ? new Date(approval.segmentEnd)
+            : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
 
-        const approvedSegHours = approvedIn && approvedOut
+        const rawSegHours = approvedIn && approvedOut
           ? calculateHours(approvedIn, approvedOut)
           : (segHours != null ? parseFloat(segHours.toString()) : null);
+
+        // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
+        // Driving segments (driver_am, driver_pm) use actual elapsed time.
+        const approvedSegHours = (approval.segmentType === "regular" && rawSegHours != null)
+          ? Math.min(rawSegHours, maxTrainingHours)
+          : rawSegHours;
 
         await prisma.timeLogApproval.update({
           where: { id: approval.id },

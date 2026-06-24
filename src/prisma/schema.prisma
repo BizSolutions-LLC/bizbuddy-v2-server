@@ -329,6 +329,7 @@ model LeavePolicy {
   createdAt        DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime         @updatedAt @db.Timestamptz(6)
   balances         LeaveBalance[]
+  transactions     LeaveTransaction[]
   company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, leaveType])
@@ -346,6 +347,26 @@ model LeaveBalance {
   user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, policyId])
+}
+
+model LeaveTransaction {
+  id            String               @id @default(cuid())
+  userId        String
+  policyId      String
+  type          LeaveTransactionType
+  hours         Decimal              @db.Decimal(8, 2)
+  balanceBefore Decimal              @db.Decimal(8, 2)
+  balanceAfter  Decimal              @db.Decimal(8, 2)
+  leaveId       String?
+  performedById String?
+  note          String?
+  createdAt     DateTime             @default(now()) @db.Timestamptz(6)
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policy        LeavePolicy          @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  performedBy   User?                @relation("LeaveTransactionPerformer", fields: [performedById], references: [id])
+
+  @@index([userId, policyId])
+  @@index([leaveId])
 }
 
 model User {
@@ -376,6 +397,8 @@ model User {
   ApprovedLeaves           Leave[]                  @relation("approver")
   Leave                    Leave[]
   LeaveBalance             LeaveBalance[]
+  LeaveTransactions        LeaveTransaction[]
+  LeaveTransactionsPerformed LeaveTransaction[] @relation("LeaveTransactionPerformer")
   LocationRestriction      LocationRestriction[]
   NotificationLog          NotificationLog[]
   otp                      Otp[]
@@ -1286,6 +1309,12 @@ enum leaveStatus {
   approved
   rejected
   cancelled
+}
+
+enum LeaveTransactionType {
+  accrual
+  deduction
+  adjustment
 }
 
 enum PresenceStatus {
