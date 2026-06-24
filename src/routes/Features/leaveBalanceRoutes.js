@@ -6,6 +6,7 @@ const { authorizeRoles } = require("@middlewares/roleMiddleware");
 const {
   adjustBalance,
   listMatrix,
+  getTransactions,
 } = require("@controllers/Features/leaveBalanceController");
 
 router.post(
@@ -20,6 +21,13 @@ router.get(
   authenticate,
   authorizeRoles("admin", "supervisor", "superadmin"),
   listMatrix
+);
+
+router.get(
+  "/transactions",
+  authenticate,
+  authorizeRoles("employee", "admin", "supervisor", "superadmin"),
+  getTransactions
 );
 
 module.exports = router;

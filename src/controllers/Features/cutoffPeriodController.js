@@ -80,30 +80,48 @@ function enrichApprovals(approvals, gracePeriodMinutes) {
 
     if (isDriverAide) {
       // segScheduledHours = the full segment window duration (segmentEnd − segmentStart).
-      // segmentHours      = actual hours worked within the window (from computeTimeLogSummary),
-      //                     falling back to the window duration when not yet computed.
+      // segmentHours      = for approved records: computed from approvedClockIn/Out on the
+      //                     approval record (reflects Schedule vs Raw correctly).
+      //                     Guard: skip if approvedClockIn is before segmentStart — that
+      //                     indicates a historical record written before the Raw clip fix,
+      //                     where the global clock-in was stored instead of segmentStart.
+      //                     Pending records fall back to the stored TimeLog segment value.
       const windowHours = approval.segmentStart && approval.segmentEnd
         ? parseFloat(((new Date(approval.segmentEnd) - new Date(approval.segmentStart)) / 3600000).toFixed(2))
         : null;
 
+      const approvedHours = (() => {
+        if (approval.status !== "approved" || !approval.approvedClockIn || !approval.approvedClockOut) return null;
+        const inMs     = new Date(approval.approvedClockIn).getTime();
+        const segStart = approval.segmentStart ? new Date(approval.segmentStart).getTime() : -Infinity;
+        if (inMs < segStart) return null; // stale bad record — fall back to stored
+        return parseFloat(((new Date(approval.approvedClockOut) - new Date(approval.approvedClockIn)) / 3600000).toFixed(2));
+      })();
+
       if (segmentType === "driver_am") {
         const stored  = tl.driverAmSegmentHours != null ? parseFloat(tl.driverAmSegmentHours.toString()) : null;
-        segmentHours      = stored ?? windowHours;
+        segmentHours      = approvedHours ?? stored ?? windowHours;
         segLateHours      = lateHours; // AM is the late-bearing segment (earliest shift)
         segScheduledHours = windowHours ?? stored;
       } else if (segmentType === "regular") {
         const stored  = tl.regularSegmentHours != null ? parseFloat(tl.regularSegmentHours.toString()) : null;
-        segmentHours      = stored ?? windowHours;
+        segmentHours      = approvedHours ?? stored ?? windowHours;
         segScheduledHours = windowHours ?? stored;
       } else if (segmentType === "driver_pm") {
         const stored  = tl.driverPmSegmentHours != null ? parseFloat(tl.driverPmSegmentHours.toString()) : null;
-        segmentHours      = stored ?? windowHours;
+        segmentHours      = approvedHours ?? stored ?? windowHours;
         segUndertimeHours = undertimeHours; // PM is the undertime-bearing segment (latest shift)
         segScheduledHours = windowHours ?? stored;
         segRawOtMinutes   = rawOtMinutes;
       }
     } else {
-      segmentHours      = tl.netWorkedHours != null ? parseFloat(tl.netWorkedHours) : grossHours;
+      // For approved records, prefer approval.actualHours — it holds the payroll-adjusted
+      // value (grace-snapped for Raw, capped for Training). tl.netWorkedHours is only
+      // reliable for pending records where no approval has been written yet.
+      const approvedActual = (approval.status === "approved" && approval.actualHours != null)
+        ? parseFloat(approval.actualHours.toString())
+        : null;
+      segmentHours      = approvedActual ?? (tl.netWorkedHours != null ? parseFloat(tl.netWorkedHours) : grossHours);
       segLateHours      = lateHours;
       segUndertimeHours = undertimeHours;
       segScheduledHours = tl.scheduledHours != null ? parseFloat(tl.scheduledHours) : null;
@@ -1150,6 +1168,93 @@ const getCutoffApprovals = async (req, res) => {
           },
         },
       });
+
+      if (otBlocks.length > 0) {
+        const otUserIds = [...new Set(otBlocks.map((b) => b.userId))];
+
+        // One batch query — fetch ALL approved records (including training) so training
+        // days can be shown as grayed-out excluded rows in the breakdown.
+        const breakdownRecords = await prisma.timeLogApproval.findMany({
+          where: {
+            cutoffPeriodId: id,
+            status:         "approved",
+            timeLog:        { userId: { in: otUserIds } },
+          },
+          select: {
+            actualHours:      true,
+            approvedClockIn:  true,
+            approvedClockOut: true,
+            timeLog: { select: { userId: true, timeIn: true, punchType: true } },
+          },
+          orderBy: { timeLog: { timeIn: "asc" } },
+        });
+
+        // Group: byUser[userId][dateStr]{ otHours, trainingHours }
+        // Training hours are tracked separately — they appear in the breakdown display
+        // but are excluded from the OT total (matching computeOtForCutoffBasis logic).
+        const byUser = {};
+        for (const r of breakdownRecords) {
+          if (!r.timeLog) continue;
+          const uid        = r.timeLog.userId;
+          const date       = moment.tz(r.timeLog.timeIn, companyTimezone).format("YYYY-MM-DD");
+          const isTraining = r.timeLog.punchType === "TRAINING";
+          const hours      = r.actualHours != null
+            ? parseFloat(r.actualHours.toString())
+            : r.approvedClockIn && r.approvedClockOut
+              ? (new Date(r.approvedClockOut) - new Date(r.approvedClockIn)) / 3600000
+              : 0;
+          if (!byUser[uid])       byUser[uid]       = {};
+          if (!byUser[uid][date]) byUser[uid][date] = { otHours: 0, trainingHours: 0 };
+          if (isTraining) byUser[uid][date].trainingHours += hours;
+          else            byUser[uid][date].otHours       += hours;
+        }
+
+        const otThreshold = otBasis === "cutoff"
+          ? cutoffOtThresholdHours
+          : dailyOtThresholdHours;
+
+        otBlocks = otBlocks.map((block) => {
+          const userDates = byUser[block.userId] || {};
+
+          const buildDays = (dates) =>
+            Object.entries(dates)
+              .flatMap(([date, { otHours, trainingHours }]) => {
+                const rows = [];
+                if (otHours > 0)
+                  rows.push({ date, hours: parseFloat(otHours.toFixed(2)),       isTraining: false });
+                if (trainingHours > 0)
+                  rows.push({ date, hours: parseFloat(trainingHours.toFixed(2)), isTraining: true  });
+                return rows;
+              })
+              .sort((a, b) => a.date.localeCompare(b.date) || (a.isTraining ? 1 : -1));
+
+          // For daily OT, scope breakdown to just the block's calendar date.
+          const days = otBasis === "daily"
+            ? (() => {
+                const blockDate = moment.tz(block.date, companyTimezone).format("YYYY-MM-DD");
+                const entry = userDates[blockDate];
+                return entry ? buildDays({ [blockDate]: entry }) : [];
+              })()
+            : buildDays(userDates);
+
+          // totalHours includes training — mirrors computeOtForCutoffBasis which now
+          // counts all approved hours (training actualHours is already capped at
+          // defaultShiftHours, so it cannot inflate OT beyond the approved amount).
+          const totalHours = parseFloat(
+            days.reduce((s, d) => s + d.hours, 0).toFixed(2)
+          );
+
+          return {
+            ...block,
+            breakdown: {
+              days,
+              totalHours,
+              threshold: otThreshold,
+              otHours:   parseFloat(Math.max(0, totalHours - otThreshold).toFixed(2)),
+            },
+          };
+        });
+      }
     }
 
     return res.status(200).json({
@@ -1443,13 +1548,39 @@ const resetApproval = async (req, res) => {
 
     const approval = await prisma.timeLogApproval.findUnique({
       where: { id: approvalId },
-      select: { id: true, cutoffPeriodId: true, status: true, timeLogId: true },
+      select: {
+        id: true, cutoffPeriodId: true, status: true, timeLogId: true,
+        timeLog: { select: { id: true, originalTimeIn: true, originalTimeOut: true } },
+      },
     });
     if (!approval || approval.cutoffPeriodId !== cutoffPeriodId) {
       return res.status(404).json({ message: "Approval not found in this cutoff period." });
     }
-    if (approval.status !== "approved") {
-      return res.status(400).json({ message: `Only approved records can be reset. Current status: ${approval.status}.` });
+    if (approval.status !== "approved" && approval.status !== "excluded") {
+      return res.status(400).json({ message: `Only approved or excluded records can be reset. Current status: ${approval.status}.` });
+    }
+
+    // Restore TimeLog to its original raw punch times if they were modified during
+    // "Approve Schedule" mode (which snaps timeIn/timeOut to the shift window).
+    // "Approve Raw" never modifies timeIn/timeOut so originalTimeIn will be set but equal.
+    if (approval.timeLog?.originalTimeIn) {
+      await prisma.timeLog.update({
+        where: { id: approval.timeLogId },
+        data: {
+          timeIn:     approval.timeLog.originalTimeIn,
+          timeOut:    approval.timeLog.originalTimeOut,
+          isApproved: false,
+        },
+      });
+      // Recompute derived fields against the restored raw punch times
+      computeTimeLogSummary(approval.timeLogId).catch((e) =>
+        console.error("[reset] recompute failed after TimeLog restore:", e.message)
+      );
+    } else {
+      await prisma.timeLog.update({
+        where: { id: approval.timeLogId },
+        data: { isApproved: false },
+      });
     }
 
     const updated = await prisma.timeLogApproval.update({
@@ -1565,7 +1696,7 @@ const setPunchType = async (req, res) => {
 
     const approval = await prisma.timeLogApproval.findUnique({
       where:   { id: approvalId },
-      include: { timeLog: { select: { id: true, punchType: true } } },
+      include: { timeLog: { select: { id: true, punchType: true, userId: true, timeIn: true } } },
     });
 
     if (!approval || approval.cutoffPeriodId !== id) {
@@ -1588,10 +1719,53 @@ const setPunchType = async (req, res) => {
       data:  { punchType },
     });
 
+    // When reclassifying to TRAINING, auto-exclude any pending DRIVER_AIDE segment
+    // approval records for the same user on the same local calendar day in this cutoff.
+    let excludedSegmentCount = 0;
+    if (punchType === "TRAINING") {
+      const company = await prisma.company.findUnique({
+        where:  { id: companyId },
+        select: { timeZone: true },
+      });
+      const tz       = company?.timeZone || "America/Los_Angeles";
+      const localDay = moment.tz(approval.timeLog.timeIn, tz);
+      const dayStart = localDay.clone().startOf("day").toDate();
+      const dayEnd   = localDay.clone().endOf("day").toDate();
+
+      const driverTimeLogs = await prisma.timeLog.findMany({
+        where: {
+          userId:    approval.timeLog.userId,
+          punchType: "DRIVER_AIDE",
+          timeIn:    { gte: dayStart, lte: dayEnd },
+        },
+        select: { id: true },
+      });
+
+      if (driverTimeLogs.length > 0) {
+        const driverIds = driverTimeLogs.map((tl) => tl.id);
+        const result = await prisma.timeLogApproval.updateMany({
+          where: {
+            cutoffPeriodId: id,
+            timeLogId:      { in: driverIds },
+            segmentType:    { not: null },
+            status:         "pending",
+          },
+          data: {
+            status:     "excluded",
+            approvedBy: req.user.id,
+            approvedAt: new Date(),
+            notes:      "Auto-excluded: day reclassified as Training",
+          },
+        });
+        excludedSegmentCount = result.count;
+        console.log(`[✅ DayCare] Auto-excluded ${result.count} driver segment(s) — day reclassified as Training`);
+      }
+    }
+
     console.log(`[✅ DayCare] Punch type ${current} → ${punchType} — ${approvalId}`);
     return res.status(200).json({
       message: `Punch type updated to ${punchType}.`,
-      data:    { approvalId, previousPunchType: current, punchType },
+      data:    { approvalId, previousPunchType: current, punchType, excludedSegmentCount },
     });
   } catch (error) {
     console.error("❌ setPunchType:", error);

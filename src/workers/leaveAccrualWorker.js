@@ -108,22 +108,33 @@ function scheduleLeaveAccrual() {
 
             for (const emp of employees) {
               const hasBalance = emp.id in balanceMap;
+              const balanceBefore = hasBalance ? balanceMap[emp.id] : 0;
               let newBalance;
 
               if (hasBalance) {
-                // Existing record — increment and cap
-                newBalance = Math.min(balanceMap[emp.id] + incr, annualHours);
+                newBalance = Math.min(balanceBefore + incr, annualHours);
               } else {
-                // First time seeing this employee for this policy
                 newBalance = catchUp
-                  ? Math.min(incr * monthsIntoYear, annualHours) // catch up all elapsed months
-                  : incr;                                          // start from this month only
+                  ? Math.min(incr * monthsIntoYear, annualHours)
+                  : incr;
               }
 
               await prisma.leaveBalance.upsert({
                 where:  { userId_policyId: { userId: emp.id, policyId: policy.id } },
                 update: { balanceHours: newBalance, lastAccrualAt: today.toDate() },
                 create: { userId: emp.id, policyId: policy.id, balanceHours: newBalance, lastAccrualAt: today.toDate() },
+              });
+
+              await prisma.leaveTransaction.create({
+                data: {
+                  userId:        emp.id,
+                  policyId:      policy.id,
+                  type:          "accrual",
+                  hours:         +(newBalance - balanceBefore).toFixed(2),
+                  balanceBefore,
+                  balanceAfter:  newBalance,
+                  note:          `Monthly accrual — ${today.format("MMMM YYYY")}`,
+                },
               });
             }
 
@@ -164,6 +175,18 @@ function scheduleLeaveAccrual() {
                 where:  { userId_policyId: { userId: emp.id, policyId: policy.id } },
                 update: { balanceHours: newBalance, lastAccrualAt: today.toDate() },
                 create: { userId: emp.id, policyId: policy.id, balanceHours: newBalance, lastAccrualAt: today.toDate() },
+              });
+
+              await prisma.leaveTransaction.create({
+                data: {
+                  userId:        emp.id,
+                  policyId:      policy.id,
+                  type:          "accrual",
+                  hours:         +(newBalance - prevBalance).toFixed(2),
+                  balanceBefore: prevBalance,
+                  balanceAfter:  newBalance,
+                  note:          `Yearly reset — carry-over ${carryOver}h + annual grant ${annualHours}h (${today.format("YYYY")})`,
+                },
               });
             }
 

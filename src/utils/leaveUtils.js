@@ -83,7 +83,17 @@ async function calcRequestedHours(userId, startISO, endISO) {
     shiftHoursMap.set(dateStr, (shiftHoursMap.get(dateStr) || 0) + hrs);
   }
 
-  const hasShifts = shiftHoursMap.size > 0;
+  // If no shifts were found in the leave range, check whether this employee is
+  // a shift worker at all. If they are, only scheduled days count (deduct 0 for
+  // unscheduled days). If they have no shifts anywhere, treat them as salaried.
+  let isShiftWorker = shiftHoursMap.size > 0;
+  if (!isShiftWorker) {
+    const anyShift = await prisma.userShift.findFirst({
+      where: { userId, status: { not: "cancelled" } },
+      select: { id: true },
+    });
+    isShiftWorker = !!anyShift;
+  }
 
   // ── 3. Walk each calendar day and accumulate hours ─────────────────────────
   let totalHours = 0;
@@ -97,8 +107,8 @@ async function calcRequestedHours(userId, startISO, endISO) {
     const isHoliday = holidaySet.has(dateStr);
 
     if (!isWeekend && !isHoliday) {
-      if (hasShifts) {
-        // Shift-assigned employee: use actual scheduled shift hours for the day
+      if (isShiftWorker) {
+        // Shift-assigned employee: only deduct hours for days with an actual scheduled shift
         if (shiftHoursMap.has(dateStr)) totalHours += shiftHoursMap.get(dateStr);
       } else {
         // Salaried/unassigned employee: fall back to company default shift hours
