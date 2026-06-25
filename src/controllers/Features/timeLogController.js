@@ -618,7 +618,7 @@ const getCompanyTimeLogs = async (req, res) => {
     // stored in UTC are not cut off at UTC midnight.
     const company = await prisma.company.findUnique({
       where:  { id: companyId },
-      select: { timeZone: true, dailyOtThresholdHours: true },
+      select: { timeZone: true, dailyOtThresholdHours: true, otBasis: true },
     });
     const tz   = company?.timeZone || "UTC";
     const from = req.query.from ? moment.tz(req.query.from, "YYYY-MM-DD", tz).startOf("day").toDate() : null;
@@ -787,6 +787,7 @@ const getCompanyTimeLogs = async (req, res) => {
         driverAmSegmentHours: l.driverAmSegmentHours != null ? parseFloat(l.driverAmSegmentHours) : null,
         driverPmSegmentHours: l.driverPmSegmentHours != null ? parseFloat(l.driverPmSegmentHours) : null,
         rawOtMinutes:         l.rawOtMinutes         ?? null,
+        otStatus:             null, // populated below for cutoff-basis OT companies
       }),
       grossHours:           l.grossHours            != null ? parseFloat(l.grossHours)           : null,
       scheduledHours:       l.scheduledHours        != null ? parseFloat(l.scheduledHours)       : null,
@@ -905,6 +906,43 @@ const getCompanyTimeLogs = async (req, res) => {
           r.userShifts  = shifts;
           r.userShift   = shifts[0] ?? null;
         });
+      }
+    }
+
+    // ── DayCare cutoff-basis OT Status ───────────────────────────────────────
+    // For companies where otBasis = "cutoff" (80h/period), per-punch rawOtMinutes
+    // is irrelevant. OT Status is derived from the CutoffOtBlock for the employee's
+    // cutoff period: "-" (no block), "Included" (block pending), "Approved" (block approved).
+    if (!isBnC && company?.otBasis === "cutoff" && rows.length > 0) {
+      const pairs  = [];
+      const seen   = new Set();
+      for (const r of rows) {
+        const cpId = r.cutoffApproval?.cutoffPeriod?.id;
+        if (cpId) {
+          const key = `${r.userId}:${cpId}`;
+          if (!seen.has(key)) { seen.add(key); pairs.push({ userId: r.userId, cpId }); }
+        }
+      }
+
+      if (pairs.length > 0) {
+        const userIds = [...new Set(pairs.map((p) => p.userId))];
+        const cpIds   = [...new Set(pairs.map((p) => p.cpId))];
+
+        const otBlocks = await prisma.cutoffOtBlock.findMany({
+          where:  { userId: { in: userIds }, cutoffPeriodId: { in: cpIds } },
+          select: { userId: true, cutoffPeriodId: true, status: true },
+        });
+
+        const blockMap = {};
+        for (const b of otBlocks) blockMap[`${b.userId}:${b.cutoffPeriodId}`] = b.status;
+
+        for (const r of rows) {
+          const cpId       = r.cutoffApproval?.cutoffPeriod?.id;
+          const blockStatus = cpId ? blockMap[`${r.userId}:${cpId}`] : undefined;
+          r.otStatus = !blockStatus           ? "-"
+                     : blockStatus === "approved" ? "Approved"
+                     : "Included";
+        }
       }
     }
 
