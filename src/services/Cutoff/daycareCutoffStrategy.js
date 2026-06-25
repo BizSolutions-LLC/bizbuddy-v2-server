@@ -23,6 +23,51 @@ class StrategyError extends Error {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * After each DRIVER_AIDE segment is approved, check whether all sibling segments
+ * for the same punch are now approved. If so, write the approved actualHours back
+ * to the TimeLog segment fields so the timelog detail view reflects approved reality.
+ *
+ * Fires automatically — no manual trigger needed. Safe to call after every
+ * DRIVER_AIDE approval; no-ops when siblings are still pending.
+ */
+async function syncApprovedSegmentsToTimeLog(timeLogId, cutoffPeriodId) {
+  const pendingCount = await prisma.timeLogApproval.count({
+    where: { timeLogId, cutoffPeriodId, status: { not: "approved" } },
+  });
+  if (pendingCount > 0) return;
+
+  const segs = await prisma.timeLogApproval.findMany({
+    where:  { timeLogId, cutoffPeriodId, status: "approved" },
+    select: { segmentType: true, actualHours: true },
+  });
+
+  const segMap = {};
+  for (const s of segs) {
+    if (s.actualHours != null) segMap[s.segmentType] = parseFloat(s.actualHours.toString());
+  }
+
+  const netWorkedHours = parseFloat(
+    Object.values(segMap).reduce((sum, h) => sum + h, 0).toFixed(2)
+  );
+
+  await prisma.timeLog.update({
+    where: { id: timeLogId },
+    data: {
+      ...(segMap.driver_am != null && { driverAmSegmentHours: segMap.driver_am }),
+      ...(segMap.regular   != null && { regularSegmentHours:  segMap.regular   }),
+      ...(segMap.driver_pm != null && { driverPmSegmentHours: segMap.driver_pm }),
+      netWorkedHours,
+    },
+  });
+
+  console.log(
+    `[✅ DayCare] Segment sync-back: ${timeLogId}` +
+    ` AM:${segMap.driver_am ?? "-"} REG:${segMap.regular ?? "-"} PM:${segMap.driver_pm ?? "-"}` +
+    ` net:${netWorkedHours}h`
+  );
+}
+
 function calculateHours(timeIn, timeOut) {
   if (!timeIn || !timeOut) return 0;
   return (new Date(timeOut) - new Date(timeIn)) / 3600000;
@@ -262,6 +307,9 @@ async function approveSingle(approvalId, {
     });
     recomputeOtForTimeLog(timeLog.id, cutoffPeriodId, companyId).catch((e) =>
       console.error("[OT] recompute failed after segment approve:", e.message)
+    );
+    syncApprovedSegmentsToTimeLog(timeLog.id, cutoffPeriodId).catch((e) =>
+      console.error("[sync-back] failed after segment approve:", e.message)
     );
     console.log("[✅ DayCare] Segment approved", approvalId, approval.segmentType, approvalMode === "schedule" ? "(segment window)" : "(raw times)");
     return { message: "Segment approved successfully.", data: updated };
@@ -614,6 +662,20 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
     recomputeAllOtForCutoff(cutoffPeriodId, companyId).catch((e) =>
       console.error("[OT] recomputeAllOt failed after bulk approve:", e.message)
     );
+
+    // Sync approved segment hours back to TimeLog fields for every DRIVER_AIDE
+    // punch that was touched. Fire-and-forget per timeLogId — each call is safe
+    // to run independently.
+    const driverTimeLogIds = [...new Set(
+      approvals
+        .filter((a) => a.timeLog?.punchType === "DRIVER_AIDE")
+        .map((a) => a.timeLog.id)
+    )];
+    for (const tlId of driverTimeLogIds) {
+      syncApprovedSegmentsToTimeLog(tlId, cutoffPeriodId).catch((e) =>
+        console.error(`[sync-back] failed for ${tlId} after bulk approve:`, e.message)
+      );
+    }
   }
 
   return {

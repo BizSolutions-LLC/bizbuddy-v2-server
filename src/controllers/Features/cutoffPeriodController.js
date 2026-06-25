@@ -1572,15 +1572,21 @@ const resetApproval = async (req, res) => {
           isApproved: false,
         },
       });
-      // Recompute derived fields against the restored raw punch times
-      computeTimeLogSummary(approval.timeLogId).catch((e) =>
-        console.error("[reset] recompute failed after TimeLog restore:", e.message)
-      );
     } else {
       await prisma.timeLog.update({
         where: { id: approval.timeLogId },
         data: { isApproved: false },
       });
+    }
+
+    // Always recompute after reset — restores pre-approval segment fields on the
+    // TimeLog (driverAmSegmentHours, regularSegmentHours, driverPmSegmentHours,
+    // netWorkedHours). Awaited so the response is not returned before the fields
+    // are back to their computed state. No-ops if timeOut is still null.
+    try {
+      await computeTimeLogSummary(approval.timeLogId);
+    } catch (e) {
+      console.error("[reset] recompute failed after TimeLog restore:", e.message);
     }
 
     const updated = await prisma.timeLogApproval.update({
