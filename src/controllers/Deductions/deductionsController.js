@@ -325,7 +325,25 @@ exports.deductFutaBalance = async (req, res) => {
     }
 
     const currentBalance = await getCurrentFutaBalance(userId);
-    const newBalance = Math.max(0, currentBalance - deductionAmount);
+
+    // No remaining FUTA wage base — nothing to deduct
+    if (currentBalance <= 0) {
+      return res.status(200).json({
+        success: true,
+        message: "FUTA wage base already exhausted for this employee",
+        data: {
+          userId,
+          previousBalance: 0,
+          deducted: 0,
+          futaBalance: 0,
+          skipped: true,
+        },
+      });
+    }
+
+    // Cap deduction so balance never goes below zero
+    const actualDeduction = Math.min(deductionAmount, currentBalance);
+    const newBalance = currentBalance - actualDeduction;
 
     const payrollDetails = await prisma.employeePayrollDetails.upsert({
       where: { userId },
@@ -347,8 +365,9 @@ exports.deductFutaBalance = async (req, res) => {
       data: {
         userId,
         previousBalance: currentBalance,
-        deducted: deductionAmount,
+        deducted: actualDeduction,
         futaBalance: parseFloat(payrollDetails.futaBalance),
+        skipped: false,
       },
     });
   } catch (err) {
