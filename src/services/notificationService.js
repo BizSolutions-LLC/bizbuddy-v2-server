@@ -3,6 +3,21 @@ const { getMessaging } = require("@config/firebase");
 const { sendEmail } = require("./emailService");
 const { notifyUser, notifyManagement } = require("./socketService");
 const { getIO } = require("@config/socket");
+
+async function prefixWithCompanyName(companyId, text) {
+  if (!text || !companyId) return text;
+
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { name: true },
+  });
+  if (!company?.name) return text;
+
+  const prefix = `[${company.name}] `;
+  if (text.startsWith(prefix) || text.startsWith(`[${company.name}]`)) return text;
+  return `${prefix}${text}`;
+}
+
 /**
  * Create internal notification (database + socket)
  */
@@ -16,6 +31,11 @@ async function createNotification({
   payload = {},
 }) {
   try {
+    const [prefixedTitle, prefixedMessage] = await Promise.all([
+      prefixWithCompanyName(companyId, title),
+      prefixWithCompanyName(companyId, message),
+    ]);
+
     // Save to database
     const notification = await prisma.notificationLog.create({
       data: {
@@ -23,8 +43,8 @@ async function createNotification({
         companyId,
         departmentId,
         notificationCode,
-        title,
-        message,
+        title: prefixedTitle,
+        message: prefixedMessage,
         payload,
       },
     });
@@ -33,8 +53,8 @@ async function createNotification({
     notifyUser(userId, {
       id: notification.id,
       type: notificationCode,
-      title,
-      message,
+      title: prefixedTitle,
+      message: prefixedMessage,
       payload,
       createdAt: notification.createdAt,
       seen: false,
@@ -50,7 +70,7 @@ async function createNotification({
         if (deviceToken) {
           await messaging.send({
             token: deviceToken,
-            notification: { title, body: message || "" },
+            notification: { title: prefixedTitle, body: prefixedMessage || "" },
             data: {
               type: String(notificationCode),
               notificationId: String(notification.id),
@@ -564,6 +584,7 @@ async function notifyAutoClockOutSupervisors({ user, timeLog, scheduledEnd, noti
 }
 
 module.exports = {
+  prefixWithCompanyName,
   createNotification,
   sendEmailNotification,
   notifyMissedClockIn,

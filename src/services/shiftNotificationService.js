@@ -2,6 +2,7 @@
 
 const { prisma } = require("@config/connection");
 const { notifyUser } = require("./socketService");
+const { prefixWithCompanyName } = require("./notificationService");
 
 /**
  * Helper: Persist notification to DB and emit via Socket.io
@@ -16,14 +17,19 @@ async function createNotification({
   payload = {},
 }) {
   try {
+    const [prefixedTitle, prefixedMessage] = await Promise.all([
+      prefixWithCompanyName(companyId, title),
+      prefixWithCompanyName(companyId, message),
+    ]);
+
     const notification = await prisma.notificationLog.create({
       data: {
         userId,
         companyId,
         departmentId,
         notificationCode,
-        title,
-        message,
+        title: prefixedTitle,
+        message: prefixedMessage,
         payload,
       },
     });
@@ -31,8 +37,8 @@ async function createNotification({
     notifyUser(userId, {
       id: notification.id,
       type: notificationCode,
-      title,
-      message,
+      title: prefixedTitle,
+      message: prefixedMessage,
       payload,
       createdAt: notification.createdAt,
       seen: false,
