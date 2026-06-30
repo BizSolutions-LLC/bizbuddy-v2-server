@@ -255,7 +255,7 @@ const submitLeaveRequest = async (req, res) => {
           departmentId:     m.departmentId,
           notificationCode: "LEAVE_REQUEST_SUBMITTED",
           title:            "Leave Request Submitted",
-          message:          `${employeeName} submitted a leave request (${type}) from ${startDateStr} to ${endDateStr}.`,
+          message:          `${employeeName} has filed a leave request (${type}) from ${startDateStr} to ${endDateStr}.`,
           payload:          { leaveId: data.id, leaveType: type, startDate: fromDate, endDate: toDate, requesterId: req.user.id },
         })
       )

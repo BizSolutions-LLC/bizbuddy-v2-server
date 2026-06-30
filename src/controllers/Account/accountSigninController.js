@@ -225,13 +225,14 @@ const signIn = async (req, res) => {
       return res.status(500).json({ message: "JWT secret is not configured." });
     }
 
-    // tokenVersion is included so middleware can invalidate tokens after sign-out / logout-all.
+    // tokenVersion revokes sessions (logout-all, device switch). No JWT exp — avoids
+    // clock-out/API failures while the app still shows a saved session after 30 days.
     const tokenPayload = {
       userId: user.id,
       companyId: user.companyId,
       tokenVersion: updatedUser.tokenVersion,
     };
-    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "30d" });
+    const token = jwt.sign(tokenPayload, JWT_SECRET);
 
     console.log("## Success");
     return res.status(200).json({
