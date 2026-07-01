@@ -58,6 +58,7 @@ async function syncApprovedSegmentsToTimeLog(timeLogId, cutoffPeriodId) {
       ...(segMap.regular   != null && { regularSegmentHours:  segMap.regular   }),
       ...(segMap.driver_pm != null && { driverPmSegmentHours: segMap.driver_pm }),
       netWorkedHours,
+      rawOtMinutes: 0,
     },
   });
 
