@@ -130,11 +130,13 @@ async function computeOtForCutoffBasis(cutoffPeriodId, userId, companyId) {
   });
   if (!cutoffPeriod) return;
 
-  // Training records ARE included — their actualHours is already capped at
-  // defaultShiftHours by the approval strategy, so they cannot inflate OT
-  // beyond the approved amount. "No OT for training" means the training day
-  // itself cannot exceed the cap; the capped hours still count toward the
-  // period threshold.
+  // Training records are EXCLUDED from the OT basis (supersedes Bug 6, v2.10.18 —
+  // see docs/TIMEKEEPING_GLOSSARY.md). Training's actualHours is a flat, capped
+  // credit; leaving it inside the total compared against the period Threshold
+  // doesn't just pay its own flat amount — it also pushes other, actually-worked
+  // hours across the OT line, manufacturing OT premium the employee never worked
+  // for. Training is still paid in full via TOTAL PAYABLE; it is simply not
+  // measured against the OT threshold.
   const approved = await prisma.timeLogApproval.findMany({
     where: {
       cutoffPeriodId,
@@ -145,19 +147,26 @@ async function computeOtForCutoffBasis(cutoffPeriodId, userId, companyId) {
       actualHours:      true,
       approvedClockIn:  true,
       approvedClockOut: true,
-      timeLog: { select: { netWorkedHours: true } },
+      timeLog: { select: { netWorkedHours: true, punchType: true } },
     },
   });
 
-  const totalHours = approved.reduce((sum, a) => {
-    if (a.actualHours != null) return sum + parseFloat(a.actualHours.toString());
-    if (a.approvedClockIn && a.approvedClockOut) {
-      return sum + (new Date(a.approvedClockOut) - new Date(a.approvedClockIn)) / 3600000;
+  let trainingHoursExcluded = 0;
+  const otBasisHours = approved.reduce((sum, a) => {
+    const hours = a.actualHours != null
+      ? parseFloat(a.actualHours.toString())
+      : a.approvedClockIn && a.approvedClockOut
+        ? (new Date(a.approvedClockOut) - new Date(a.approvedClockIn)) / 3600000
+        : parseFloat(a.timeLog?.netWorkedHours?.toString() ?? 0);
+
+    if (a.timeLog?.punchType === "TRAINING") {
+      trainingHoursExcluded += hours;
+      return sum;
     }
-    return sum + parseFloat(a.timeLog?.netWorkedHours?.toString() ?? 0);
+    return sum + hours;
   }, 0);
 
-  const otHours = parseFloat(Math.max(0, totalHours - threshold).toFixed(2));
+  const otHours = parseFloat(Math.max(0, otBasisHours - threshold).toFixed(2));
   const date    = cutoffPeriod.periodEnd;
 
   if (otHours > 0) {
@@ -175,7 +184,7 @@ async function computeOtForCutoffBasis(cutoffPeriodId, userId, companyId) {
       update: hoursChanged ? { otHours, status: "pending" } : { otHours },
     });
 
-    console.log(`[OT] Upserted cutoff block — ${userId}: ${otHours}h OT (${totalHours.toFixed(2)}h total vs ${threshold}h threshold)`);
+    console.log(`[OT] Upserted cutoff block — ${userId}: ${otHours}h OT (${otBasisHours.toFixed(2)}h worked vs ${threshold}h threshold; ${trainingHoursExcluded.toFixed(2)}h training excluded)`);
   } else {
     const deleted = await prisma.cutoffOtBlock.deleteMany({
       where: { cutoffPeriodId, userId, date },
