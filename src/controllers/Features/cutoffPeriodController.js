@@ -1191,7 +1191,8 @@ const getCutoffApprovals = async (req, res) => {
 
         // Group: byUser[userId][dateStr]{ otHours, trainingHours }
         // Training hours are tracked separately — they appear in the breakdown display
-        // but are excluded from the OT total (matching computeOtForCutoffBasis logic).
+        // (labeled, not counted) but are excluded from the OT-eligible total below.
+        // Supersedes Bug 6 (v2.10.18) — see docs/TIMEKEEPING_GLOSSARY.md.
         const byUser = {};
         for (const r of breakdownRecords) {
           if (!r.timeLog) continue;
@@ -1237,11 +1238,11 @@ const getCutoffApprovals = async (req, res) => {
               })()
             : buildDays(userDates);
 
-          // totalHours includes training — mirrors computeOtForCutoffBasis which now
-          // counts all approved hours (training actualHours is already capped at
-          // defaultShiftHours, so it cannot inflate OT beyond the approved amount).
+          // totalHours excludes training — mirrors computeOtForCutoffBasis. Training
+          // rows still render in `days` for visibility but do not count toward the
+          // OT-eligible total or the threshold comparison.
           const totalHours = parseFloat(
-            days.reduce((s, d) => s + d.hours, 0).toFixed(2)
+            days.filter((d) => !d.isTraining).reduce((s, d) => s + d.hours, 0).toFixed(2)
           );
 
           return {

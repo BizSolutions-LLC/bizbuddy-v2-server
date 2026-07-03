@@ -6,6 +6,9 @@ computation, display logic, or cutoff approval strategy.
 
 Last updated: 2026-06-25 (v2.10.18 — sync-back design decided, pending implementation)
 
+See also: [`TIMEKEEPING_GLOSSARY.md`](./TIMEKEEPING_GLOSSARY.md) for canonical term definitions
+(Raw/Effective Clock-In, Worked Duration, TR, SL, OT) shared with the client-side application.
+
 ---
 
 ## Two Distinct Views — And Why They Differ
