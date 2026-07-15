@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "defaultMode": "plan",
+    "deny": [
+      "Bash(prisma migrate*)",
+      "Bash(npx prisma migrate*)",
+      "Bash(prisma db push*)",
+      "Bash(npx prisma db push*)",
+      "Bash(prisma db seed*)",
+      "Bash(npx prisma db seed*)",
+      "Bash(prisma generate*)",
+      "Bash(npx prisma generate*)",
+      "Bash(node scripts/*)",
+      "Bash(node src/prisma/seed.js)",
+      "Bash(npm run seed*)",
+      "Bash(npm run prisma:sync*)",
+      "Bash(npm run start*)",
+      "Bash(npm start*)",
+      "Bash(psql*)",
+      "Bash(pg_dump*)",
+      "Bash(pg_restore*)"
+    ]
+  }
+}
