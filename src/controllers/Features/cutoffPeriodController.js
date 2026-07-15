@@ -25,6 +25,7 @@ const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 const daycareCutoffStrategy                        = require("@services/Cutoff/daycareCutoffStrategy");
 const bncCutoffStrategy                            = require("@services/Cutoff/bncCutoffStrategy");
 const { recomputeAllOtForCutoff, recomputeOtForTimeLog } = require("@services/Cutoff/cutoffOtService");
+const { calcDailyHours } = require("@utils/leaveUtils");
 
 function getApprovalStrategy(companyId) {
   return BNC_COMPANY_IDS.has(companyId) ? bncCutoffStrategy : daycareCutoffStrategy;
@@ -1060,46 +1061,56 @@ const getCutoffApprovals = async (req, res) => {
       })
     );
 
-    const standaloneLeaves = leaveRecords
-      .filter((leave) => leave.status === "approved")
-      .flatMap((leave) => {
-        const rows = [];
-        // ✅ FIX: Leave dates are calendar dates — read date part directly from ISO string.
-        // NEVER timezone-convert: 2026-03-27T00:00:00Z in LA becomes Mar 26, giving wrong day.
-        const startStr = (leave.startDate instanceof Date
-          ? leave.startDate.toISOString()
-          : String(leave.startDate)).split("T")[0];
-        const endStr = (leave.endDate instanceof Date
-          ? leave.endDate.toISOString()
-          : String(leave.endDate)).split("T")[0];
+    const standaloneLeavesNested = await Promise.all(
+      leaveRecords
+        .filter((leave) => leave.status === "approved")
+        .map(async (leave) => {
+          const rows = [];
+          // ✅ FIX: Leave dates are calendar dates — read date part directly from ISO string.
+          // NEVER timezone-convert: 2026-03-27T00:00:00Z in LA becomes Mar 26, giving wrong day.
+          const startStr = (leave.startDate instanceof Date
+            ? leave.startDate.toISOString()
+            : String(leave.startDate)).split("T")[0];
+          const endStr = (leave.endDate instanceof Date
+            ? leave.endDate.toISOString()
+            : String(leave.endDate)).split("T")[0];
 
-        let cursor = moment(startStr); // plain moment — no timezone
-        const endDay = moment(endStr);
+          // Real per-day scheduled hours for this leave — same calculation used for
+          // approval proration, so the client can show the employee's actual hours
+          // for that day instead of a hardcoded default.
+          const dailyHours = await calcDailyHours(leave.userId, startStr, endStr).catch(() => []);
+          const hoursByDate = new Map(dailyHours.map((d) => [d.date, d.hours]));
 
-        while (cursor.isSameOrBefore(endDay)) {
-          const dateStr = cursor.format("YYYY-MM-DD");
-          const key = `${leave.userId}__${dateStr}`;
-          // Only add if this day is within cutoff AND no punch exists
-          const cursorDate = cursor.toDate();
-          const inCutoff =
-            cursorDate >= cutoffPeriod.periodStart &&
-            cursorDate <= cutoffPeriod.periodEnd;
-          if (inCutoff && !punchUserDates.has(key)) {
-            rows.push({
-              _type:     "leave",
-              id:        `leave_${leave.id}_${dateStr}`,
-              leaveDate: dateStr,
-              leave: {
-                ...leave,
-                leaveType: resolveLeaveType(leave.leaveType),
-              },
-              user: leave.User,
-            });
+          let cursor = moment(startStr); // plain moment — no timezone
+          const endDay = moment(endStr);
+
+          while (cursor.isSameOrBefore(endDay)) {
+            const dateStr = cursor.format("YYYY-MM-DD");
+            const key = `${leave.userId}__${dateStr}`;
+            // Only add if this day is within cutoff AND no punch exists
+            const cursorDate = cursor.toDate();
+            const inCutoff =
+              cursorDate >= cutoffPeriod.periodStart &&
+              cursorDate <= cutoffPeriod.periodEnd;
+            if (inCutoff && !punchUserDates.has(key)) {
+              rows.push({
+                _type:     "leave",
+                id:        `leave_${leave.id}_${dateStr}`,
+                leaveDate: dateStr,
+                hours:     hoursByDate.get(dateStr) ?? null,
+                leave: {
+                  ...leave,
+                  leaveType: resolveLeaveType(leave.leaveType),
+                },
+                user: leave.User,
+              });
+            }
+            cursor.add(1, "day");
           }
-          cursor.add(1, "day");
-        }
-        return rows;
-      });
+          return rows;
+        })
+    );
+    const standaloneLeaves = standaloneLeavesNested.flat();
 
     // For B&C: batch-attach available shifts per punch so the client can render
     // the shift picker on "Approve Schedule" without a separate API call.
