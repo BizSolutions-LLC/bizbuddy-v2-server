@@ -56,6 +56,7 @@ The real boot sequence:
 | `@middlewares` | `./src/middlewares` |
 | `@routes` | `./src/routes` |
 | `@utils` | `./src/utils` |
+| `@constants` | `./src/constants` |
 | `@services` | `./src/services` |
 | `@workers` | `./src/workers` |
 | `@jobs` | `./src/jobs` |
@@ -294,3 +295,4 @@ Every major model is scoped to `companyId`. Cascade deletes ensure tenant data i
 - Cron job functions in `/src/jobs/` are pure functions; registration is in `cronScheduler.js`.
 - The Stripe webhook route requires a raw body — the bypass in `app.js` must remain.
 - `req.user` is populated by `authMiddleware.js` with `{ id, email, role, companyId }`.
+- **Async route handlers don't need manual try/catch for unexpected errors** — `express-async-errors` (required at the top of `server.js`, before `app.js`/routes are loaded) auto-forwards any rejected promise from a route handler to `errorHandler.js`. Still use try/catch when you want a *specific* error (e.g. a Prisma error code like `P2003`) to produce a friendlier message/status than the generic 500 — see `deletePolicy` in `leavePolicyController.js` for the pattern. What you must never do is assume an unguarded async route is "probably fine" — before this was added, an unguarded route (`deletePolicy` hitting a foreign-key violation) crashed the entire process, not just that request, because Node terminates on unhandled promise rejections by default. `server.js` also registers `process.on('unhandledRejection'/'uncaughtException')` as a second layer for async code outside the request cycle (cron jobs, workers) — errors there get logged to `logs/error.log` instead of crashing the server.

@@ -6,6 +6,7 @@ const { prisma } = require("@config/connection");
 const { JWT_SECRET } = require("@config/env");
 const { sendMail } = require("@utils/mailer");
 const { renderWelcome } = require("@emails/renderTemplate");
+const { getDirectSupervisors } = require("@services/Approvers/approverResolutionService");
 
 const getAllSubscriptionPlans = async (req, res) => {
   try {
@@ -186,139 +187,18 @@ const signUp = async (req, res) => {
 
 const getApprover = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const companyId = req.user.companyId;
+    const data = await getDirectSupervisors({ id: req.user.id, companyId: req.user.companyId });
 
-    // First, find the user and check their department assignment
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        employmentDetail: true, // Check employment details for department
-        department: true        // Check direct department assignment
-      }
-    });
-
-    if (!user || user.companyId !== companyId) {
+    if (data === null) {
       return res.status(404).json({ error: "User not found or company mismatch" });
     }
 
-    // Determine user's department - check both possible assignments
-    let userDepartmentId = user.departmentId || user.employmentDetail?.departmentId;
-
-    if (userDepartmentId) {
-      // User is assigned to a department - return department supervisors
-      const departmentSupervisors = await prisma.user.findMany({
-        where: {
-          companyId: companyId,
-          OR: [
-            // Department supervisor (assigned to supervise the whole department)
-            {
-              supervisedDepartments: {
-                some: { id: userDepartmentId }
-              }
-            },
-            // Individual supervisors of employees in this department
-            {
-              supervisedEmployees: {
-                some: { 
-                  departmentId: userDepartmentId 
-                }
-              }
-            },
-            // Users with supervisor role in the same department
-            {
-              role: 'supervisor',
-              OR: [
-                { departmentId: userDepartmentId },
-                { 
-                  employmentDetail: { 
-                    departmentId: userDepartmentId 
-                  } 
-                }
-              ]
-            }
-          ],
-          status: 'active' // Only active supervisors
-        },
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          profile: {
-            select: {
-              firstName: true,
-              lastName: true
-            }
-          },
-          employmentDetail: {
-            select: {
-              jobTitle: true
-            }
-          }
-        },
-        distinct: ['id'] // Remove duplicates
-      });
-
-      return res.status(200).json({
-        success: true,
-        data: departmentSupervisors.map(supervisor => ({
-          id: supervisor.id,
-          name: supervisor.profile ? 
-            `${supervisor.profile.firstName || ''} ${supervisor.profile.lastName || ''}`.trim() || 
-            supervisor.email : supervisor.email,
-          email: supervisor.email,
-          role: supervisor.role,
-          jobTitle: supervisor.employmentDetail?.jobTitle || 'Supervisor'
-        }))
-      });
-
-    } else {
-      // User has no department assignment - return all company admins
-      const companyAdmins = await prisma.user.findMany({
-        where: {
-          companyId: companyId,
-          role: {
-            in: ['admin', 'superadmin']
-          },
-          status: 'active'
-        },
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          profile: {
-            select: {
-              firstName: true,
-              lastName: true
-            }
-          },
-          employmentDetail: {
-            select: {
-              jobTitle: true
-            }
-          }
-        }
-      });
-
-      return res.status(200).json({
-        success: true,
-        data: companyAdmins.map(admin => ({
-          id: admin.id,
-          name: admin.profile ? 
-            `${admin.profile.firstName || ''} ${admin.profile.lastName || ''}`.trim() || 
-            admin.email : admin.email,
-          email: admin.email,
-          role: admin.role,
-          jobTitle: admin.employmentDetail?.jobTitle || 'Administrator'
-        }))
-      });
-    }
-
+    return res.status(200).json({ success: true, data });
   } catch (error) {
     console.error('Error fetching approvers:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: "Internal server error",
-      details: error.message 
+      details: error.message
     });
   }
 };

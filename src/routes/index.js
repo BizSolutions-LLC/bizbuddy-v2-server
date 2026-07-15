@@ -39,6 +39,7 @@ const systemAdminRoutes = require("@routes/Analytics/systemAdminRoutes");
 const cutoffRoutes = require("./Cutoff/cutoffRoutes");
 const dashboardRoutes = require("@routes/Features/dashboardRoutes");
 const feedbackRoutes = require("@routes/Features/feedbackRoutes");
+const punchLogsBootstrapRoutes = require("@routes/Features/punchLogsBootstrapRoutes");
 
 const testRoutes = require("@routes/testRoutes");
 
@@ -77,6 +78,7 @@ router.use('/notifications', notificationRoutes);
 router.use("/cutoff", cutoffRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/feedback", feedbackRoutes);
+router.use("/punch-logs", punchLogsBootstrapRoutes);
 
 router.use("/analytics", analyticsRoutes);
 router.use("/system-admin", systemAdminRoutes);

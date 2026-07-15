@@ -1,5 +1,13 @@
 // server.js
 require("module-alias/register");
+// Must load before app.js / @routes/index.js — it patches Express's router
+// methods so every async route handler registered afterwards automatically
+// forwards rejections to errorHandler.js instead of crashing the process on
+// an unhandled rejection. See docs/CLAUDE.md "Key Conventions" for why this
+// exists — a real production incident (deletePolicy FK violation) took the
+// whole server down before this was added.
+require("express-async-errors");
+
 const dotenv = require("dotenv");
 dotenv.config();
 
@@ -8,7 +16,19 @@ const { connect } = require("@config/connection");
 const router = require("@routes/index.js");
 const { errorLogger } = require("@middlewares/requestLogger");
 const errorHandler = require("@middlewares/errorHandler");
+const logger = require("@config/logger");
 const http = require("http");
+
+// Defense-in-depth for async errors OUTSIDE the Express request cycle —
+// cron jobs and workers (leaveAccrualWorker, checkMissedClockIns, etc.)
+// aren't covered by express-async-errors since they never go through a
+// route. Log and keep the process alive instead of crashing on these too.
+process.on("unhandledRejection", (reason) => {
+  logger.error(`Unhandled Rejection: ${reason instanceof Error ? reason.stack : reason}`);
+});
+process.on("uncaughtException", (err) => {
+  logger.error(`Uncaught Exception: ${err.stack || err}`);
+});
 
 const PORT = process.env.PORT || 5000;
 const ENV  = process.env.NODE_ENV || "development";

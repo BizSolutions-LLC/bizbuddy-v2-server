@@ -1,6 +1,7 @@
 // src/controllers/Features/locationController.js
 
 const { prisma } = require("@config/connection");
+const { getAssignedLocations } = require("@services/Locations/assignedLocationsService");
 
 exports.createLocation = async (req, res) => {
   try {
@@ -74,26 +75,7 @@ exports.getAssignedLocationsForUser = async (req, res) => {
       return res.status(401).json({ error: "User not found in request." });
     }
 
-    const restrictions = await prisma.locationRestriction.findMany({
-      where: {
-        userId,
-        restrictionStatus: true,
-      },
-      include: {
-        location: true,
-      },
-    });
-
-    const assignedLocations = restrictions.map((r) => {
-      const loc = r.location;
-      return {
-        id: loc.id,
-        name: loc.name,
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-        radius: loc.radius,
-      };
-    });
+    const assignedLocations = await getAssignedLocations(userId);
 
     return res.status(200).json({
       data: assignedLocations,

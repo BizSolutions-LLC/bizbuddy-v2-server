@@ -1,6 +1,7 @@
 // src/controllers/Features/employmentDetailController.js
 /* eslint-disable consistent-return */
 const { prisma } = require("@config/connection");
+const { getVisibleCutoffPeriods } = require("@services/Cutoff/cutoffPeriodVisibilityService");
 
 const buildPayload = (body) => ({
   jobTitle: body.jobTitle?.trim(),
@@ -20,7 +21,14 @@ const getMyEmploymentDetails = async (req, res) => {
       where: { userId: req.user.id },
       include: { department: true, supervisor: { select: { id: true, email: true } } },
     });
-    return res.status(200).json({ data: detail });
+
+    const cutoffPeriods = await getVisibleCutoffPeriods({
+      companyId: req.user.companyId,
+      role: req.user.role,
+      departmentId: detail?.departmentId,
+    });
+
+    return res.status(200).json({ data: detail, cutoffPeriods });
   } catch (e) {
     console.error("getMyEmploymentDetails:", e);
     return res.status(500).json({ error: "Internal server error." });

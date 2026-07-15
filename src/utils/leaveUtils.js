@@ -3,7 +3,11 @@ const { prisma } = require("@config/connection");
 const moment     = require("moment-timezone");
 
 /**
- * Calculates the number of deductible hours for a leave request.
+ * Walks a leave date range and returns the deductible hours for each
+ * individual day. This is the single source of truth for "how many hours
+ * does day X of this leave cost" — calcRequestedHours (total) and the
+ * per-day approval proration (leaveApprovalService) both build on this, so
+ * they can never disagree.
  *
  * Deductible days are those that are:
  *   1. Within the startDate–endDate range (inclusive)
@@ -21,9 +25,9 @@ const moment     = require("moment-timezone");
  * @param {string} userId    - The employee requesting leave
  * @param {string} startISO  - Leave start date (ISO string or YYYY-MM-DD)
  * @param {string} endISO    - Leave end date (ISO string or YYYY-MM-DD)
- * @returns {number}         - Total deductible hours (2dp)
+ * @returns {Array<{date: string, hours: number}>} - One entry per deductible day, in order
  */
-async function calcRequestedHours(userId, startISO, endISO) {
+async function calcDailyHours(userId, startISO, endISO) {
   const user = await prisma.user.findUnique({
     where:   { id: userId },
     include: { company: true },
@@ -50,9 +54,13 @@ async function calcRequestedHours(userId, startISO, endISO) {
     select: { date: true },
   });
 
-  // Build a Set of holiday date strings (YYYY-MM-DD) in company timezone
+  // Build a Set of holiday date strings (YYYY-MM-DD). Holiday.date is a plain
+  // @db.Date column (no time/timezone) — read the calendar date directly.
+  // NEVER run it through moment().tz(): that reinterprets the UTC-midnight
+  // storage instant as a real moment and rolls it back a day in negative-UTC
+  // timezones like America/Los_Angeles.
   const holidaySet = new Set(
-    holidays.map((h) => moment(h.date).tz(tz).format("YYYY-MM-DD"))
+    holidays.map((h) => h.date.toISOString().split("T")[0])
   );
 
   // ── 2. Fetch UserShifts with actual shift duration ──────────────────────────
@@ -71,11 +79,13 @@ async function calcRequestedHours(userId, startISO, endISO) {
     },
   });
 
-  // Build a Map: dateStr → actual shift hours for that day
+  // Build a Map: dateStr → actual shift hours for that day. assignedDate is a
+  // plain @db.Date column (like Holiday.date above) — read it directly, never
+  // through moment().tz(), which would roll it back a day in Pacific time.
   const shiftHoursMap = new Map();
   for (const us of userShifts) {
     if (!us.shift) continue;
-    const dateStr = moment(us.assignedDate).tz(tz).format("YYYY-MM-DD");
+    const dateStr = us.assignedDate.toISOString().split("T")[0];
     const s = us.shift.startTime;
     const e = us.shift.endTime;
     let hrs = (e.getTime() - s.getTime()) / 36e5;
@@ -95,8 +105,8 @@ async function calcRequestedHours(userId, startISO, endISO) {
     isShiftWorker = !!anyShift;
   }
 
-  // ── 3. Walk each calendar day and accumulate hours ─────────────────────────
-  let totalHours = 0;
+  // ── 3. Walk each calendar day and collect deductible hours ─────────────────
+  const days = [];
   const cursor = startDate.clone();
 
   while (cursor.isSameOrBefore(endDate, "day")) {
@@ -109,17 +119,28 @@ async function calcRequestedHours(userId, startISO, endISO) {
     if (!isWeekend && !isHoliday) {
       if (isShiftWorker) {
         // Shift-assigned employee: only deduct hours for days with an actual scheduled shift
-        if (shiftHoursMap.has(dateStr)) totalHours += shiftHoursMap.get(dateStr);
+        if (shiftHoursMap.has(dateStr)) {
+          days.push({ date: dateStr, hours: +shiftHoursMap.get(dateStr).toFixed(2) });
+        }
       } else {
         // Salaried/unassigned employee: fall back to company default shift hours
-        totalHours += shiftHours;
+        days.push({ date: dateStr, hours: +shiftHours.toFixed(2) });
       }
     }
 
     cursor.add(1, "day");
   }
 
-  return +totalHours.toFixed(2);
+  return days;
+}
+
+/**
+ * Total deductible hours for a leave request — sum of calcDailyHours().
+ * @returns {number} Total deductible hours (2dp)
+ */
+async function calcRequestedHours(userId, startISO, endISO) {
+  const days = await calcDailyHours(userId, startISO, endISO);
+  return +days.reduce((sum, d) => sum + d.hours, 0).toFixed(2);
 }
 
 function monthlyIncrement(policy, defaultShiftHours = 8) {
@@ -129,4 +150,23 @@ function monthlyIncrement(policy, defaultShiftHours = 8) {
   return +(perYear / 12).toFixed(2);
 }
 
-module.exports = { calcRequestedHours, monthlyIncrement };
+/**
+ * Prisma `where` fragment scoping which employees' Leave rows a management
+ * user (admin/superadmin/supervisor) may view. Admins/superadmins see the
+ * whole company; supervisors are restricted to their own department. A
+ * supervisor with no department sees nothing (there's no department to
+ * scope them to) rather than silently falling back to company-wide.
+ *
+ * Shared by leaveController (list/pending views) and dashboardController
+ * (sidebar pending-count) so the visibility rule can't drift between them.
+ */
+function leaveVisibilityWhere(companyId, role, departmentId) {
+  if (role === "supervisor") {
+    return departmentId
+      ? { User: { companyId, departmentId } }
+      : { User: { companyId, id: "" } }; // matches no one
+  }
+  return { User: { companyId } };
+}
+
+module.exports = { calcDailyHours, calcRequestedHours, monthlyIncrement, leaveVisibilityWhere };

@@ -1,6 +1,7 @@
 // src/controllers/Features/dashboardController.js
 
 const { prisma } = require("@config/connection");
+const { leaveVisibilityWhere } = require("@utils/leaveUtils");
 
 const getSidebarStats = async (req, res) => {
   try {
@@ -10,6 +11,11 @@ const getSidebarStats = async (req, res) => {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+    const requester = await prisma.user.findUnique({
+      where:  { id: req.user.id },
+      select: { departmentId: true },
+    });
 
     const [
       totalActiveEmployees,
@@ -49,11 +55,13 @@ const getSidebarStats = async (req, res) => {
         where: { companyId, status: "pending" },
       }),
 
-      // Pending leave requests assigned to this approver
+      // Pending leave requests this management user can see (department-scoped
+      // for supervisors, company-wide for admin/superadmin) — includes
+      // pending_secondary, previously undercounted here.
       prisma.leave.count({
         where: {
-          status: "pending",
-          approverId: req.user.id,
+          ...leaveVisibilityWhere(companyId, req.user.role, requester?.departmentId),
+          status: { in: ["pending", "pending_secondary"] },
         },
       }),
 
