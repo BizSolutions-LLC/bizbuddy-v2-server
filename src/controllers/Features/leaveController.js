@@ -1,8 +1,10 @@
 // src/controllers/Features/leaveController.js
 
 const { prisma } = require("@config/connection");
-const { calcRequestedHours } = require("@utils/leaveUtils");
+const { calcRequestedHours, leaveVisibilityWhere } = require("@utils/leaveUtils");
+const { previewLeaveApproval, applyLeaveApproval } = require("@services/Leave/leaveApprovalService");
 const { createNotification } = require("@services/notificationService");
+const { getEligibleApprovers } = require("@services/Approvers/approverResolutionService");
 const { getIO } = require("@config/socket");
 const moment = require("moment-timezone");
 
@@ -14,15 +16,29 @@ const _format = (l) => ({
   updatedAt: l.updatedAt.toISOString(),
 });
 
-// ─── Resolve a leave policy from a leave record (ID first, name fallback) ────
-async function _resolvePolicy(leaveType, companyId) {
-  let policy = await prisma.leavePolicy.findFirst({ where: { id: leaveType } });
+// ─── Resolve a leave's policy — policyId FK first, then legacy leaveType (ID or name) ─
+async function _resolvePolicy(leave, companyId) {
+  if (leave.policyId) {
+    const byFk = await prisma.leavePolicy.findFirst({ where: { id: leave.policyId, companyId } });
+    if (byFk) return byFk;
+  }
+  let policy = await prisma.leavePolicy.findFirst({ where: { id: leave.leaveType } });
   if (!policy) {
     policy = await prisma.leavePolicy.findFirst({
-      where: { companyId, leaveType },
+      where: { companyId, leaveType: leave.leaveType },
     });
   }
   return policy;
+}
+
+// ─── Eligible approver pool: any admin/superadmin (company-wide), or a ───────
+// ─── supervisor whose department matches the leave requester's department ────
+function _isEligibleApprover(actingRole, actingDepartmentId, requesterDepartmentId) {
+  if (["admin", "superadmin"].includes(actingRole)) return true;
+  if (actingRole === "supervisor") {
+    return !!requesterDepartmentId && actingDepartmentId === requesterDepartmentId;
+  }
+  return false;
 }
 
 // ─── Attach requestedHours to a list of already-formatted leave records ───────
@@ -99,56 +115,6 @@ async function _attachTransactions(leaves) {
   });
 }
 
-// ─── Deduct leave balance (shared between single and final approval) ──────────
-async function _deductBalance(leave, policy, companyId, approverId, approverComments) {
-  // Unpaid leave — no balance deduction needed
-  if (!leave.isPaid) return { error: false, requestedHours: 0 };
-
-  const requestedHours = await calcRequestedHours(
-    leave.userId,
-    leave.startDate,
-    leave.endDate
-  );
-
-  const bal = await prisma.leaveBalance.upsert({
-    where:  { userId_policyId: { userId: leave.userId, policyId: policy.id } },
-    update: {},
-    create: { userId: leave.userId, policyId: policy.id, balanceHours: 0 },
-  });
-
-  if (!policy.negativeAllowed && Number(bal.balanceHours) < requestedHours) {
-    return {
-      error: true,
-      message: `Insufficient leave balance (${bal.balanceHours}h available, ${requestedHours}h needed).`,
-      debug: { available: bal.balanceHours, requested: requestedHours, leaveType: policy.leaveType },
-    };
-  }
-
-  const balanceBefore = Number(bal.balanceHours);
-  const balanceAfter  = balanceBefore - requestedHours;
-
-  await prisma.leaveBalance.update({
-    where: { id: bal.id },
-    data:  { balanceHours: { decrement: requestedHours } },
-  });
-
-  await prisma.leaveTransaction.create({
-    data: {
-      userId:        leave.userId,
-      policyId:      policy.id,
-      type:          "deduction",
-      hours:         -requestedHours,
-      balanceBefore,
-      balanceAfter,
-      leaveId:       leave.id,
-      performedById: approverId ?? null,
-      note:          approverComments ?? null,
-    },
-  });
-
-  return { error: false, requestedHours };
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 const submitLeaveRequest = async (req, res) => {
@@ -164,11 +130,24 @@ const submitLeaveRequest = async (req, res) => {
   if (fromDateStr > toDateStr)
     return res.status(400).json({ message: "From Date cannot be after To Date." });
 
+  const requester = await prisma.user.findUnique({
+    where:  { id: req.user.id },
+    select: { departmentId: true },
+  });
+
+  // Eligible approvers: any admin/superadmin (company-wide), or a supervisor
+  // in the requester's own department. No department on the requester means
+  // only admins/superadmins are selectable.
+  const approverRoleConditions = [{ role: { in: ["admin", "superadmin"] } }];
+  if (requester?.departmentId) {
+    approverRoleConditions.push({ role: "supervisor", departmentId: requester.departmentId });
+  }
+
   const approver = await prisma.user.findFirst({
     where: {
       id: approverId,
       companyId: req.user.companyId,
-      role: { in: ["admin", "supervisor", "superadmin"] },
+      OR: approverRoleConditions,
     },
   });
   if (!approver)
@@ -182,6 +161,27 @@ const submitLeaveRequest = async (req, res) => {
   ]);
   if (!policy)
     return res.status(400).json({ message: "Leave policy not found for this type." });
+
+  // Archived types are retired from future use — reject even if the client
+  // has a stale cached list that still shows it.
+  if (policy.isArchived)
+    return res.status(400).json({ message: "This leave type has been archived and can no longer be used." });
+
+  // Assignment gate — employee must be assigned to this leave type
+  if (!policy.assignedToAll) {
+    const assigned = await prisma.leavePolicyAssignment.findFirst({
+      where: { policyId: policy.id, userId: req.user.id },
+    });
+    if (!assigned)
+      return res.status(403).json({ message: "You are not assigned to this leave type." });
+  }
+
+  // Pay-mode intent — must be permitted by the policy's isPaid/isNotPaid gates
+  const payModeIntent = isPaid !== undefined ? Boolean(isPaid) : true;
+  if (payModeIntent && !policy.isPaid)
+    return res.status(400).json({ message: "This leave type cannot be requested as paid." });
+  if (!payModeIntent && !policy.isNotPaid)
+    return res.status(400).json({ message: "This leave type cannot be requested as unpaid." });
 
   const companyTz = company?.timeZone || "America/Los_Angeles";
   // Store dates as noon in company timezone — prevents UTC conversion from drifting
@@ -221,11 +221,12 @@ const submitLeaveRequest = async (req, res) => {
     data: {
       userId:     req.user.id,
       approverId: approver.id,
-      leaveType:  policy.id,
+      policyId:   policy.id,
+      leaveType:  policy.id, // legacy field — kept in sync for existing code that still reads it
       startDate:  startDateUTC,
       endDate:    endDateUTC,
       status:     "pending",
-      isPaid:     isPaid !== undefined ? Boolean(isPaid) : true,
+      isPaid:     payModeIntent,
       leaveReason,
       ...(affectedShifts !== null && { affectedShifts }),
     },
@@ -269,175 +270,159 @@ const submitLeaveRequest = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Loads a leave + the requester info needed for eligibility checks and
+// notifications. Returns null if no actionable (pending/pending_secondary)
+// leave exists — shared by approve/reject/preview.
+async function _loadActionableLeave(leaveId) {
+  const leave = await prisma.leave.findFirst({
+    where: { id: leaveId, status: { in: ["pending", "pending_secondary"] } },
+  });
+  if (!leave) return null;
+
+  const leaveUser = await prisma.user.findUnique({
+    where:  { id: leave.userId },
+    select: { departmentId: true, email: true, profile: { select: { firstName: true, lastName: true } } },
+  });
+  return { leave, leaveUser };
+}
+
 const approveLeave = async (req, res) => {
   const leaveId = req.params.id;
   const { approverComments, escalateTo } = req.body;
 
-  // Find leave where the caller is either the first approver (pending)
-  // or the secondary approver (pending_secondary)
-  const leave = await prisma.leave.findFirst({
-    where: {
-      id: leaveId,
-      OR: [
-        { approverId:          req.user.id, status: "pending"           },
-        { secondaryApproverId: req.user.id, status: "pending_secondary" },
-      ],
-    },
-  });
-
-  if (!leave)
+  const loaded = await _loadActionableLeave(leaveId);
+  if (!loaded)
     return res.status(404).json({ message: "Leave request not found or already processed." });
+  const { leave, leaveUser } = loaded;
 
-  const isFirstApprover     = leave.status === "pending"           && leave.approverId          === req.user.id;
-  const isSecondaryApprover = leave.status === "pending_secondary" && leave.secondaryApproverId === req.user.id;
+  const actingUser = await prisma.user.findUnique({
+    where:  { id: req.user.id },
+    select: { departmentId: true },
+  });
+  if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
+    return res.status(403).json({ message: "You are not eligible to act on this leave request." });
 
-  const policy = await _resolvePolicy(leave.leaveType, req.user.companyId);
+  const policy = await _resolvePolicy(leave, req.user.companyId);
   if (!policy)
     return res.status(400).json({ message: "Leave policy not configured." });
 
-  const leaveUser = await prisma.user.findUnique({
-    where:  { id: leave.userId },
-    select: {
-      departmentId: true,
-      email:        true,
-      profile:      { select: { firstName: true, lastName: true } },
-    },
-  });
   const employeeName = leaveUser?.profile
     ? `${leaveUser.profile.firstName || ""} ${leaveUser.profile.lastName || ""}`.trim()
     : leaveUser?.email;
   const startDateStr = new Date(leave.startDate).toLocaleDateString();
   const endDateStr   = new Date(leave.endDate).toLocaleDateString();
+  const stage         = leave.status; // "pending" | "pending_secondary"
 
-  // ── FIRST APPROVER ────────────────────────────────────────────────────────
-  if (isFirstApprover) {
-    // Check if approver wants to escalate to a second approver.
-    // Requires: company.multiApprovalEnabled = true AND a valid escalateTo userId.
-    if (escalateTo) {
-      const company = await prisma.company.findUnique({
-        where:  { id: req.user.companyId },
-        select: { multiApprovalEnabled: true },
-      });
-
-      if (!company?.multiApprovalEnabled)
-        return res.status(400).json({ message: "Two-step approval is not enabled for this company." });
-
-      if (escalateTo === req.user.id)
-        return res.status(400).json({ message: "Cannot escalate to yourself." });
-
-      if (escalateTo === leave.userId)
-        return res.status(400).json({ message: "Cannot escalate to the leave requester." });
-
-      const secondaryApprover = await prisma.user.findFirst({
-        where: {
-          id:        escalateTo,
-          companyId: req.user.companyId,
-          role:      { in: ["admin", "supervisor", "superadmin"] },
-          status:    "active",
-        },
-        select: { id: true, departmentId: true },
-      });
-      if (!secondaryApprover)
-        return res.status(400).json({ message: "Escalation target is not a valid active approver." });
-
-      // Step 1 of 2 — set secondaryApproverId per-request, advance to pending_secondary
-      const data = await prisma.leave.update({
-        where: { id: leaveId },
-        data:  { status: "pending_secondary", secondaryApproverId: escalateTo, approverComments },
-      });
-
-      try {
-        await createNotification({
-          userId:           escalateTo,
-          companyId:        req.user.companyId,
-          departmentId:     secondaryApprover.departmentId || null,
-          notificationCode: "LEAVE_PENDING_SECONDARY_APPROVAL",
-          title:            "Leave Request Awaiting Your Approval",
-          message:          `${employeeName}'s leave request from ${startDateStr} to ${endDateStr} has been approved by the first approver and is awaiting your final approval.`,
-          payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate, requesterId: leave.userId },
-        });
-      } catch (e) {
-        console.error("❌ Failed to send secondary approval notification:", e);
-      }
-
-      try {
-        await createNotification({
-          userId:           leave.userId,
-          companyId:        req.user.companyId,
-          departmentId:     leaveUser?.departmentId || null,
-          notificationCode: "LEAVE_REQUEST_FIRST_APPROVED",
-          title:            "Leave Request — First Approval Done",
-          message:          `Your leave request from ${startDateStr} to ${endDateStr} has been approved by your supervisor and is awaiting final approval.`,
-          payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate },
-        });
-      } catch (e) {
-        console.error("❌ Failed to send first-approval employee notification:", e);
-      }
-
-      return res.json({ data: _format(data) });
-    }
-
-    // No escalation — single approver, deduct balance and fully approve
-    const result = await _deductBalance(leave, policy, req.user.companyId, req.user.id, approverComments);
-    if (result.error) return res.status(400).json({ message: result.message, debug: result.debug });
-
-    const data = await prisma.leave.update({
-      where: { id: leaveId },
-      data:  { status: "approved", approverComments },
+  // ── ESCALATE (only valid from "pending") ────────────────────────────────
+  if (stage === "pending" && escalateTo) {
+    const company = await prisma.company.findUnique({
+      where:  { id: req.user.companyId },
+      select: { multiApprovalEnabled: true },
     });
+    if (!company?.multiApprovalEnabled)
+      return res.status(400).json({ message: "Two-step approval is not enabled for this company." });
+    if (escalateTo === req.user.id)
+      return res.status(400).json({ message: "Cannot escalate to yourself." });
+    if (escalateTo === leave.userId)
+      return res.status(400).json({ message: "Cannot escalate to the leave requester." });
 
-    // Notify employee + emit real-time balance update
+    const secondaryApprover = await prisma.user.findFirst({
+      where: {
+        id:        escalateTo,
+        companyId: req.user.companyId,
+        role:      { in: ["admin", "supervisor", "superadmin"] },
+        status:    "active",
+      },
+      select: { id: true, departmentId: true },
+    });
+    if (!secondaryApprover)
+      return res.status(400).json({ message: "Escalation target is not a valid active approver." });
+
+    // Atomic claim — only succeeds if still "pending" (no one else escalated/approved first)
+    const claim = await prisma.leave.updateMany({
+      where: { id: leaveId, status: "pending" },
+      data:  { status: "pending_secondary", secondaryApproverId: escalateTo, approverComments },
+    });
+    if (claim.count === 0)
+      return res.status(409).json({ message: "This leave request was already actioned by someone else." });
+
+    const data = await prisma.leave.findUnique({ where: { id: leaveId } });
+
     try {
       await createNotification({
-        userId:           leave.userId,
+        userId:           escalateTo,
         companyId:        req.user.companyId,
-        departmentId:     leaveUser?.departmentId || null,
-        notificationCode: "LEAVE_REQUEST_APPROVED",
-        title:            "Leave Request Approved",
-        message:          `Your leave request from ${startDateStr} to ${endDateStr} has been approved.`,
-        payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate },
+        departmentId:     secondaryApprover.departmentId || null,
+        notificationCode: "LEAVE_PENDING_SECONDARY_APPROVAL",
+        title:            "Leave Request Awaiting Your Approval",
+        message:          `${employeeName}'s leave request from ${startDateStr} to ${endDateStr} has been approved by the first approver and is awaiting your final approval.`,
+        payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate, requesterId: leave.userId },
       });
     } catch (e) {
-      console.error("❌ Failed to send leave approval notification:", e);
+      console.error("❌ Failed to send secondary approval notification:", e);
     }
-
-    try {
-      getIO().to(leave.userId).emit("leaveBalanceUpdated", { leaveId, policyId: policy.id });
-    } catch (_) {}
-
-    return res.json({ data: _format(data) });
-  }
-
-  // ── SECONDARY (FINAL) APPROVER ────────────────────────────────────────────
-  if (isSecondaryApprover) {
-    const result = await _deductBalance(leave, policy, req.user.companyId, req.user.id, approverComments);
-    if (result.error) return res.status(400).json({ message: result.message, debug: result.debug });
-
-    const data = await prisma.leave.update({
-      where: { id: leaveId },
-      data:  { status: "approved", secondaryApproverComments: approverComments },
-    });
 
     try {
       await createNotification({
         userId:           leave.userId,
         companyId:        req.user.companyId,
         departmentId:     leaveUser?.departmentId || null,
-        notificationCode: "LEAVE_REQUEST_APPROVED",
-        title:            "Leave Request Approved",
-        message:          `Your leave request from ${startDateStr} to ${endDateStr} has been fully approved.`,
+        notificationCode: "LEAVE_REQUEST_FIRST_APPROVED",
+        title:            "Leave Request — First Approval Done",
+        message:          `Your leave request from ${startDateStr} to ${endDateStr} has been approved by your supervisor and is awaiting final approval.`,
         payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate },
       });
     } catch (e) {
-      console.error("❌ Failed to send final approval notification:", e);
+      console.error("❌ Failed to send first-approval employee notification:", e);
     }
-
-    try {
-      getIO().to(leave.userId).emit("leaveBalanceUpdated", { leaveId, policyId: policy.id });
-    } catch (_) {}
 
     return res.json({ data: _format(data) });
   }
+
+  // ── FINAL APPROVAL — from "pending" (no escalation) or "pending_secondary" ─
+  // Atomic claim first: flips status only if it's still in the expected stage,
+  // so two eligible approvers acting at the same time can't both succeed.
+  const claim = await prisma.leave.updateMany({
+    where: { id: leaveId, status: stage },
+    data:  stage === "pending_secondary"
+      ? { status: "approved", secondaryApproverComments: approverComments }
+      : { status: "approved", approverComments },
+  });
+  if (claim.count === 0)
+    return res.status(409).json({ message: "This leave request was already actioned by someone else." });
+
+  try {
+    await applyLeaveApproval(leave, policy, req.user.id, approverComments);
+  } catch (err) {
+    // Compensate — release the claim so the leave isn't stuck "approved" with no ledger effect
+    await prisma.leave.update({ where: { id: leaveId }, data: { status: stage } }).catch(() => {});
+    console.error("❌ Failed to apply leave approval ledger:", err);
+    return res.status(500).json({ message: "Failed to finalize leave approval. Please try again." });
+  }
+
+  const data = await prisma.leave.findUnique({ where: { id: leaveId } });
+
+  try {
+    await createNotification({
+      userId:           leave.userId,
+      companyId:        req.user.companyId,
+      departmentId:     leaveUser?.departmentId || null,
+      notificationCode: "LEAVE_REQUEST_APPROVED",
+      title:            "Leave Request Approved",
+      message:          stage === "pending_secondary"
+        ? `Your leave request from ${startDateStr} to ${endDateStr} has been fully approved.`
+        : `Your leave request from ${startDateStr} to ${endDateStr} has been approved.`,
+      payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate },
+    });
+  } catch (e) {
+    console.error("❌ Failed to send leave approval notification:", e);
+  }
+
+  try {
+    getIO().to(leave.userId).emit("leaveBalanceUpdated", { leaveId, policyId: policy.id });
+  } catch (_) {}
+
+  return res.json({ data: _format(data) });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -446,35 +431,32 @@ const rejectLeave = async (req, res) => {
   const leaveId = req.params.id;
   const { approverComments } = req.body;
 
-  // Either first approver rejecting a pending leave,
-  // or secondary approver rejecting a pending_secondary leave
-  const leave = await prisma.leave.findFirst({
-    where: {
-      id: leaveId,
-      OR: [
-        { approverId:          req.user.id, status: "pending"           },
-        { secondaryApproverId: req.user.id, status: "pending_secondary" },
-      ],
-    },
-  });
-
-  if (!leave)
+  const loaded = await _loadActionableLeave(leaveId);
+  if (!loaded)
     return res.status(404).json({ message: "Leave request not found or already processed." });
+  const { leave, leaveUser } = loaded;
 
-  const isSecondaryRejecting = leave.status === "pending_secondary";
+  const actingUser = await prisma.user.findUnique({
+    where:  { id: req.user.id },
+    select: { departmentId: true },
+  });
+  if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
+    return res.status(403).json({ message: "You are not eligible to act on this leave request." });
 
-  const data = await prisma.leave.update({
-    where: { id: leaveId },
-    data: isSecondaryRejecting
+  const stage = leave.status; // "pending" | "pending_secondary"
+
+  const claim = await prisma.leave.updateMany({
+    where: { id: leaveId, status: stage },
+    data:  stage === "pending_secondary"
       ? { status: "rejected", secondaryApproverComments: approverComments }
       : { status: "rejected", approverComments },
   });
+  if (claim.count === 0)
+    return res.status(409).json({ message: "This leave request was already actioned by someone else." });
+
+  const data = await prisma.leave.findUnique({ where: { id: leaveId } });
 
   try {
-    const leaveUser = await prisma.user.findUnique({
-      where:  { id: leave.userId },
-      select: { departmentId: true },
-    });
     const startDateStr = new Date(leave.startDate).toLocaleDateString();
     const endDateStr   = new Date(leave.endDate).toLocaleDateString();
     await createNotification({
@@ -491,6 +473,83 @@ const rejectLeave = async (req, res) => {
   }
 
   res.json({ data: _format(data) });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const previewApproval = async (req, res) => {
+  const leaveId = req.params.id;
+
+  const loaded = await _loadActionableLeave(leaveId);
+  if (!loaded)
+    return res.status(404).json({ message: "Leave request not found or already processed." });
+  const { leave, leaveUser } = loaded;
+
+  const actingUser = await prisma.user.findUnique({
+    where:  { id: req.user.id },
+    select: { departmentId: true },
+  });
+  if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
+    return res.status(403).json({ message: "You are not eligible to act on this leave request." });
+
+  const policy = await _resolvePolicy(leave, req.user.companyId);
+  if (!policy)
+    return res.status(400).json({ message: "Leave policy not configured." });
+
+  const preview = await previewLeaveApproval(leave, policy);
+  res.json({ data: preview });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Post-decision day-level breakdown (LeaveDay rows written at approval time,
+// see leaveApprovalService.applyLeaveApproval) — complements previewApproval,
+// which is the pre-decision equivalent. Visible to the requester themselves,
+// or management under the same rule as leaveVisibilityWhere (admin company-
+// wide, supervisor own-department only).
+const getLeaveDays = async (req, res) => {
+  const leaveId = req.params.id;
+
+  const leave = await prisma.leave.findUnique({
+    where:  { id: leaveId },
+    select: { id: true, userId: true },
+  });
+  if (!leave) return res.status(404).json({ message: "Leave request not found." });
+
+  if (leave.userId !== req.user.id) {
+    const isManagement = ["admin", "superadmin", "supervisor"].includes(req.user.role);
+    if (!isManagement)
+      return res.status(403).json({ message: "Not authorized to view this leave." });
+
+    const leaveUser = await prisma.user.findUnique({
+      where:  { id: leave.userId },
+      select: { departmentId: true, companyId: true },
+    });
+    if (leaveUser?.companyId !== req.user.companyId)
+      return res.status(404).json({ message: "Leave request not found." });
+
+    if (req.user.role === "supervisor") {
+      const actingUser = await prisma.user.findUnique({
+        where:  { id: req.user.id },
+        select: { departmentId: true },
+      });
+      if (!actingUser?.departmentId || actingUser.departmentId !== leaveUser?.departmentId)
+        return res.status(403).json({ message: "Not authorized to view this leave." });
+    }
+  }
+
+  const days = await prisma.leaveDay.findMany({
+    where:   { leaveId },
+    orderBy: { date: "asc" },
+  });
+
+  res.json({
+    data: days.map((d) => ({
+      date:   d.date.toISOString().slice(0, 10),
+      isPaid: d.isPaid,
+      hours:  Number(d.hours),
+    })),
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -535,18 +594,26 @@ const getUserLeaves = async (req, res) => {
 const getPendingLeavesForApprover = async (req, res) => {
   const isManagement = ["admin", "superadmin", "supervisor"].includes(req.user.role);
 
-  // All management roles: company-wide pending leaves (view-only for those not directed at them)
-  const where = isManagement
-    ? {
-        User: { companyId: req.user.companyId },
-        status: { in: ["pending", "pending_secondary"] },
-      }
-    : {
-        OR: [
-          { approverId:          req.user.id, status: "pending"           },
-          { secondaryApproverId: req.user.id, status: "pending_secondary" },
-        ],
-      };
+  // Management roles: company-wide for admin/superadmin, own-department only
+  // for supervisors (view-only for leaves not directed at them — see canAct below)
+  let where;
+  if (isManagement) {
+    const requester = await prisma.user.findUnique({
+      where:  { id: req.user.id },
+      select: { departmentId: true },
+    });
+    where = {
+      ...leaveVisibilityWhere(req.user.companyId, req.user.role, requester?.departmentId),
+      status: { in: ["pending", "pending_secondary"] },
+    };
+  } else {
+    where = {
+      OR: [
+        { approverId:          req.user.id, status: "pending"           },
+        { secondaryApproverId: req.user.id, status: "pending_secondary" },
+      ],
+    };
+  }
 
   const leaves = await prisma.leave.findMany({
     where,
@@ -612,19 +679,27 @@ const getLeavesForApprover = async (req, res) => {
   if (status && !validStatuses.includes(status.toLowerCase()))
     return res.status(400).json({ message: "Invalid status filter." });
 
-  // All management roles: company-wide, all statuses (view-only unless directed at them)
-  const where = isManagement
-    ? {
-        User: { companyId: req.user.companyId },
-        ...(status ? { status: status.toLowerCase() } : {}),
-      }
-    : {
-        OR: [
-          { approverId:          req.user.id },
-          { secondaryApproverId: req.user.id },
-        ],
-        ...(status ? { status: status.toLowerCase() } : {}),
-      };
+  // Management roles: company-wide for admin/superadmin, own-department only
+  // for supervisors, all statuses (view-only unless directed at them)
+  let where;
+  if (isManagement) {
+    const requester = await prisma.user.findUnique({
+      where:  { id: req.user.id },
+      select: { departmentId: true },
+    });
+    where = {
+      ...leaveVisibilityWhere(req.user.companyId, req.user.role, requester?.departmentId),
+      ...(status ? { status: status.toLowerCase() } : {}),
+    };
+  } else {
+    where = {
+      OR: [
+        { approverId:          req.user.id },
+        { secondaryApproverId: req.user.id },
+      ],
+      ...(status ? { status: status.toLowerCase() } : {}),
+    };
+  }
 
   const [leaves, total] = await Promise.all([
     prisma.leave.findMany({
@@ -686,23 +761,9 @@ const getLeavesForApprover = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const getApprovers = async (req, res) => {
-  const approvers = await prisma.user.findMany({
-    where: {
-      companyId: req.user.companyId,
-      role:      { in: ["admin", "supervisor", "superadmin"] },
-      NOT:       { id: req.user.id },
-    },
-    select: {
-      id: true, email: true, username: true, role: true,
-      profile: { select: { firstName: true, lastName: true } },
-    },
-  });
-  const data = approvers.map((a) => ({
-    ...a,
-    name: a.profile
-      ? `${a.profile.firstName || ""} ${a.profile.lastName || ""}`.trim()
-      : a.username,
-  }));
+  // Same eligible-approver rule as submitLeaveRequest: admins/superadmins
+  // company-wide, supervisors restricted to the requester's own department.
+  const data = await getEligibleApprovers({ id: req.user.id, companyId: req.user.companyId });
   res.json({ data });
 };
 
@@ -812,11 +873,28 @@ const listBalances = async (req, res) => {
 
   const map = {};
   policies.forEach((p) => {
-    const sum = p.balances.reduce((s, b) => s + Number(b.balanceHours), 0);
+    // "available" is the running balance (kept in sync on every write since
+    // Phase 4's atomic ledger writer). "used" is summed straight from the
+    // ledger's deduction transactions, not a separately-tracked field, so it
+    // can't drift from what was actually approved. "credits" is derived —
+    // available + used — rather than independently summed, so the three
+    // numbers can never fail to reconcile (Credits - Used = Available by
+    // construction). See docs/UPDATED_LEAVE_MODULE.md §4, §14e.
+    const available = p.balances.reduce((s, b) => s + Number(b.balanceHours), 0);
+    const used      = usedMap[p.id] ?? 0;
+    const credits   = +(available + used).toFixed(2);
+
     map[p.leaveType] = {
+      policyId:     p.id,
       leaveType:    p.leaveType,
-      balanceHours: sum,
-      usedHours:    usedMap[p.id] ?? 0,
+      isPaid:       p.isPaid,
+      isNotPaid:    p.isNotPaid,
+      credits,
+      used,
+      available,
+      // Legacy field names — kept for existing clients, equal to available/used above.
+      balanceHours: available,
+      usedHours:    used,
       shiftHours:   Number(p.company.defaultShiftHours || 8),
       transactions: txnsByPolicy[p.id] ?? [],
     };
@@ -889,6 +967,8 @@ module.exports = {
   getPendingLeavesForApprover,
   approveLeave,
   rejectLeave,
+  previewApproval,
+  getLeaveDays,
   getApprovers,
   deleteLeave,
   getLeavesForApprover,
