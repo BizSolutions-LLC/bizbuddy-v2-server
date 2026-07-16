@@ -93,17 +93,12 @@ async function calcDailyHours(userId, startISO, endISO) {
     shiftHoursMap.set(dateStr, (shiftHoursMap.get(dateStr) || 0) + hrs);
   }
 
-  // If no shifts were found in the leave range, check whether this employee is
-  // a shift worker at all. If they are, only scheduled days count (deduct 0 for
-  // unscheduled days). If they have no shifts anywhere, treat them as salaried.
-  let isShiftWorker = shiftHoursMap.size > 0;
-  if (!isShiftWorker) {
-    const anyShift = await prisma.userShift.findFirst({
-      where: { userId, status: { not: "cancelled" } },
-      select: { id: true },
-    });
-    isShiftWorker = !!anyShift;
-  }
+  // A day counts as "scheduled" only if it has an actual plotted shift within
+  // the requested range. If nothing is plotted in-range at all, fall back to
+  // the company default for every eligible day below — checking for a shift
+  // anywhere in the employee's history (past or future) doesn't tell us
+  // anything about whether *this* range was scheduled.
+  const isShiftWorker = shiftHoursMap.size > 0;
 
   // ── 3. Walk each calendar day and collect deductible hours ─────────────────
   const days = [];
@@ -157,16 +152,21 @@ function monthlyIncrement(policy, defaultShiftHours = 8) {
  * supervisor with no department sees nothing (there's no department to
  * scope them to) rather than silently falling back to company-wide.
  *
- * Shared by leaveController (list/pending views) and dashboardController
- * (sidebar pending-count) so the visibility rule can't drift between them.
+ * Shared by leaveController (list/pending views), dashboardController
+ * (sidebar pending-count), and leaveBalanceController (company-wide ledger
+ * feed) so the visibility rule can't drift between them.
+ *
+ * @param {string} relationField - name of the relation to the User model on
+ *   the model being queried. Defaults to "User" (Leave's relation field);
+ *   pass "user" for LeaveTransaction, whose relation field is lowercase.
  */
-function leaveVisibilityWhere(companyId, role, departmentId) {
+function leaveVisibilityWhere(companyId, role, departmentId, relationField = "User") {
   if (role === "supervisor") {
     return departmentId
-      ? { User: { companyId, departmentId } }
-      : { User: { companyId, id: "" } }; // matches no one
+      ? { [relationField]: { companyId, departmentId } }
+      : { [relationField]: { companyId, id: "" } }; // matches no one
   }
-  return { User: { companyId } };
+  return { [relationField]: { companyId } };
 }
 
 module.exports = { calcDailyHours, calcRequestedHours, monthlyIncrement, leaveVisibilityWhere };

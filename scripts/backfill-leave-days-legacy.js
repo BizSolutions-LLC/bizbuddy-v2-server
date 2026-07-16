@@ -1,5 +1,5 @@
 // Optional, one-off backfill: creates LeaveDay rows for approved Leave records
-// that predate the Phase 4 proration logic (see docs/UPDATED_LEAVE_MODULE.md §13).
+// that predate the Phase 4 proration logic (see docs/LEAVE_MODULE.md §13).
 //
 // Uniform backfill only — every day gets the leave's original whole-record
 // isPaid value (no retroactive proration against historical balance, since

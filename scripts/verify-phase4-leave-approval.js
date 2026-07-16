@@ -1,5 +1,5 @@
 // One-off verification script for Phase 4 of the Leave Module redo
-// (see docs/UPDATED_LEAVE_MODULE.md §14d). Exercises submit -> preview ->
+// (see docs/LEAVE_MODULE.md §14d). Exercises submit -> preview ->
 // approve end-to-end against throwaway test data (a dedicated scratch
 // company + 2 users), asserts the results, then deletes everything it
 // created. Does NOT touch any real company/employee data.

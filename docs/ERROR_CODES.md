@@ -6,7 +6,7 @@ App-level error codes returned alongside `message` in error responses:
 ```
 HTTP status still carries the primary meaning (`409`, `400`, ...). `code` lets client code branch on the *specific* reason without parsing `message` text — which can reword, get localized, etc. without warning.
 
-**Not retrofitted across the whole app.** Seeded from the Leave module redo (see `docs/UPDATED_LEAVE_MODULE.md`). Meant to grow as new or touched error responses adopt this pattern — an endpoint *without* a `code` field simply hasn't been touched yet, it isn't itself meaningful.
+**Not retrofitted across the whole app.** Seeded from the Leave module redo (see `docs/LEAVE_MODULE.md`). Meant to grow as new or touched error responses adopt this pattern — an endpoint *without* a `code` field simply hasn't been touched yet, it isn't itself meaningful.
 
 Defined in `src/constants/errorCodes.js` (aliased as `@constants`).
 

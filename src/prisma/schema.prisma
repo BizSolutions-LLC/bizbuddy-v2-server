@@ -369,9 +369,9 @@ model LeaveTransaction {
   userId        String
   policyId      String
   type          LeaveTransactionType
-  hours         Decimal              @db.Decimal(8, 2)
-  balanceBefore Decimal              @db.Decimal(8, 2)
-  balanceAfter  Decimal              @db.Decimal(8, 2)
+  hours         Decimal?             @db.Decimal(8, 2) // null for non-monetary lifecycle events (submitted/escalated/rejected/cancelled)
+  balanceBefore Decimal?             @db.Decimal(8, 2)
+  balanceAfter  Decimal?             @db.Decimal(8, 2)
   leaveId       String?
   performedById String?
   note          String?
@@ -410,6 +410,8 @@ model User {
   supervisedEmployees      EmploymentDetail[]       @relation("Supervisor")
   employmentDetail         EmploymentDetail?
   ApprovedLeaves           Leave[]                  @relation("approver")
+  EscalatedLeaves          Leave[]                  @relation("leaveEscalatedBy")
+  DecidedLeaves            Leave[]                  @relation("leaveDecidedBy")
   Leave                    Leave[]
   LeaveBalance             LeaveBalance[]
   LeavePolicyAssignment    LeavePolicyAssignment[]
@@ -1133,10 +1135,16 @@ model Leave {
   approverComments          String?
   secondaryApproverId       String?
   secondaryApproverComments String?
+  escalatedByUserId         String?  // who chose to escalate to a second approver (first-stage reviewer) — null if never escalated
+  decidedByUserId           String?  // who actually approved/rejected — may differ from approverId/secondaryApproverId since any eligible admin/dept supervisor can act
+  actualPaidHours           Decimal? @db.Decimal(6, 2) // real per-day proration outcome at approval time — null until decided; may differ from the submitted isPaid intent
+  actualUnpaidHours         Decimal? @db.Decimal(6, 2)
   affectedShifts            Json?
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   approver         User?    @relation("approver", fields: [approverId], references: [id])
+  escalatedBy      User?    @relation("leaveEscalatedBy", fields: [escalatedByUserId], references: [id])
+  decidedBy        User?    @relation("leaveDecidedBy", fields: [decidedByUserId], references: [id])
   User             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   policy           LeavePolicy? @relation(fields: [policyId], references: [id])
   days             LeaveDay[]
@@ -1348,6 +1356,10 @@ enum LeaveTransactionType {
   accrual
   deduction
   adjustment
+  submitted
+  escalated
+  rejected
+  cancelled
 }
 
 enum PresenceStatus {

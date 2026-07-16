@@ -232,11 +232,26 @@ const submitLeaveRequest = async (req, res) => {
     },
   });
 
-  // Notify all management users
+  // Leave Ledger — lifecycle event, no balance movement (hours/before/after left null)
+  try {
+    await prisma.leaveTransaction.create({
+      data: {
+        userId:        req.user.id,
+        policyId:      policy.id,
+        type:          "submitted",
+        leaveId:       data.id,
+        performedById: req.user.id,
+      },
+    });
+  } catch (ledgerErr) {
+    console.error("❌ Failed to write leave-submitted ledger entry:", ledgerErr);
+  }
+
+  // Notify eligible management users (mirrors _isEligibleApprover's pool)
   try {
     const employee = await prisma.user.findUnique({
       where:  { id: req.user.id },
-      select: { profile: { select: { firstName: true, lastName: true } } },
+      select: { departmentId: true, profile: { select: { firstName: true, lastName: true } } },
     });
     const employeeName = employee?.profile
       ? `${employee.profile.firstName || ""} ${employee.profile.lastName || ""}`.trim()
@@ -246,10 +261,16 @@ const submitLeaveRequest = async (req, res) => {
 
     const managementUsers = await prisma.user.findMany({
       where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
-      select: { id: true, departmentId: true },
+      select: { id: true, role: true, departmentId: true },
     });
+    // Same pool as _isEligibleApprover — admins/superadmins company-wide, supervisors
+    // only for the requester's own department. Otherwise a supervisor in an unrelated
+    // department gets notified about a request they'll never see in their pending list.
+    const eligibleManagementUsers = managementUsers.filter((m) =>
+      _isEligibleApprover(m.role, m.departmentId, employee?.departmentId)
+    );
     await Promise.all(
-      managementUsers.map((m) =>
+      eligibleManagementUsers.map((m) =>
         createNotification({
           userId:           m.id,
           companyId:        req.user.companyId,
@@ -301,6 +322,8 @@ const approveLeave = async (req, res) => {
   });
   if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
     return res.status(403).json({ message: "You are not eligible to act on this leave request." });
+  if (req.user.id === leave.userId)
+    return res.status(403).json({ message: "You cannot act on your own leave request." });
 
   const policy = await _resolvePolicy(leave, req.user.companyId);
   if (!policy)
@@ -341,7 +364,7 @@ const approveLeave = async (req, res) => {
     // Atomic claim — only succeeds if still "pending" (no one else escalated/approved first)
     const claim = await prisma.leave.updateMany({
       where: { id: leaveId, status: "pending" },
-      data:  { status: "pending_secondary", secondaryApproverId: escalateTo, approverComments },
+      data:  { status: "pending_secondary", secondaryApproverId: escalateTo, approverComments, escalatedByUserId: req.user.id },
     });
     if (claim.count === 0)
       return res.status(409).json({ message: "This leave request was already actioned by someone else." });
@@ -349,15 +372,45 @@ const approveLeave = async (req, res) => {
     const data = await prisma.leave.findUnique({ where: { id: leaveId } });
 
     try {
-      await createNotification({
-        userId:           escalateTo,
-        companyId:        req.user.companyId,
-        departmentId:     secondaryApprover.departmentId || null,
-        notificationCode: "LEAVE_PENDING_SECONDARY_APPROVAL",
-        title:            "Leave Request Awaiting Your Approval",
-        message:          `${employeeName}'s leave request from ${startDateStr} to ${endDateStr} has been approved by the first approver and is awaiting your final approval.`,
-        payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate, requesterId: leave.userId },
+      await prisma.leaveTransaction.create({
+        data: {
+          userId:        leave.userId,
+          policyId:      policy.id,
+          type:          "escalated",
+          leaveId,
+          performedById: req.user.id,
+          note:          approverComments || null,
+        },
       });
+    } catch (ledgerErr) {
+      console.error("❌ Failed to write leave-escalated ledger entry:", ledgerErr);
+    }
+
+    try {
+      // Notify the full eligible second-stage pool, not just the specifically named
+      // escalateTo target — the same broadened-pool rule applies here as everywhere
+      // else (any admin/superadmin, or any supervisor in the requester's department,
+      // can act on a pending_secondary request, not just the person it was escalated to).
+      const managementUsers = await prisma.user.findMany({
+        where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
+        select: { id: true, role: true, departmentId: true },
+      });
+      const eligibleManagementUsers = managementUsers.filter((m) =>
+        _isEligibleApprover(m.role, m.departmentId, leaveUser?.departmentId)
+      );
+      await Promise.all(
+        eligibleManagementUsers.map((m) =>
+          createNotification({
+            userId:           m.id,
+            companyId:        req.user.companyId,
+            departmentId:     m.departmentId,
+            notificationCode: "LEAVE_PENDING_SECONDARY_APPROVAL",
+            title:            "Leave Request Awaiting Final Approval",
+            message:          `${employeeName}'s leave request from ${startDateStr} to ${endDateStr} has been escalated and is awaiting final approval.`,
+            payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate, requesterId: leave.userId },
+          })
+        )
+      );
     } catch (e) {
       console.error("❌ Failed to send secondary approval notification:", e);
     }
@@ -385,8 +438,8 @@ const approveLeave = async (req, res) => {
   const claim = await prisma.leave.updateMany({
     where: { id: leaveId, status: stage },
     data:  stage === "pending_secondary"
-      ? { status: "approved", secondaryApproverComments: approverComments }
-      : { status: "approved", approverComments },
+      ? { status: "approved", secondaryApproverComments: approverComments, decidedByUserId: req.user.id }
+      : { status: "approved", approverComments, decidedByUserId: req.user.id },
   });
   if (claim.count === 0)
     return res.status(409).json({ message: "This leave request was already actioned by someone else." });
@@ -442,19 +495,37 @@ const rejectLeave = async (req, res) => {
   });
   if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
     return res.status(403).json({ message: "You are not eligible to act on this leave request." });
+  if (req.user.id === leave.userId)
+    return res.status(403).json({ message: "You cannot act on your own leave request." });
 
   const stage = leave.status; // "pending" | "pending_secondary"
 
   const claim = await prisma.leave.updateMany({
     where: { id: leaveId, status: stage },
     data:  stage === "pending_secondary"
-      ? { status: "rejected", secondaryApproverComments: approverComments }
-      : { status: "rejected", approverComments },
+      ? { status: "rejected", secondaryApproverComments: approverComments, decidedByUserId: req.user.id }
+      : { status: "rejected", approverComments, decidedByUserId: req.user.id },
   });
   if (claim.count === 0)
     return res.status(409).json({ message: "This leave request was already actioned by someone else." });
 
   const data = await prisma.leave.findUnique({ where: { id: leaveId } });
+
+  try {
+    const policy = await _resolvePolicy(leave, req.user.companyId);
+    await prisma.leaveTransaction.create({
+      data: {
+        userId:        leave.userId,
+        policyId:      policy?.id ?? leave.policyId,
+        type:          "rejected",
+        leaveId,
+        performedById: req.user.id,
+        note:          approverComments || null,
+      },
+    });
+  } catch (ledgerErr) {
+    console.error("❌ Failed to write leave-rejected ledger entry:", ledgerErr);
+  }
 
   try {
     const startDateStr = new Date(leave.startDate).toLocaleDateString();
@@ -477,6 +548,84 @@ const rejectLeave = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Requester withdraws their own request while it's still undecided. No
+// balance/ledger writes — deduction only ever happens at approval (§6), so a
+// pending/pending_secondary leave has no balance movement to reverse. The
+// retained Leave record (status: "cancelled") is the audit trail, same as
+// rejection already relies on — no ledger entry, same reasoning.
+const cancelLeave = async (req, res) => {
+  const leaveId = req.params.id;
+
+  const loaded = await _loadActionableLeave(leaveId);
+  if (!loaded)
+    return res.status(404).json({ message: "Leave request not found or already processed." });
+  const { leave, leaveUser } = loaded;
+
+  if (leave.userId !== req.user.id)
+    return res.status(403).json({ message: "You can only cancel your own leave request." });
+
+  const claim = await prisma.leave.updateMany({
+    where: { id: leaveId, status: leave.status },
+    data:  { status: "cancelled" },
+  });
+  if (claim.count === 0)
+    return res.status(409).json({ message: "This leave request was already actioned by someone else." });
+
+  const data = await prisma.leave.findUnique({ where: { id: leaveId } });
+
+  try {
+    const policy = await _resolvePolicy(leave, req.user.companyId);
+    await prisma.leaveTransaction.create({
+      data: {
+        userId:        leave.userId,
+        policyId:      policy?.id ?? leave.policyId,
+        type:          "cancelled",
+        leaveId,
+        performedById: req.user.id,
+      },
+    });
+  } catch (ledgerErr) {
+    console.error("❌ Failed to write leave-cancelled ledger entry:", ledgerErr);
+  }
+
+  try {
+    const employeeName = leaveUser?.profile
+      ? `${leaveUser.profile.firstName || ""} ${leaveUser.profile.lastName || ""}`.trim()
+      : leaveUser?.email;
+    const startDateStr = new Date(leave.startDate).toLocaleDateString();
+    const endDateStr   = new Date(leave.endDate).toLocaleDateString();
+
+    const managementUsers = await prisma.user.findMany({
+      where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
+      select: { id: true, role: true, departmentId: true },
+    });
+    // Same eligible pool as submit's notification — admins/superadmins
+    // company-wide, supervisors only for the requester's own department.
+    const eligibleManagementUsers = managementUsers.filter((m) =>
+      _isEligibleApprover(m.role, m.departmentId, leaveUser?.departmentId)
+    );
+    await Promise.all(
+      eligibleManagementUsers.map((m) =>
+        createNotification({
+          userId:           m.id,
+          companyId:        req.user.companyId,
+          departmentId:     m.departmentId,
+          notificationCode: "LEAVE_REQUEST_CANCELLED",
+          title:            "Leave Request Cancelled",
+          message:          `${employeeName} cancelled their leave request from ${startDateStr} to ${endDateStr}.`,
+          payload:          { leaveId, startDate: leave.startDate, endDate: leave.endDate, requesterId: leave.userId },
+        })
+      )
+    );
+  } catch (notifError) {
+    console.error("❌ Failed to send leave cancellation notification:", notifError);
+  }
+
+  res.json({ data: _format(data) });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const previewApproval = async (req, res) => {
   const leaveId = req.params.id;
 
@@ -491,6 +640,8 @@ const previewApproval = async (req, res) => {
   });
   if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
     return res.status(403).json({ message: "You are not eligible to act on this leave request." });
+  if (req.user.id === leave.userId)
+    return res.status(403).json({ message: "You cannot act on your own leave request." });
 
   const policy = await _resolvePolicy(leave, req.user.companyId);
   if (!policy)
@@ -564,6 +715,18 @@ const getUserLeaves = async (req, res) => {
           profile: { select: { firstName: true, lastName: true } },
         },
       },
+      escalatedBy: {
+        select: {
+          id: true, email: true, username: true, role: true,
+          profile: { select: { firstName: true, lastName: true } },
+        },
+      },
+      decidedBy: {
+        select: {
+          id: true, email: true, username: true, role: true,
+          profile: { select: { firstName: true, lastName: true } },
+        },
+      },
     },
     orderBy: { startDate: "desc" },
   });
@@ -583,6 +746,22 @@ const getUserLeaves = async (req, res) => {
               : raw.approver.username,
           }
         : null,
+      escalatedBy: raw?.escalatedBy
+        ? {
+            ...raw.escalatedBy,
+            name: raw.escalatedBy.profile
+              ? `${raw.escalatedBy.profile.firstName || ""} ${raw.escalatedBy.profile.lastName || ""}`.trim()
+              : raw.escalatedBy.username,
+          }
+        : null,
+      decidedBy: raw?.decidedBy
+        ? {
+            ...raw.decidedBy,
+            name: raw.decidedBy.profile
+              ? `${raw.decidedBy.profile.firstName || ""} ${raw.decidedBy.profile.lastName || ""}`.trim()
+              : raw.decidedBy.username,
+          }
+        : null,
     };
   });
 
@@ -597,13 +776,15 @@ const getPendingLeavesForApprover = async (req, res) => {
   // Management roles: company-wide for admin/superadmin, own-department only
   // for supervisors (view-only for leaves not directed at them — see canAct below)
   let where;
+  let actingDepartmentId = null;
   if (isManagement) {
     const requester = await prisma.user.findUnique({
       where:  { id: req.user.id },
       select: { departmentId: true },
     });
+    actingDepartmentId = requester?.departmentId ?? null;
     where = {
-      ...leaveVisibilityWhere(req.user.companyId, req.user.role, requester?.departmentId),
+      ...leaveVisibilityWhere(req.user.companyId, req.user.role, actingDepartmentId),
       status: { in: ["pending", "pending_secondary"] },
     };
   } else {
@@ -620,11 +801,23 @@ const getPendingLeavesForApprover = async (req, res) => {
     include: {
       User: {
         select: {
-          id: true, email: true, username: true, role: true,
+          id: true, email: true, username: true, role: true, departmentId: true,
           profile: { select: { firstName: true, lastName: true } },
         },
       },
       approver: {
+        select: {
+          id: true, email: true, username: true, role: true,
+          profile: { select: { firstName: true, lastName: true } },
+        },
+      },
+      escalatedBy: {
+        select: {
+          id: true, email: true, username: true, role: true,
+          profile: { select: { firstName: true, lastName: true } },
+        },
+      },
+      decidedBy: {
         select: {
           id: true, email: true, username: true, role: true,
           profile: { select: { firstName: true, lastName: true } },
@@ -639,9 +832,14 @@ const getPendingLeavesForApprover = async (req, res) => {
   const withTxns  = await _attachTransactions(withHours);
   const data = withTxns.map((l) => {
     const raw = leaves.find((r) => r.id === l.id);
-    const canAct =
-      (raw.status === "pending"           && raw.approverId          === req.user.id) ||
-      (raw.status === "pending_secondary" && raw.secondaryApproverId === req.user.id);
+    // Eligibility mirrors the actual approve/reject/escalate guard (_isEligibleApprover
+    // above) — being the named approver is a default, not exclusive, for management roles.
+    const canAct = isManagement
+      ? ["pending", "pending_secondary"].includes(raw.status) &&
+        raw.User?.id !== req.user.id &&
+        _isEligibleApprover(req.user.role, actingDepartmentId, raw.User?.departmentId)
+      : (raw.status === "pending"           && raw.approverId          === req.user.id) ||
+        (raw.status === "pending_secondary" && raw.secondaryApproverId === req.user.id);
     return {
       ...l,
       canAct,
@@ -659,6 +857,22 @@ const getPendingLeavesForApprover = async (req, res) => {
             name: raw.approver.profile
               ? `${raw.approver.profile.firstName || ""} ${raw.approver.profile.lastName || ""}`.trim()
               : raw.approver.username,
+          }
+        : null,
+      escalatedBy: raw?.escalatedBy
+        ? {
+            ...raw.escalatedBy,
+            name: raw.escalatedBy.profile
+              ? `${raw.escalatedBy.profile.firstName || ""} ${raw.escalatedBy.profile.lastName || ""}`.trim()
+              : raw.escalatedBy.username,
+          }
+        : null,
+      decidedBy: raw?.decidedBy
+        ? {
+            ...raw.decidedBy,
+            name: raw.decidedBy.profile
+              ? `${raw.decidedBy.profile.firstName || ""} ${raw.decidedBy.profile.lastName || ""}`.trim()
+              : raw.decidedBy.username,
           }
         : null,
     };
@@ -682,13 +896,15 @@ const getLeavesForApprover = async (req, res) => {
   // Management roles: company-wide for admin/superadmin, own-department only
   // for supervisors, all statuses (view-only unless directed at them)
   let where;
+  let actingDepartmentId = null;
   if (isManagement) {
     const requester = await prisma.user.findUnique({
       where:  { id: req.user.id },
       select: { departmentId: true },
     });
+    actingDepartmentId = requester?.departmentId ?? null;
     where = {
-      ...leaveVisibilityWhere(req.user.companyId, req.user.role, requester?.departmentId),
+      ...leaveVisibilityWhere(req.user.companyId, req.user.role, actingDepartmentId),
       ...(status ? { status: status.toLowerCase() } : {}),
     };
   } else {
@@ -707,11 +923,23 @@ const getLeavesForApprover = async (req, res) => {
       include: {
         User: {
           select: {
-            id: true, email: true, username: true, role: true,
+            id: true, email: true, username: true, role: true, departmentId: true,
             profile: { select: { firstName: true, lastName: true } },
           },
         },
         approver: {
+          select: {
+            id: true, email: true, username: true, role: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
+        escalatedBy: {
+          select: {
+            id: true, email: true, username: true, role: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
+        decidedBy: {
           select: {
             id: true, email: true, username: true, role: true,
             profile: { select: { firstName: true, lastName: true } },
@@ -730,9 +958,14 @@ const getLeavesForApprover = async (req, res) => {
   const withTxns  = await _attachTransactions(withHours);
   const data = withTxns.map((l) => {
     const raw = leaves.find((r) => r.id === l.id);
-    const canAct =
-      (raw.status === "pending"           && raw.approverId          === req.user.id) ||
-      (raw.status === "pending_secondary" && raw.secondaryApproverId === req.user.id);
+    // Eligibility mirrors the actual approve/reject/escalate guard (_isEligibleApprover
+    // above) — being the named approver is a default, not exclusive, for management roles.
+    const canAct = isManagement
+      ? ["pending", "pending_secondary"].includes(raw.status) &&
+        raw.User?.id !== req.user.id &&
+        _isEligibleApprover(req.user.role, actingDepartmentId, raw.User?.departmentId)
+      : (raw.status === "pending"           && raw.approverId          === req.user.id) ||
+        (raw.status === "pending_secondary" && raw.secondaryApproverId === req.user.id);
     return {
       ...l,
       canAct,
@@ -750,6 +983,22 @@ const getLeavesForApprover = async (req, res) => {
             name: raw.approver.profile
               ? `${raw.approver.profile.firstName || ""} ${raw.approver.profile.lastName || ""}`.trim()
               : raw.approver.username,
+          }
+        : null,
+      escalatedBy: raw?.escalatedBy
+        ? {
+            ...raw.escalatedBy,
+            name: raw.escalatedBy.profile
+              ? `${raw.escalatedBy.profile.firstName || ""} ${raw.escalatedBy.profile.lastName || ""}`.trim()
+              : raw.escalatedBy.username,
+          }
+        : null,
+      decidedBy: raw?.decidedBy
+        ? {
+            ...raw.decidedBy,
+            name: raw.decidedBy.profile
+              ? `${raw.decidedBy.profile.firstName || ""} ${raw.decidedBy.profile.lastName || ""}`.trim()
+              : raw.decidedBy.username,
           }
         : null,
     };
@@ -879,7 +1128,7 @@ const listBalances = async (req, res) => {
     // can't drift from what was actually approved. "credits" is derived —
     // available + used — rather than independently summed, so the three
     // numbers can never fail to reconcile (Credits - Used = Available by
-    // construction). See docs/UPDATED_LEAVE_MODULE.md §4, §14e.
+    // construction). See docs/LEAVE_MODULE.md §4, §14e.
     const available = p.balances.reduce((s, b) => s + Number(b.balanceHours), 0);
     const used      = usedMap[p.id] ?? 0;
     const credits   = +(available + used).toFixed(2);
@@ -967,6 +1216,7 @@ module.exports = {
   getPendingLeavesForApprover,
   approveLeave,
   rejectLeave,
+  cancelLeave,
   previewApproval,
   getLeaveDays,
   getApprovers,

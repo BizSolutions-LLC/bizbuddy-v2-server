@@ -1,5 +1,6 @@
 // src/controllers/Features/leaveBalanceController.js
 const { prisma } = require("@config/connection");
+const { leaveVisibilityWhere } = require("@utils/leaveUtils");
 
 const adjustBalance = async (req, res) => {
   const { targetUserId, leaveTypes, hours } = req.body;
@@ -139,27 +140,38 @@ const getTransactions = async (req, res) => {
   const companyId = req.user.companyId;
   const isManagement = ["admin", "superadmin", "supervisor"].includes(req.user.role);
 
-  const { userId, policyId, type } = req.query;
+  const { userId, policyId, type, leaveId } = req.query;
   const limit  = Math.min(parseInt(req.query.limit) || 50, 200);
   const offset = parseInt(req.query.offset) || 0;
 
-  // Non-management can only see their own transactions
-  const targetUserId = isManagement && userId ? userId : req.user.id;
-
-  // Verify the target user belongs to this company
+  let where;
   if (isManagement && userId) {
+    // Drill-down into one specific employee (e.g. Balance Matrix cell click)
     const member = await prisma.user.findFirst({
       where: { id: userId, companyId },
     });
     if (!member) return res.status(404).json({ message: "User not found in this company" });
+    where = { userId, policy: { companyId } };
+  } else if (isManagement) {
+    // No userId given — company/department-wide Leave Ledger feed, same
+    // visibility rule as everywhere else in this module (admins/superadmins
+    // company-wide, supervisors scoped to their own department).
+    const actingUser = await prisma.user.findUnique({
+      where:  { id: req.user.id },
+      select: { departmentId: true },
+    });
+    where = {
+      ...leaveVisibilityWhere(companyId, req.user.role, actingUser?.departmentId, "user"),
+      policy: { companyId },
+    };
+  } else {
+    // Employees only ever see their own transactions
+    where = { userId: req.user.id, policy: { companyId } };
   }
 
-  const where = {
-    userId: targetUserId,
-    policy: { companyId },
-    ...(policyId ? { policyId } : {}),
-    ...(type     ? { type }     : {}),
-  };
+  if (policyId) where.policyId = policyId;
+  if (type)     where.type     = type;
+  if (leaveId)  where.leaveId  = leaveId;
 
   const [transactions, total] = await Promise.all([
     prisma.leaveTransaction.findMany({
@@ -177,6 +189,15 @@ const getTransactions = async (req, res) => {
         note:          true,
         createdAt:     true,
         policy: { select: { id: true, leaveType: true } },
+        // Only meaningfully distinct from performedBy on a multi-employee feed
+        // (company/department-wide, no userId filter) — for a single-employee
+        // drill-down it's always the same person on every row.
+        user: {
+          select: {
+            id: true, email: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
         performedBy: {
           select: {
             id: true, email: true,
@@ -188,19 +209,23 @@ const getTransactions = async (req, res) => {
     prisma.leaveTransaction.count({ where }),
   ]);
 
+  const _formatPerson = (u) =>
+    u
+      ? {
+          id:   u.id,
+          name: u.profile
+            ? `${u.profile.firstName || ""} ${u.profile.lastName || ""}`.trim()
+            : u.email,
+        }
+      : null;
+
   const data = transactions.map((t) => ({
     ...t,
-    hours:         Number(t.hours),
-    balanceBefore: Number(t.balanceBefore),
-    balanceAfter:  Number(t.balanceAfter),
-    performedBy: t.performedBy
-      ? {
-          id:   t.performedBy.id,
-          name: t.performedBy.profile
-            ? `${t.performedBy.profile.firstName || ""} ${t.performedBy.profile.lastName || ""}`.trim()
-            : t.performedBy.email,
-        }
-      : null,
+    hours:         t.hours         != null ? Number(t.hours)         : null,
+    balanceBefore: t.balanceBefore != null ? Number(t.balanceBefore) : null,
+    balanceAfter:  t.balanceAfter  != null ? Number(t.balanceAfter)  : null,
+    user:        _formatPerson(t.user),
+    performedBy: _formatPerson(t.performedBy),
   }));
 
   res.json({ data, pagination: { total, limit, offset, hasMore: offset + limit < total } });

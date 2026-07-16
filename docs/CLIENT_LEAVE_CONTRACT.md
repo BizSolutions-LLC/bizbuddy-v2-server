@@ -1,6 +1,6 @@
 # Client Leave Contract — Phase 1, 2, 3, 4, 5 & Archive
 
-> What the client (web/mobile) needs to change to consume the Leave Module redo, phase by phase. See `docs/UPDATED_LEAVE_MODULE.md` for the full design/rationale. Update this doc as each phase ships.
+> What the client (web/mobile) needs to change to consume the Leave Module redo, phase by phase. See `docs/LEAVE_MODULE.md` for the full design/rationale. Update this doc as each phase ships.
 
 ---
 
@@ -197,10 +197,114 @@ Your own gap assessment (`DISCREPANCY_LEAVE_MODULE.md`, Phase 5) marked `GET /ap
 
 **Where it goes:** Settings side, attached to the Balance Matrix / `AdjustCreditsModal` area — that's where credits change, so that's where an admin needs to audit them. A cell/row drill-down calling `GET /leave-balances/transactions?userId=X&policyId=Y` (existing endpoint, already paginated/filterable by `policyId`/`type`).
 
-**Not** the Approver side (`EmployeesLeaveRequests.jsx`) — that already gets the specific transaction tied to whichever leave request is being reviewed, inline in the leave data (no separate ledger UI needed there). See `docs/UPDATED_LEAVE_MODULE.md` §14g for the full reasoning.
+**Not** the Approver side (`EmployeesLeaveRequests.jsx`) — that already gets the specific transaction tied to whichever leave request is being reviewed, inline in the leave data (no separate ledger UI needed there). See `docs/LEAVE_MODULE.md` §14g for the full reasoning.
+
+---
+
+## Decision audit trail — `escalatedBy` / `decidedBy` (post-Phase-5 addition)
+
+**Endpoints:** `GET /api/leaves` (own), `GET /api/leaves/pending`, `GET /api/leaves` list-for-approver — same paths, additive fields, nothing removed.
+
+`approverId`/`secondaryApproverId` (and their formatted `approver` object) record who a request was **assigned or escalated to** — not who actually acted, since Phase 4 lets any eligible admin/dept supervisor act regardless of who's named. Two new fields close that gap, each formatted the same way as the existing `approver` object (`{ id, email, username, role, name }` or `null`):
+
+- `escalatedBy` — the first-stage reviewer who chose to escalate rather than decide directly. `null` if the leave was ever decided in one step.
+- `decidedBy` — whoever made the final approve/reject call. Populated for every decided leave (paid, unpaid, or rejected) — this is the one to show as "Approved/Rejected by" instead of `approver`, since `approver` may no longer be accurate.
+
+**UI work:** anywhere the leave list/detail/history view shows "Approved by [approver's name]," switch that label to read from `decidedBy` once the leave is no longer pending. `approver`/`secondaryApproverId` remain useful for showing who a still-pending request is currently waiting on.
+
+---
+
+## Bug fix — Pay Type badge now has real data to read (`actualPaidHours` / `actualUnpaidHours`)
+
+**Endpoints:** same three leave-list endpoints as above, additive fields.
+
+Previously, `isPaid` reflected only the employee's submitted intent, never the real per-day outcome computed at approval (a request submitted as paid can come back partially or fully unpaid if the balance ran out — see Phase 4's preview/day-breakdown endpoints). If your Pay Type badge was reading `isPaid` directly, it was showing the wrong thing whenever proration changed the outcome — confirmed via a real approved leave that was fully unpaid at decision time but still showed "Paid Leave."
+
+Two new fields, populated only once a leave is decided (null while pending/rejected):
+- `actualPaidHours` — hours that ended up paid.
+- `actualUnpaidHours` — hours that ended up unpaid (whether by proration or deliberate unpaid intent).
+
+**UI work:** for `status === "approved"` leaves, derive the Pay Type badge from these two fields instead of `isPaid`:
+- `actualUnpaidHours > 0 && actualPaidHours === 0` → "Unpaid Leave"
+- `actualPaidHours > 0 && actualUnpaidHours === 0` → "Paid Leave"
+- both `> 0` → new "Partially Paid" state (table column, detail panel badge, and the employee-side pay pill)
+
+For `pending`/`pending_secondary`/`rejected` leaves, keep showing the submitted `isPaid` intent as-is — nothing's been applied yet, so the submitted intent is the accurate thing to show.
+
+This was backfilled server-side for already-approved leaves that already have day-breakdown data, so existing rows should show correctly without waiting for a re-decision.
+
+---
+
+## Bug fix — `requestedHours` / preview day-hours no longer 0h for unplotted shift-worker ranges
+
+**Endpoints:** every leave-list endpoint's `requestedHours` field, plus `GET /api/leaves/:id/preview` and `GET /api/leaves/:id/days` `hours` values — same shapes, no fields added or removed, values-only fix.
+
+Previously, a genuine shift worker requesting leave for dates where their schedule hadn't been plotted yet got `0` for every day in the range, both on the request-list total and in the approver's preview/day breakdown — confirmed real case: a Maternity Leave request that priced out at 0h entirely. Root cause was server-side only (a stale "is this person a shift worker at all" check ignored whether anything was actually scheduled in the requested range).
+
+**Fix:** unplotted days for shift workers now fall back to the company's default shift hours, same as salaried/unassigned employees already did — no more 0h ranges. No UI work needed; this is a pure computation correction, values will simply be non-zero going forward where they previously weren't.
+
+**Not corrected retroactively:** the one confirmed historical case will be rejected and resubmitted manually rather than backfilled, so don't expect already-approved leaves from before this fix to change.
+
+---
+
+## Leave Ledger — unified movement feed (post-Phase-5 addition)
+
+**Same endpoint, extended:** `GET /api/leave-balances/transactions` — this is the endpoint from §14g (Settings-side ledger drill-down). It now also carries lifecycle events, not just balance movements, and gains a company-wide mode. Nothing existing was removed.
+
+**`type` gains four new values**: `submitted`, `escalated`, `approved`, `rejected`, `cancelled` (the existing `accrual`/`deduction`/`adjustment` are unchanged). On these four, `hours`/`balanceBefore`/`balanceAfter` are `null` — there's no balance movement to report. **If your existing Balance Matrix drill-down assumed these fields are always numbers, add a null check** — a `null` should render as "—" or be omitted, not coerced to `0`.
+
+```json
+{
+  "id": "...",
+  "type": "cancelled",
+  "hours": null,
+  "balanceBefore": null,
+  "balanceAfter": null,
+  "leaveId": "...",
+  "note": null,
+  "createdAt": "2026-07-16T10:00:00.000Z",
+  "policy": { "id": "...", "leaveType": "Maternity Leave" },
+  "user": { "id": "...", "name": "Jane Doe" },
+  "performedBy": { "id": "...", "name": "Jane Doe" }
+}
+```
+
+A paid approval produces **two** rows at the same moment: the existing `deduction` row (balance movement) plus a new `approved` row (lifecycle marker, `note` carries the same paid/auto-unpaid breakdown text). A fully/deliberately-unpaid approval produces only the `approved` row (still no balance movement, per §6).
+
+**New query modes:**
+- **No `userId` passed, management caller** → company/department-wide feed (admins/superadmins see the whole company, supervisors see only their own department) — this is the mode a new "Leave Ledger" screen should use.
+- **`?userId=X&policyId=Y`** → unchanged, the existing single-employee Balance Matrix drill-down.
+- **New optional `?leaveId=X`** → every ledger row for one specific leave request (submitted → escalated → approved/rejected/cancelled), useful for a per-request detail timeline.
+
+**New `user` field** on every row — the leave requester (distinct from `performedBy`, who acted). Only meaningfully different from `performedBy` on the multi-employee feed; on the single-employee drill-down they were always implicitly the same person.
+
+**Not built:** history for leaves decided before this ships — the feed starts from whenever this is deployed forward, existing leaves won't have `submitted`/`approved`/etc. rows retroactively.
+
+**UI work:**
+- New Leave Ledger screen: call `GET /api/leave-balances/transactions` with no `userId`, render the combined chronological feed (`type`, `user`, `performedBy`, `note`, and `hours`/`balanceBefore`/`balanceAfter` when non-null).
+- Existing Balance Matrix drill-down: add the null-safety handling above; otherwise unchanged.
+
+---
+
+## Cancel Leave — requester self-cancel (pre-approval only)
+
+**New endpoint:** `PUT /api/leaves/:id/cancel` — no body required.
+
+Only the requester can call this, and only while their request is `pending` or `pending_secondary`. It sets `status: "cancelled"` — no balance/ledger side effects, since nothing is ever deducted before approval.
+
+**New `409`** — `"This leave request was already actioned by someone else."` Same meaning and same handling as the existing `409` on approve/reject: someone (an approver) acted on the request in the moment between the client loading it and the cancel button being pressed. Show the same friendly "already handled" state, not a generic error.
+
+**New `403`** — `"You can only cancel your own leave request."` Shouldn't be reachable if the Cancel action is only ever shown on the current user's own requests.
+
+**UI work:**
+- Add a "Cancel" action on the employee's own leave requests, shown only while `status` is `pending` or `pending_secondary`.
+- Handle the `409` the same way the approver UI already handles approve/reject conflicts.
+- Management users get a `LEAVE_REQUEST_CANCELLED` notification (same eligible-pool targeting as the existing `LEAVE_REQUEST_SUBMITTED` notification on submit) — no client work needed beyond however notifications are already rendered today.
+
+**Not built yet:** cancelling/reversing an **already-approved** leave (e.g. via punch-vs-leave conflict) — that's a separate, harder problem (real balance/ledger reversal) still paused pending real usage signal. This addition only covers withdrawing a request before a decision is made.
 
 ---
 
 ## Not yet changed (still on old behavior)
 
-- Cancel Leave — doesn't exist yet, Phase 6. Also Phase 6's job: the punch-vs-leave "Leave Always Wins" → "Punch Wins" auto-exclusion rule, which is the one remaining case where `available` can still (rarely) disagree with a pure ledger reconstruction — see `docs/UPDATED_LEAVE_MODULE.md` §14e.
+- Cancelling/reversing an **already-approved** leave — still doesn't exist, remaining Phase 6 scope. Also Phase 6's job: the punch-vs-leave "Leave Always Wins" → "Punch Wins" auto-exclusion rule, which is the one remaining case where `available` can still (rarely) disagree with a pure ledger reconstruction — see `docs/LEAVE_MODULE.md` §14e. (Pre-approval requester self-cancel is now available — see the Cancel Leave section above.)

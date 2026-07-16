@@ -1,6 +1,6 @@
 # Leave Module — Client Gap Assessment & Phased Plan
 
-> Snapshot taken 2026-07-09, against `docs/CLIENT_LEAVE_CONTRACT.md` (Phases 1–5, all shipped server-side) and the current state of this repo's Leave UI. Purpose: avoid re-deriving this by re-reading the codebase every time. Read `docs/OLD_LEAVE_MODULE.md`, `docs/UPDATED_LEAVE_MODULE.md`, and `docs/CLIENT_LEAVE_CONTRACT.md` first for backend context — this doc is the client-side delta on top of those.
+> Snapshot taken 2026-07-09, against `docs/CLIENT_LEAVE_CONTRACT.md` (Phases 1–5, all shipped server-side) and the current state of this repo's Leave UI. Purpose: avoid re-deriving this by re-reading the codebase every time. Read `docs/OLD_LEAVE_MODULE.md`, `docs/LEAVE_MODULE.md`, and `docs/CLIENT_LEAVE_CONTRACT.md` first for backend context — this doc is the client-side delta on top of those.
 
 ---
 
@@ -102,5 +102,5 @@ Add `GET /:id/preview` call on dialog open; render day-by-day paid/unpaid breakd
 
 ## Related docs
 - `docs/OLD_LEAVE_MODULE.md`
-- `docs/UPDATED_LEAVE_MODULE.md`
+- `docs/LEAVE_MODULE.md`
 - `docs/CLIENT_LEAVE_CONTRACT.md`

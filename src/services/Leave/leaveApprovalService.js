@@ -1,7 +1,7 @@
 // src/services/Leave/leaveApprovalService.js
 //
 // Centralized ledger-writing service for leave approval (Phase 4 of the Leave
-// Module redo — see docs/UPDATED_LEAVE_MODULE.md §6, §10, §14b). Every
+// Module redo — see docs/LEAVE_MODULE.md §6, §10, §14b). Every
 // balance-affecting action on approval goes through here so LeaveDay creation,
 // the LeaveBalance decrement, and the LeaveTransaction ledger entry always
 // happen together, atomically — this is what closes the ledger-integrity gap
@@ -75,7 +75,7 @@ async function previewLeaveApproval(leave, policy) {
  * single consolidated `deduction` LeaveTransaction, all in one transaction.
  *
  * Deliberate-unpaid requests (leave.isPaid === false) never touch balance —
- * that's the employee's explicit choice (see UPDATED_LEAVE_MODULE.md §5),
+ * that's the employee's explicit choice (see LEAVE_MODULE.md §5),
  * not just an insufficient-balance fallback.
  *
  * @returns {{ paidHours: number, unpaidHours: number }}
@@ -84,18 +84,38 @@ async function applyLeaveApproval(leave, policy, approverId, note) {
   const dailyHours = await calcDailyHours(leave.userId, leave.startDate, leave.endDate);
 
   if (!leave.isPaid) {
-    if (dailyHours.length) {
-      await prisma.leaveDay.createMany({
-        data: dailyHours.map((d) => ({
-          leaveId: leave.id,
-          date:    new Date(d.date),
-          isPaid:  false,
-          hours:   d.hours,
-        })),
-        skipDuplicates: true,
-      });
-    }
     const unpaidHours = +dailyHours.reduce((s, d) => s + d.hours, 0).toFixed(2);
+
+    await prisma.$transaction(async (tx) => {
+      if (dailyHours.length) {
+        await tx.leaveDay.createMany({
+          data: dailyHours.map((d) => ({
+            leaveId: leave.id,
+            date:    new Date(d.date),
+            isPaid:  false,
+            hours:   d.hours,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      await tx.leave.update({
+        where: { id: leave.id },
+        data:  { actualPaidHours: 0, actualUnpaidHours: unpaidHours },
+      });
+      // Leave Ledger — lifecycle event, no balance movement (deliberate-unpaid
+      // choice never touches balance, see §5/§6).
+      await tx.leaveTransaction.create({
+        data: {
+          userId:        leave.userId,
+          policyId:      policy.id,
+          type:          "approved",
+          leaveId:       leave.id,
+          performedById: approverId ?? null,
+          note:          `${note ? note + " — " : ""}0h paid, ${unpaidHours}h unpaid (deliberate unpaid request)`,
+        },
+      });
+    });
+
     return { paidHours: 0, unpaidHours };
   }
 
@@ -147,6 +167,28 @@ async function applyLeaveApproval(leave, policy, approverId, note) {
         },
       });
     }
+
+    await tx.leave.update({
+      where: { id: leave.id },
+      data:  { actualPaidHours: paidHours, actualUnpaidHours: unpaidHours },
+    });
+
+    // Leave Ledger — the lifecycle "approved" marker, distinct from the
+    // "deduction" row above (which only exists when paidHours > 0). Every
+    // decision gets exactly one lifecycle event; a paid approval additionally
+    // gets its own balance-movement row.
+    await tx.leaveTransaction.create({
+      data: {
+        userId:        leave.userId,
+        policyId:      policy.id,
+        type:          "approved",
+        leaveId:       leave.id,
+        performedById: approverId ?? null,
+        note: unpaidHours > 0
+          ? `${note ? note + " — " : ""}${paidHours}h paid, ${unpaidHours}h auto-unpaid (insufficient balance)`
+          : (note ?? null),
+      },
+    });
 
     return { paidHours, unpaidHours };
   });
