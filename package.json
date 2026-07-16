@@ -64,6 +64,7 @@
     "@middlewares": "./src/middlewares",
     "@routes": "./src/routes",
     "@utils": "./src/utils",
+    "@constants": "./src/constants",
     "@services": "./src/services",
     "@workers": "./src/workers",
     "@jobs": "./src/jobs",

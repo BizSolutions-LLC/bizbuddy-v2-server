@@ -10,6 +10,9 @@ const {
   getPendingLeavesForApprover,
   approveLeave,
   rejectLeave,
+  cancelLeave,
+  previewApproval,
+  getLeaveDays,
   getApprovers,
   getLeavesForApprover,
   deleteLeave,
@@ -62,6 +65,24 @@ router.put(
   authenticate,
   authorizeRoles("admin", "supervisor", "superadmin"),
   rejectLeave
+);
+router.put(
+  "/:id/cancel",
+  authenticate,
+  authorizeRoles("employee", "admin", "supervisor", "superadmin"),
+  cancelLeave
+);
+router.get(
+  "/:id/preview",
+  authenticate,
+  authorizeRoles("admin", "supervisor", "superadmin"),
+  previewApproval
+);
+router.get(
+  "/:id/days",
+  authenticate,
+  authorizeRoles("employee", "admin", "supervisor", "superadmin"),
+  getLeaveDays
 );
 router.get(
   "/approvers",

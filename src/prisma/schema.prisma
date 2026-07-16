@@ -326,13 +326,32 @@ model LeavePolicy {
   carryOverAllowed Boolean          @default(false)
   carryOverLimit   Decimal?         @db.Decimal(6, 2)
   negativeAllowed  Boolean          @default(false)
+  isPaid           Boolean          @default(true)  // employees may request this type as paid
+  isNotPaid        Boolean          @default(true)  // employees may request this type as unpaid
+  assignedToAll    Boolean          @default(true)  // false = restricted to LeavePolicyAssignment rows
+  isArchived       Boolean          @default(false) // retired from future use; history stays intact
+  archivedAt       DateTime?        @db.Timestamptz(6)
   createdAt        DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime         @updatedAt @db.Timestamptz(6)
   balances         LeaveBalance[]
   transactions     LeaveTransaction[]
+  assignments      LeavePolicyAssignment[]
+  leaves           Leave[]
   company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, leaveType])
+}
+
+model LeavePolicyAssignment {
+  id        String      @id @default(cuid())
+  policyId  String
+  userId    String
+  createdAt DateTime    @default(now()) @db.Timestamptz(6)
+  policy    LeavePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, userId])
+  @@index([userId])
 }
 
 model LeaveBalance {
@@ -354,9 +373,9 @@ model LeaveTransaction {
   userId        String
   policyId      String
   type          LeaveTransactionType
-  hours         Decimal              @db.Decimal(8, 2)
-  balanceBefore Decimal              @db.Decimal(8, 2)
-  balanceAfter  Decimal              @db.Decimal(8, 2)
+  hours         Decimal?             @db.Decimal(8, 2) // null for non-monetary lifecycle events (submitted/escalated/rejected/cancelled)
+  balanceBefore Decimal?             @db.Decimal(8, 2)
+  balanceAfter  Decimal?             @db.Decimal(8, 2)
   leaveId       String?
   performedById String?
   note          String?
@@ -395,8 +414,11 @@ model User {
   supervisedEmployees      EmploymentDetail[]       @relation("Supervisor")
   employmentDetail         EmploymentDetail?
   ApprovedLeaves           Leave[]                  @relation("approver")
+  EscalatedLeaves          Leave[]                  @relation("leaveEscalatedBy")
+  DecidedLeaves            Leave[]                  @relation("leaveDecidedBy")
   Leave                    Leave[]
   LeaveBalance             LeaveBalance[]
+  LeavePolicyAssignment    LeavePolicyAssignment[]
   LeaveTransactions        LeaveTransaction[]
   LeaveTransactionsPerformed LeaveTransaction[] @relation("LeaveTransactionPerformer")
   LocationRestriction      LocationRestriction[]
@@ -1107,6 +1129,7 @@ model Leave {
   id               String   @id @default(cuid())
   userId           String
   approverId       String?
+  policyId         String?  // formalized FK — leaveType is kept as a legacy/display field, still holds the policy id today
   leaveType        String
   startDate        DateTime @db.Timestamptz(6)
   endDate          DateTime @db.Timestamptz(6)
@@ -1116,15 +1139,37 @@ model Leave {
   approverComments          String?
   secondaryApproverId       String?
   secondaryApproverComments String?
+  escalatedByUserId         String?  // who chose to escalate to a second approver (first-stage reviewer) — null if never escalated
+  decidedByUserId           String?  // who actually approved/rejected — may differ from approverId/secondaryApproverId since any eligible admin/dept supervisor can act
+  actualPaidHours           Decimal? @db.Decimal(6, 2) // real per-day proration outcome at approval time — null until decided; may differ from the submitted isPaid intent
+  actualUnpaidHours         Decimal? @db.Decimal(6, 2)
   affectedShifts            Json?
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   approver         User?    @relation("approver", fields: [approverId], references: [id])
+  escalatedBy      User?    @relation("leaveEscalatedBy", fields: [escalatedByUserId], references: [id])
+  decidedBy        User?    @relation("leaveDecidedBy", fields: [decidedByUserId], references: [id])
   User             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policy           LeavePolicy? @relation(fields: [policyId], references: [id])
+  days             LeaveDay[]
 
   @@index([userId, status])
   @@index([approverId, status])
   @@index([status, startDate])
+  @@index([policyId])
+}
+
+model LeaveDay {
+  id        String   @id @default(cuid())
+  leaveId   String
+  date      DateTime @db.Date
+  isPaid    Boolean
+  hours     Decimal  @db.Decimal(6, 2)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  leave     Leave    @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+
+  @@unique([leaveId, date])
+  @@index([leaveId])
 }
 
 model Overtime {
@@ -1315,6 +1360,10 @@ enum LeaveTransactionType {
   accrual
   deduction
   adjustment
+  submitted
+  escalated
+  rejected
+  cancelled
 }
 
 enum PresenceStatus {
