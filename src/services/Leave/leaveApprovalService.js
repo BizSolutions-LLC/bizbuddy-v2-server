@@ -15,6 +15,12 @@ const { calcDailyHours } = require("@utils/leaveUtils");
  * Pure function — no I/O, no side effects — used by both the read-only
  * preview and the actual apply step so they can never disagree.
  *
+ * BB-045: the one day where the balance runs out partway through now splits
+ * into two entries sharing the same date — a paid portion (whatever balance
+ * remained) and an unpaid portion (the rest) — instead of the whole day
+ * falling to unpaid and stranding the leftover balance. Every day before
+ * that split point is fully paid; every day after it is fully unpaid.
+ *
  * @param {Array<{date: string, hours: number}>} dailyHours
  * @param {number} availableBalance
  * @param {boolean} negativeAllowed - if true, every day is paid regardless of balance
@@ -24,17 +30,28 @@ function computeProration(dailyHours, availableBalance, negativeAllowed) {
   let available = availableBalance;
   let paidHours = 0;
   let unpaidHours = 0;
+  const days = [];
 
-  const days = dailyHours.map((d) => {
-    const canPay = negativeAllowed || available >= d.hours;
-    if (canPay) {
+  for (const d of dailyHours) {
+    if (negativeAllowed || available >= d.hours) {
       available -= d.hours;
       paidHours += d.hours;
+      days.push({ date: d.date, hours: d.hours, isPaid: true });
+    } else if (available > 0) {
+      // Split day — whatever balance remains covers part of it, the rest
+      // auto-falls to unpaid. Two rows, same date.
+      const paidPortion   = available;
+      const unpaidPortion = d.hours - available;
+      paidHours   += paidPortion;
+      unpaidHours += unpaidPortion;
+      days.push({ date: d.date, hours: +paidPortion.toFixed(2),   isPaid: true });
+      days.push({ date: d.date, hours: +unpaidPortion.toFixed(2), isPaid: false });
+      available = 0;
     } else {
       unpaidHours += d.hours;
+      days.push({ date: d.date, hours: d.hours, isPaid: false });
     }
-    return { date: d.date, hours: d.hours, isPaid: canPay };
-  });
+  }
 
   return {
     days,
@@ -48,7 +65,10 @@ function computeProration(dailyHours, availableBalance, negativeAllowed) {
  * dashboard to show before they confirm. Writes nothing.
  */
 async function previewLeaveApproval(leave, policy) {
-  const dailyHours = await calcDailyHours(leave.userId, leave.startDate, leave.endDate);
+  const dailyHours = await calcDailyHours(leave.userId, leave.startDate, leave.endDate, {
+    requestedStartTime: leave.requestedStartTime,
+    requestedEndTime:   leave.requestedEndTime,
+  });
 
   if (!leave.isPaid) {
     return {
@@ -81,7 +101,10 @@ async function previewLeaveApproval(leave, policy) {
  * @returns {{ paidHours: number, unpaidHours: number }}
  */
 async function applyLeaveApproval(leave, policy, approverId, note) {
-  const dailyHours = await calcDailyHours(leave.userId, leave.startDate, leave.endDate);
+  const dailyHours = await calcDailyHours(leave.userId, leave.startDate, leave.endDate, {
+    requestedStartTime: leave.requestedStartTime,
+    requestedEndTime:   leave.requestedEndTime,
+  });
 
   if (!leave.isPaid) {
     const unpaidHours = +dailyHours.reduce((s, d) => s + d.hours, 0).toFixed(2);

@@ -590,7 +590,7 @@ model Company {
 
   // Auto clock-out configuration
   autoClockOutWarningHours  Decimal? @default(0.5) @db.Decimal(4, 2) // hours BEFORE scheduledEnd to warn employee
-  autoClockOutGraceHours    Decimal? @default(1.0) @db.Decimal(4, 2) // hours AFTER scheduledEnd to auto-close
+  autoClockOutGraceHours    Decimal? @default(5.0) @db.Decimal(4, 2) // hours AFTER scheduledEnd to auto-close
   autoClockOutNotifyEmails  Json?    @default("[]")                   // JSON string[] of SV email recipients
 
   // Auto-break configuration
@@ -1144,6 +1144,8 @@ model Leave {
   actualPaidHours           Decimal? @db.Decimal(6, 2) // real per-day proration outcome at approval time — null until decided; may differ from the submitted isPaid intent
   actualUnpaidHours         Decimal? @db.Decimal(6, 2)
   affectedShifts            Json?
+  requestedStartTime        DateTime? @db.Time(6) // employee-entered daily time window, used only as the no-shift-day fallback in calcDailyHours (BB-048) — null for older leaves and requests that never set it
+  requestedEndTime          DateTime? @db.Time(6)
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   approver         User?    @relation("approver", fields: [approverId], references: [id])
@@ -1168,7 +1170,11 @@ model LeaveDay {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   leave     Leave    @relation(fields: [leaveId], references: [id], onDelete: Cascade)
 
-  @@unique([leaveId, date])
+  // BB-045: a day where the balance runs out partway through now splits into
+  // two rows sharing the same date (one isPaid: true, one isPaid: false)
+  // instead of the whole day falling to one side — widened from
+  // [leaveId, date] to allow exactly one paid + one unpaid row per date.
+  @@unique([leaveId, date, isPaid])
   @@index([leaveId])
 }
 

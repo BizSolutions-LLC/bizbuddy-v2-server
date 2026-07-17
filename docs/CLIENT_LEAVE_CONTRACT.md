@@ -241,7 +241,7 @@ This was backfilled server-side for already-approved leaves that already have da
 
 Previously, a genuine shift worker requesting leave for dates where their schedule hadn't been plotted yet got `0` for every day in the range, both on the request-list total and in the approver's preview/day breakdown — confirmed real case: a Maternity Leave request that priced out at 0h entirely. Root cause was server-side only (a stale "is this person a shift worker at all" check ignored whether anything was actually scheduled in the requested range).
 
-**Fix:** unplotted days for shift workers now fall back to the company's default shift hours, same as salaried/unassigned employees already did — no more 0h ranges. No UI work needed; this is a pure computation correction, values will simply be non-zero going forward where they previously weren't.
+**Fix:** unplotted days for shift workers now fall back to the company's default shift hours, same as salaried/unassigned employees already did. No UI work needed; this is a pure computation correction, values will simply be non-zero going forward where they previously weren't. **Superseded by BB-048 below**: this originally only covered a range with *zero* plotted shifts anywhere in it (a mixed range still showed 0h for the unscheduled days) — BB-048 removed that restriction, see further down.
 
 **Not corrected retroactively:** the one confirmed historical case will be rejected and resubmitted manually rather than backfilled, so don't expect already-approved leaves from before this fix to change.
 
@@ -302,6 +302,31 @@ Only the requester can call this, and only while their request is `pending` or `
 - Management users get a `LEAVE_REQUEST_CANCELLED` notification (same eligible-pool targeting as the existing `LEAVE_REQUEST_SUBMITTED` notification on submit) — no client work needed beyond however notifications are already rendered today.
 
 **Not built yet:** cancelling/reversing an **already-approved** leave (e.g. via punch-vs-leave conflict) — that's a separate, harder problem (real balance/ledger reversal) still paused pending real usage signal. This addition only covers withdrawing a request before a decision is made.
+
+---
+
+## Bug fix (BB-048) — "Affected schedules" preview now reflects the no-shift fallback, and it's now time-window-based
+
+**Endpoints:** `GET /api/leaves/affected-schedules` (response shape extended), `POST /api/leaves/submit` (request body gains two new optional fields).
+
+**The bug:** submitting a leave request for a date range with no plotted shifts at all showed "No scheduled shifts for the period" in the pre-submission preview — implying 0h — even though the request would actually be paid out using the existing default-hours fallback once approved (see the bug fix entry above). The preview simply never called the same computation the approval step uses, so the two could disagree. Confirmed real: a 2-day range with zero shifts (screenshots on file) showed nothing in the "Affected schedules" panel.
+
+**Fix, two parts:**
+1. `GET /api/leaves/affected-schedules` now includes a synthetic entry for each otherwise-eligible day (not a weekend/holiday) that has no matching shift, instead of omitting it. Each such entry has `userShiftId: null`, `shiftName: null`, `startTime: null`, `endTime: null`, and a new boolean **`isFallback: true`**. `scheduledHours` is populated on these entries — previously always `null`/absent for a no-shift day. Days with a real shift are completely unchanged (`isFallback: false`, same fields as before).
+2. The no-shift fallback value itself changed: it now uses the employee's entered daily time window (see below), capped at the company's Default Shift Hours, instead of always the flat default. **This applies to every no-shift day, including inside a mixed range** (some days scheduled, some not, within the same request) — confirmed and widened at your request after the initial ship, which had scoped it to fully-empty ranges only. There is no longer a distinction between "unplotted day" and "scheduled worker's day off" — any day without an actual plotted shift is now priced via this fallback.
+
+**New optional request fields — `fromTime` / `toTime`** (`HH:MM`, e.g. `"08:00"`/`"17:00"`), both-or-neither, `toTime` must be after `fromTime`. **One shared pair per request, not per day** — the same window is applied to every eligible day in a multi-day request (confirmed this is the intended design, not distinct times per day):
+- On `POST /api/leaves/submit` — persisted on the leave request, used at approval time.
+- On `GET /api/leaves/affected-schedules` as query params — used for the live preview before submission.
+
+If omitted, behavior falls back to the flat company default per day. **The time pickers already present in the "New leave request" form need to actually send these** — they weren't wired to the request body before this fix.
+
+**`400` validation to handle:** `"fromTime and toTime must both be provided in HH:MM format."` / `"toTime must be after fromTime."`
+
+**UI work:**
+- Send `fromTime`/`toTime` (from the existing time pickers) on both the affected-schedules preview call and the final submit call.
+- In the "Affected schedules" list, render `isFallback: true` entries distinctly from real shifts (e.g. no shift name — just the computed hours), so the employee can tell which days are using the entered time window vs. an actual scheduled shift.
+- No change needed for days that already have a real shift — same fields, same values as before (per your existing "we will not touch it" confirmation on that path).
 
 ---
 

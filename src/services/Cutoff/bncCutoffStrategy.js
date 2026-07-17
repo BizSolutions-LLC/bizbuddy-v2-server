@@ -18,8 +18,42 @@ const moment                             = require("moment-timezone");
 const { computeTimeLogSummary }          = require("@services/timeLogComputeService");
 const { combineDateWithTimeTz }          = require("@services/timeLogComputeUtils");
 const { StrategyError }                  = require("./daycareCutoffStrategy");
+const { fetchScheduleForDate }           = require("./shiftLookupUtils");
 const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff }        = require("./cutoffOtService");
+
+// ── Raw-mode grace credit ──────────────────────────────────────────────────────
+// Raw approval preserves the actual punch (TimeLog.timeIn/timeOut untouched), but
+// if the punch falls within the company's grace period of the day's assigned
+// shift start, the worked-hours figure should still credit from the scheduled
+// start — mirroring the DayCare raw-approval behavior. netWorkedHours (from
+// computeBnC) reflects the true elapsed punch time with zero grace credit, so
+// this returns the extra hours to add back on top of it.
+async function computeGraceCreditHours(timeLog, companyId) {
+  const company = await prisma.company.findUnique({
+    where:  { id: companyId },
+    select: { gracePeriodMinutes: true, timeZone: true },
+  });
+  const gracePeriodMinutes = company?.gracePeriodMinutes ?? 15;
+  const graceMs            = (gracePeriodMinutes * 60 + 59) * 1000;
+  const companyTz          = company?.timeZone || "America/Los_Angeles";
+
+  const timeInDate          = new Date(timeLog.timeIn);
+  const localDateStr        = moment.tz(timeInDate, companyTz).format("YYYY-MM-DD");
+  const dateOnlyForSchedule = moment.tz(timeInDate, companyTz).startOf("day").toDate();
+
+  const userShift = await fetchScheduleForDate(
+    timeLog.userId, dateOnlyForSchedule, timeLog.user?.departmentId, companyId, localDateStr
+  );
+  if (!userShift?.shift) return 0;
+
+  const startTime        = userShift.customStartTime || userShift.shift.startTime;
+  const tz               = userShift.shift.timeZone  || companyTz;
+  const scheduledClockIn = combineDateWithTimeTz(timeInDate, startTime, tz);
+
+  const lateMs = timeInDate.getTime() - scheduledClockIn.getTime();
+  return (lateMs > 0 && lateMs <= graceMs) ? lateMs / 3600000 : 0;
+}
 
 // ── Approval include ──────────────────────────────────────────────────────────
 const APPROVAL_INCLUDE = {
@@ -210,7 +244,11 @@ async function approveSingle(approvalId, {
     data:  { isApproved: true },
   });
 
-  const fresh = await recomputeAndRead(timeLog.id);
+  const fresh       = await recomputeAndRead(timeLog.id);
+  const creditHours = await computeGraceCreditHours(timeLog, companyId);
+  const actualHours = fresh?.netWorkedHours != null
+    ? parseFloat((parseFloat(fresh.netWorkedHours.toString()) + creditHours).toFixed(2))
+    : null;
 
   const updated = await prisma.timeLogApproval.update({
     where: { id: approvalId },
@@ -221,7 +259,7 @@ async function approveSingle(approvalId, {
       approvedClockIn:  fresh?.timeIn  ? new Date(fresh.timeIn)  : new Date(timeLog.timeIn),
       approvedClockOut: fresh?.timeOut ? new Date(fresh.timeOut) : (timeLog.timeOut ? new Date(timeLog.timeOut) : null),
       scheduledHours:   fresh?.scheduledHours != null ? parseFloat(fresh.scheduledHours.toString()) : null,
-      actualHours:      fresh?.netWorkedHours != null ? parseFloat(fresh.netWorkedHours.toString()) : null,
+      actualHours,
       ...(notes && { notes }),
     },
   });
@@ -230,7 +268,7 @@ async function approveSingle(approvalId, {
     console.error("[OT] recompute failed after raw approve:", e.message)
   );
 
-  console.log("[✅ B&C] Approve Raw", approvalId);
+  console.log("[✅ B&C] Approve Raw", approvalId, creditHours > 0 ? `(+${creditHours.toFixed(2)}h grace credit)` : "");
   return { message: "Time log approved with raw punch times.", data: updated };
 }
 
@@ -281,7 +319,11 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, userId, company
         data:  { isApproved: true },
       });
 
-      const fresh = await recomputeAndRead(timeLog.id);
+      const fresh       = await recomputeAndRead(timeLog.id);
+      const creditHours = await computeGraceCreditHours(timeLog, companyId);
+      const actualHours = fresh?.netWorkedHours != null
+        ? parseFloat((parseFloat(fresh.netWorkedHours.toString()) + creditHours).toFixed(2))
+        : null;
 
       await prisma.timeLogApproval.update({
         where: { id: approval.id },
@@ -292,7 +334,7 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, userId, company
           approvedClockIn:  fresh?.timeIn  ? new Date(fresh.timeIn)  : new Date(timeLog.timeIn),
           approvedClockOut: fresh?.timeOut ? new Date(fresh.timeOut) : (timeLog.timeOut ? new Date(timeLog.timeOut) : null),
           scheduledHours:   fresh?.scheduledHours != null ? parseFloat(fresh.scheduledHours.toString()) : null,
-          actualHours:      fresh?.netWorkedHours != null ? parseFloat(fresh.netWorkedHours.toString()) : null,
+          actualHours,
           ...(notes && { notes }),
         },
       });
@@ -360,7 +402,11 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     data:  { isApproved: true },
   });
 
-  const fresh = await recomputeAndRead(timeLog.id);
+  const fresh       = await recomputeAndRead(timeLog.id);
+  const creditHours = await computeGraceCreditHours(timeLog, companyId);
+  const actualHours = fresh?.netWorkedHours != null
+    ? parseFloat((parseFloat(fresh.netWorkedHours.toString()) + creditHours).toFixed(2))
+    : null;
 
   await prisma.timeLogApproval.update({
     where: { id: approvalId },
@@ -371,7 +417,7 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
       approvedClockIn:  fresh?.timeIn  ? new Date(fresh.timeIn)  : new Date(timeLog.timeIn),
       approvedClockOut: fresh?.timeOut ? new Date(fresh.timeOut) : (timeLog.timeOut ? new Date(timeLog.timeOut) : null),
       scheduledHours:   fresh?.scheduledHours != null ? parseFloat(fresh.scheduledHours.toString()) : null,
-      actualHours:      fresh?.netWorkedHours != null ? parseFloat(fresh.netWorkedHours.toString()) : null,
+      actualHours,
       notes:            "Conflict resolved — punch takes precedence",
     },
   });
