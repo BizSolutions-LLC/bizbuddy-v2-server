@@ -1144,6 +1144,8 @@ model Leave {
   actualPaidHours           Decimal? @db.Decimal(6, 2) // real per-day proration outcome at approval time — null until decided; may differ from the submitted isPaid intent
   actualUnpaidHours         Decimal? @db.Decimal(6, 2)
   affectedShifts            Json?
+  requestedStartTime        DateTime? @db.Time(6) // employee-entered daily time window, used only as the no-shift-day fallback in calcDailyHours (BB-048) — null for older leaves and requests that never set it
+  requestedEndTime          DateTime? @db.Time(6)
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   approver         User?    @relation("approver", fields: [approverId], references: [id])
