@@ -1170,7 +1170,11 @@ model LeaveDay {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   leave     Leave    @relation(fields: [leaveId], references: [id], onDelete: Cascade)
 
-  @@unique([leaveId, date])
+  // BB-045: a day where the balance runs out partway through now splits into
+  // two rows sharing the same date (one isPaid: true, one isPaid: false)
+  // instead of the whole day falling to one side — widened from
+  // [leaveId, date] to allow exactly one paid + one unpaid row per date.
+  @@unique([leaveId, date, isPaid])
   @@index([leaveId])
 }
 

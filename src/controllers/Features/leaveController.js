@@ -1,7 +1,7 @@
 // src/controllers/Features/leaveController.js
 
 const { prisma } = require("@config/connection");
-const { calcRequestedHours, leaveVisibilityWhere } = require("@utils/leaveUtils");
+const { calcDailyHours, calcRequestedHours, leaveVisibilityWhere } = require("@utils/leaveUtils");
 const { previewLeaveApproval, applyLeaveApproval } = require("@services/Leave/leaveApprovalService");
 const { createNotification } = require("@services/notificationService");
 const { getEligibleApprovers } = require("@services/Approvers/approverResolutionService");
@@ -41,11 +41,22 @@ function _isEligibleApprover(actingRole, actingDepartmentId, requesterDepartment
   return false;
 }
 
+// ─── Parse "HH:MM" into a UTC-epoch-anchored Date for @db.Time storage — ─────
+// ─── same convention as shiftController.js's createShift ─────────────────────
+const TIME_HHMM_RE = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
+function _parseTimeHHMM(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return new Date(Date.UTC(1970, 0, 1, h, m, 0));
+}
+
 // ─── Attach requestedHours to a list of already-formatted leave records ───────
 async function _attachRequestedHours(leaves) {
   const hours = await Promise.all(
     leaves.map((l) =>
-      calcRequestedHours(l.userId, l.startDate, l.endDate).catch(() => null)
+      calcRequestedHours(l.userId, l.startDate, l.endDate, {
+        requestedStartTime: l.requestedStartTime,
+        requestedEndTime:   l.requestedEndTime,
+      }).catch(() => null)
     )
   );
   return leaves.map((l, i) => ({ ...l, requestedHours: hours[i] }));
@@ -118,10 +129,25 @@ async function _attachTransactions(leaves) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const submitLeaveRequest = async (req, res) => {
-  const { type, fromDate, toDate, approverId, leaveReason, isPaid, affectedShiftIds } = req.body;
+  const { type, fromDate, toDate, approverId, leaveReason, isPaid, affectedShiftIds, fromTime, toTime } = req.body;
 
   if (!type || !fromDate || !toDate || !approverId)
     return res.status(400).json({ message: "All fields are required." });
+
+  // BB-048: optional daily time window, used as the no-shift-day fallback in
+  // calcDailyHours. Both-or-neither — a lone fromTime/toTime can't express a
+  // window. Same-day only (toTime after fromTime); leave requests don't model
+  // a midnight-crossing window the way shifts do.
+  let requestedStartTime = null;
+  let requestedEndTime   = null;
+  if (fromTime || toTime) {
+    if (!fromTime || !toTime || !TIME_HHMM_RE.test(fromTime) || !TIME_HHMM_RE.test(toTime))
+      return res.status(400).json({ message: "fromTime and toTime must both be provided in HH:MM format." });
+    requestedStartTime = _parseTimeHHMM(fromTime);
+    requestedEndTime   = _parseTimeHHMM(toTime);
+    if (requestedEndTime <= requestedStartTime)
+      return res.status(400).json({ message: "toTime must be after fromTime." });
+  }
 
   // Normalise to YYYY-MM-DD regardless of what the client sends
   const fromDateStr = String(fromDate).slice(0, 10);
@@ -228,6 +254,8 @@ const submitLeaveRequest = async (req, res) => {
       status:     "pending",
       isPaid:     payModeIntent,
       leaveReason,
+      requestedStartTime,
+      requestedEndTime,
       ...(affectedShifts !== null && { affectedShifts }),
     },
   });
@@ -691,7 +719,10 @@ const getLeaveDays = async (req, res) => {
 
   const days = await prisma.leaveDay.findMany({
     where:   { leaveId },
-    orderBy: { date: "asc" },
+    // BB-045: a day that got split by proration has two rows sharing the same
+    // date (one paid, one unpaid) — order isPaid desc so the paid portion is
+    // always listed first for a split date.
+    orderBy: [{ date: "asc" }, { isPaid: "desc" }],
   });
 
   res.json({
@@ -1154,13 +1185,25 @@ const listBalances = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const getAffectedSchedules = async (req, res) => {
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, fromTime, toTime } = req.query;
 
   if (!startDate || !endDate)
     return res.status(400).json({ message: "startDate and endDate are required." });
 
   if (new Date(startDate) > new Date(endDate))
     return res.status(400).json({ message: "startDate cannot be after endDate." });
+
+  // BB-048: optional daily time window — same validation as submitLeaveRequest.
+  let requestedStartTime = null;
+  let requestedEndTime   = null;
+  if (fromTime || toTime) {
+    if (!fromTime || !toTime || !TIME_HHMM_RE.test(fromTime) || !TIME_HHMM_RE.test(toTime))
+      return res.status(400).json({ message: "fromTime and toTime must both be provided in HH:MM format." });
+    requestedStartTime = _parseTimeHHMM(fromTime);
+    requestedEndTime   = _parseTimeHHMM(toTime);
+    if (requestedEndTime <= requestedStartTime)
+      return res.status(400).json({ message: "toTime must be after fromTime." });
+  }
 
   const userShifts = await prisma.userShift.findMany({
     where: {
@@ -1202,8 +1245,34 @@ const getAffectedSchedules = async (req, res) => {
       endTime:        s?.endTime ?? null,
       crossesMidnight: s?.crossesMidnight ?? false,
       scheduledHours,
+      isFallback:     false,
     };
   });
+
+  // BB-048: mirror calcDailyHours' no-shift fallback here so this pre-submission
+  // preview matches what actually gets deducted at approval time. calcDailyHours
+  // now returns a fallback entry for every no-shift day, including inside a
+  // mixed range (some days scheduled, some not) — no rest-day distinction.
+  const matchedDates = new Set(data.map((d) => d.assignedDate.toISOString().split("T")[0]));
+  const dailyHours = await calcDailyHours(req.user.id, startDate, endDate, {
+    requestedStartTime,
+    requestedEndTime,
+  }).catch(() => []);
+
+  for (const day of dailyHours) {
+    if (matchedDates.has(day.date)) continue;
+    data.push({
+      userShiftId:     null,
+      assignedDate:    new Date(`${day.date}T00:00:00.000Z`),
+      shiftName:        null,
+      startTime:        null,
+      endTime:          null,
+      crossesMidnight:  false,
+      scheduledHours:   day.hours,
+      isFallback:       true,
+    });
+  }
+  data.sort((a, b) => a.assignedDate - b.assignedDate);
 
   return res.json({ data });
 };
