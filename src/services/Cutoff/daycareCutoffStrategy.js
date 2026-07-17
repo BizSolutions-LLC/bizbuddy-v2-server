@@ -11,6 +11,8 @@ const moment                    = require("moment-timezone");
 const { computeTimeLogSummary } = require("@services/timeLogComputeService");
 const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff } = require("./cutoffOtService");
+const { combineDateTime,
+        fetchScheduleForDate }   = require("./shiftLookupUtils");
 
 // ── Strategy-level HTTP error ─────────────────────────────────────────────────
 class StrategyError extends Error {
@@ -72,98 +74,6 @@ async function syncApprovedSegmentsToTimeLog(timeLogId, cutoffPeriodId) {
 function calculateHours(timeIn, timeOut) {
   if (!timeIn || !timeOut) return 0;
   return (new Date(timeOut) - new Date(timeIn)) / 3600000;
-}
-
-function combineDateTime(date, time, shiftTimezone = "America/Los_Angeles") {
-  const dateStr = (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date))
-    ? date
-    : moment.tz(date, shiftTimezone).format("YYYY-MM-DD");
-
-  let timeStr;
-  if (typeof time === "string") {
-    timeStr = time;
-  } else if (time instanceof Date) {
-    const h = String(time.getUTCHours()).padStart(2, "0");
-    const m = String(time.getUTCMinutes()).padStart(2, "0");
-    const s = String(time.getUTCSeconds()).padStart(2, "0");
-    timeStr = `${h}:${m}:${s}`;
-  } else {
-    timeStr = "00:00:00";
-  }
-  return moment.tz(`${dateStr} ${timeStr}`, "YYYY-MM-DD HH:mm:ss", shiftTimezone).toDate();
-}
-
-async function fetchScheduleForDate(userId, dateOnly, userDepartmentId, companyId, localDateStr) {
-  const SHIFT_SELECT = {
-    id: true, shiftName: true, startTime: true,
-    endTime: true, crossesMidnight: true, timeZone: true,
-  };
-
-  // UserShift — highest priority (explicit daily assignment)
-  const userShift = await prisma.userShift.findFirst({
-    where: {
-      userId,
-      assignedDate: {
-        gte: dateOnly,
-        lt:  new Date(dateOnly.getTime() + 24 * 60 * 60 * 1000),
-      },
-      status: { not: "cancelled" },
-    },
-    include: { shift: { select: SHIFT_SELECT } },
-  });
-  if (userShift) return userShift;
-
-  // ShiftSchedule fallback — individual > department > all
-  const orConditions = [
-    { assignmentType: "individual", targetId: userId },
-    { assignmentType: "all" },
-  ];
-  if (userDepartmentId) {
-    orConditions.push({ assignmentType: "department", targetId: userDepartmentId });
-  }
-
-  const schedules = await prisma.shiftSchedule.findMany({
-    where: {
-      ...(companyId ? { companyId } : {}),
-      OR:        orConditions,
-      startDate: { lte: dateOnly },
-      endDate:   { gte: dateOnly },
-      isActive:  true,
-    },
-    include: { shift: { select: SHIFT_SELECT } },
-  });
-
-  if (!schedules.length) return null;
-
-  const PRIORITY = { individual: 0, department: 1, all: 2 };
-  schedules.sort((a, b) => (PRIORITY[a.assignmentType] ?? 99) - (PRIORITY[b.assignmentType] ?? 99));
-
-  const dayOfWeek = localDateStr ? moment(localDateStr).day() : dateOnly.getDay();
-
-  for (const schedule of schedules) {
-    const days = Array.isArray(schedule.daysOfWeek) ? schedule.daysOfWeek : [];
-    if (days.includes(dayOfWeek)) {
-      return { id: schedule.id, shift: schedule.shift, customStartTime: null, customEndTime: null };
-    }
-  }
-
-  // Adjacent-day fallback — handles timezone offset edge cases
-  for (const offset of [1, -1]) {
-    const adjDay = localDateStr
-      ? moment(localDateStr).add(offset, "day").day()
-      : (dayOfWeek + offset + 7) % 7;
-    for (const schedule of schedules) {
-      const days = Array.isArray(schedule.daysOfWeek) ? schedule.daysOfWeek : [];
-      if (days.includes(adjDay)) {
-        return {
-          id: schedule.id, shift: schedule.shift, customStartTime: null, customEndTime: null,
-          _adjDate: moment(localDateStr || dateOnly).add(offset, "day").format("YYYY-MM-DD"),
-        };
-      }
-    }
-  }
-
-  return null;
 }
 
 // ── Approval include for single-record operations ─────────────────────────────
@@ -281,9 +191,20 @@ async function approveSingle(approvalId, {
         ? new Date(approval.segmentEnd)
         : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
 
-    // Recalculate hours from actual approved window (raw in → segment end may differ).
-    const rawSegHours = approvedIn && approvedOut
-      ? calculateHours(approvedIn, approvedOut)
+    // Raw mode: grace-period snap affects the hours computation only — approvedIn
+    // (displayed/stored clock-in) stays the actual punch. If the punch falls within
+    // the company's grace window of the segment start, hours are still credited
+    // from segmentStart, matching the REGULAR-punch raw behavior below.
+    let creditedIn = approvedIn;
+    if (approvalMode !== "schedule" && approval.segmentStart) {
+      const segStart = new Date(approval.segmentStart);
+      const lateMs   = new Date(timeLog.timeIn).getTime() - segStart.getTime();
+      if (lateMs > 0 && lateMs <= graceMs) creditedIn = segStart;
+    }
+
+    // Recalculate hours from the credited approved window (raw in → segment end may differ).
+    const rawSegHours = creditedIn && approvedOut
+      ? calculateHours(creditedIn, approvedOut)
       : (segHours != null ? parseFloat(segHours.toString()) : null);
 
     // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
@@ -531,8 +452,17 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
             ? new Date(approval.segmentEnd)
             : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
 
-        const rawSegHours = approvedIn && approvedOut
-          ? calculateHours(approvedIn, approvedOut)
+        // Raw mode: grace-period snap affects the hours computation only — approvedIn
+        // (displayed/stored clock-in) stays the actual punch.
+        let creditedIn = approvedIn;
+        if (approvalMode !== "schedule" && approval.segmentStart) {
+          const segStart = new Date(approval.segmentStart);
+          const lateMs   = new Date(timeLog.timeIn).getTime() - segStart.getTime();
+          if (lateMs > 0 && lateMs <= graceMs) creditedIn = segStart;
+        }
+
+        const rawSegHours = creditedIn && approvedOut
+          ? calculateHours(creditedIn, approvedOut)
           : (segHours != null ? parseFloat(segHours.toString()) : null);
 
         // Regular (program) segment is fixed-rate: cap at defaultShiftHours.

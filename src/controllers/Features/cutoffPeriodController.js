@@ -81,18 +81,25 @@ function enrichApprovals(approvals, gracePeriodMinutes) {
 
     if (isDriverAide) {
       // segScheduledHours = the full segment window duration (segmentEnd − segmentStart).
-      // segmentHours      = for approved records: computed from approvedClockIn/Out on the
-      //                     approval record (reflects Schedule vs Raw correctly).
-      //                     Guard: skip if approvedClockIn is before segmentStart — that
-      //                     indicates a historical record written before the Raw clip fix,
-      //                     where the global clock-in was stored instead of segmentStart.
-      //                     Pending records fall back to the stored TimeLog segment value.
+      // segmentHours      = for approved records: prefer the stored actualHours — it's
+      //                     written by the approval strategy and is grace-period aware for
+      //                     Raw mode (approvedClockIn intentionally stays the raw punch, so
+      //                     it can under-report credited hours if used directly). Falls back
+      //                     to deriving from approvedClockIn/Out for legacy records written
+      //                     before actualHours was reliably populated for DRIVER_AIDE segments.
+      //                     Guard: skip the derived fallback if approvedClockIn is before
+      //                     segmentStart — that indicates a historical record written before
+      //                     the Raw clip fix, where the global clock-in was stored instead of
+      //                     segmentStart. Pending records fall back to the stored TimeLog
+      //                     segment value.
       const windowHours = approval.segmentStart && approval.segmentEnd
         ? parseFloat(((new Date(approval.segmentEnd) - new Date(approval.segmentStart)) / 3600000).toFixed(2))
         : null;
 
       const approvedHours = (() => {
-        if (approval.status !== "approved" || !approval.approvedClockIn || !approval.approvedClockOut) return null;
+        if (approval.status !== "approved") return null;
+        if (approval.actualHours != null) return parseFloat(approval.actualHours.toString());
+        if (!approval.approvedClockIn || !approval.approvedClockOut) return null;
         const inMs     = new Date(approval.approvedClockIn).getTime();
         const segStart = approval.segmentStart ? new Date(approval.segmentStart).getTime() : -Infinity;
         if (inMs < segStart) return null; // stale bad record — fall back to stored
