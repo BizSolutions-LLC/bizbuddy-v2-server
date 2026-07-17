@@ -590,7 +590,7 @@ model Company {
 
   // Auto clock-out configuration
   autoClockOutWarningHours  Decimal? @default(0.5) @db.Decimal(4, 2) // hours BEFORE scheduledEnd to warn employee
-  autoClockOutGraceHours    Decimal? @default(1.0) @db.Decimal(4, 2) // hours AFTER scheduledEnd to auto-close
+  autoClockOutGraceHours    Decimal? @default(5.0) @db.Decimal(4, 2) // hours AFTER scheduledEnd to auto-close
   autoClockOutNotifyEmails  Json?    @default("[]")                   // JSON string[] of SV email recipients
 
   // Auto-break configuration
