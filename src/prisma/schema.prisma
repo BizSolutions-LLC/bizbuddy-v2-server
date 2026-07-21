@@ -1368,6 +1368,7 @@ enum LeaveTransactionType {
   adjustment
   submitted
   escalated
+  approved
   rejected
   cancelled
 }
