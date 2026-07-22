@@ -23,6 +23,7 @@ const { resolveDriverAideSegments, computeTimeLogSummary } = require("@services/
 const { applyAutoBreaks } = require("@services/autoBreakService");
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 const daycareCutoffStrategy                        = require("@services/Cutoff/daycareCutoffStrategy");
+const { syncApprovedSegmentsToTimeLog }             = daycareCutoffStrategy;
 const bncCutoffStrategy                            = require("@services/Cutoff/bncCutoffStrategy");
 const { recomputeAllOtForCutoff, recomputeOtForTimeLog } = require("@services/Cutoff/cutoffOtService");
 const { calcDailyHours } = require("@utils/leaveUtils");
@@ -824,7 +825,7 @@ const syncCutoffApprovals = async (req, res) => {
         timeOut: { not: null },
         user:    { companyId },
       },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, punchType: true },
     });
 
     let recomputed     = 0;
@@ -836,6 +837,14 @@ const syncCutoffApprovals = async (req, res) => {
         batch.map(async (tl) => {
           await applyAutoBreaks(tl.id, tl.userId);
           await computeTimeLogSummary(tl.id);
+          // DRIVER_AIDE: this recompute overwrites TimeLog.*SegmentHours with raw,
+          // grace-unaware values. If all 3 segments are already approved, immediately
+          // re-sync the approved (grace/raw-aware) actualHours back — otherwise this
+          // routine recompute silently clobbers already-correct payroll display data
+          // (see BB-040 backjob).
+          if (tl.punchType === "DRIVER_AIDE") {
+            await syncApprovedSegmentsToTimeLog(tl.id, cutoffPeriod.id);
+          }
         })
       );
       for (const r of results) {
