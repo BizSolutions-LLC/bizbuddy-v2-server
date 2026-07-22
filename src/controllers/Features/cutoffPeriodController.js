@@ -23,7 +23,7 @@ const { resolveDriverAideSegments, computeTimeLogSummary } = require("@services/
 const { applyAutoBreaks } = require("@services/autoBreakService");
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 const daycareCutoffStrategy                        = require("@services/Cutoff/daycareCutoffStrategy");
-const { syncApprovedSegmentsToTimeLog }             = daycareCutoffStrategy;
+const { syncApprovedSegmentsToTimeLog, syncApprovedRegularToTimeLog } = daycareCutoffStrategy;
 const bncCutoffStrategy                            = require("@services/Cutoff/bncCutoffStrategy");
 const { recomputeAllOtForCutoff, recomputeOtForTimeLog } = require("@services/Cutoff/cutoffOtService");
 const { calcDailyHours } = require("@utils/leaveUtils");
@@ -844,6 +844,18 @@ const syncCutoffApprovals = async (req, res) => {
           // (see BB-040 backjob).
           if (tl.punchType === "DRIVER_AIDE") {
             await syncApprovedSegmentsToTimeLog(tl.id, cutoffPeriod.id);
+          } else if (tl.punchType === "REGULAR") {
+            // Same clobber risk for REGULAR: computeTimeLogSummary above just
+            // overwrote netWorkedHours with the raw pre-approval value, discarding
+            // an already-approved actualHours that may legitimately differ (e.g.
+            // Raw-mode approval doesn't apply the early-clock-in grace snap).
+            const approval = await prisma.timeLogApproval.findFirst({
+              where:  { timeLogId: tl.id, cutoffPeriodId: cutoffPeriod.id, status: "approved" },
+              select: { actualHours: true },
+            });
+            if (approval?.actualHours != null) {
+              await syncApprovedRegularToTimeLog(tl.id, parseFloat(approval.actualHours.toString()));
+            }
           }
         })
       );

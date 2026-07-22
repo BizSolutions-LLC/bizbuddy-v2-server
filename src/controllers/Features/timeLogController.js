@@ -372,6 +372,7 @@ const getUserTimeLogs = async (req, res) => {
               id:     true,
               status: true,
               segmentType: true,
+              actualHours: true,
               cutoffPeriod: {
                 select: {
                   id:          true,
@@ -453,7 +454,9 @@ const getUserTimeLogs = async (req, res) => {
       driverPmSegmentHours:  isBnC ? undefined : (l.driverPmSegmentHours  != null ? parseFloat(l.driverPmSegmentHours)  : null),
       grossHours:            l.grossHours            != null ? parseFloat(l.grossHours)            : null,
       scheduledHours:        l.scheduledHours        != null ? parseFloat(l.scheduledHours)        : null,
-      cutoffApproval:  l.approvals?.[0] ?? null,
+      cutoffApproval:  l.approvals?.[0]
+        ? { ...l.approvals[0], actualHours: l.approvals[0].actualHours != null ? parseFloat(l.approvals[0].actualHours) : null }
+        : null,
       approvals:       undefined,
       overtime:        isBnC ? undefined : l.overtime,
       shiftName:       shiftNameMap[moment.tz(l.timeIn, tz).format("YYYY-MM-DD")] ?? null,
@@ -690,6 +693,7 @@ const getCompanyTimeLogs = async (req, res) => {
               id:     true,
               status: true,
               segmentType: true,
+              actualHours: true,
               cutoffPeriod: {
                 select: { id: true, periodStart: true, periodEnd: true, status: true },
               },
@@ -810,7 +814,9 @@ const getCompanyTimeLogs = async (req, res) => {
       shiftToday:           null,
       userShift:            null,
       userShifts:           [],
-      cutoffApproval:       l.approvals?.[0] ?? null,
+      cutoffApproval:       l.approvals?.[0]
+        ? { ...l.approvals[0], actualHours: l.approvals[0].actualHours != null ? parseFloat(l.approvals[0].actualHours) : null }
+        : null,
       // OT requests linked to this punch log — DayCare only; B&C OT is cutoff-level aggregate
       ...(!isBnC && {
         overtime: (l.overtime ?? []).map((ot) => ({
