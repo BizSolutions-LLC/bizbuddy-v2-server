@@ -783,4 +783,4 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
   };
 }
 
-module.exports = { approveSingle, approveBulk, resolveConflict, StrategyError };
+module.exports = { approveSingle, approveBulk, resolveConflict, StrategyError, syncApprovedSegmentsToTimeLog };
