@@ -71,6 +71,22 @@ async function syncApprovedSegmentsToTimeLog(timeLogId, cutoffPeriodId) {
   );
 }
 
+/**
+ * After a REGULAR punch's (single) approval, write the approved actualHours back
+ * to TimeLog.netWorkedHours so the Punch Logs / timelog detail view matches the
+ * approved payroll figure instead of the pre-approval computeTimeLogSummary value.
+ *
+ * Unlike DRIVER_AIDE (3 sibling segments, gated on all-approved), REGULAR has
+ * exactly one TimeLogApproval per TimeLog — safe to sync immediately.
+ */
+async function syncApprovedRegularToTimeLog(timeLogId, actualHours) {
+  if (actualHours == null) return;
+  await prisma.timeLog.update({
+    where: { id: timeLogId },
+    data:  { netWorkedHours: actualHours },
+  });
+}
+
 function calculateHours(timeIn, timeOut) {
   if (!timeIn || !timeOut) return 0;
   return (new Date(timeOut) - new Date(timeIn)) / 3600000;
@@ -346,6 +362,10 @@ async function approveSingle(approvalId, {
     },
   });
 
+  syncApprovedRegularToTimeLog(timeLog.id, updated.actualHours != null ? parseFloat(updated.actualHours.toString()) : null).catch((e) =>
+    console.error("[sync-back] failed for regular punch after approve:", e.message)
+  );
+
   recomputeOtForTimeLog(timeLog.id, cutoffPeriodId, companyId).catch((e) =>
     console.error("[OT] recompute failed after regular approve:", e.message)
   );
@@ -580,6 +600,10 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
         },
       });
 
+      syncApprovedRegularToTimeLog(timeLog.id, actualHours).catch((e) =>
+        console.error("[sync-back] failed for regular punch after bulk approve:", e.message)
+      );
+
       successCount++;
     } catch (err) {
       console.error(`[daycareCutoffStrategy] Bulk approve failed for approval ${approval.id}:`, err.message);
@@ -783,4 +807,4 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
   };
 }
 
-module.exports = { approveSingle, approveBulk, resolveConflict, StrategyError, syncApprovedSegmentsToTimeLog };
+module.exports = { approveSingle, approveBulk, resolveConflict, StrategyError, syncApprovedSegmentsToTimeLog, syncApprovedRegularToTimeLog };
