@@ -26,27 +26,34 @@ class StrategyError extends Error {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * After each DRIVER_AIDE segment is approved, check whether all sibling segments
- * for the same punch are now approved. If so, write the approved actualHours back
- * to the TimeLog segment fields so the timelog detail view reflects approved reality.
+ * After each DRIVER_AIDE segment is decided, check whether all sibling segments
+ * for the same punch are now terminal (approved or excluded — BB-057: excluded is
+ * a decided state, not a lesser/incomplete one, so it must not block this the same
+ * way a still-pending segment does). If so, write the reviewed hours back to the
+ * TimeLog segment fields — approved segments get their actualHours, excluded
+ * segments get 0 — so the timelog detail view reflects the reviewed reality instead
+ * of staying stuck on pre-review computeTimeLogSummary output.
  *
  * Fires automatically — no manual trigger needed. Safe to call after every
  * DRIVER_AIDE approval; no-ops when siblings are still pending.
  */
 async function syncApprovedSegmentsToTimeLog(timeLogId, cutoffPeriodId) {
   const pendingCount = await prisma.timeLogApproval.count({
-    where: { timeLogId, cutoffPeriodId, status: { not: "approved" } },
+    where: { timeLogId, cutoffPeriodId, status: { notIn: ["approved", "excluded"] } },
   });
   if (pendingCount > 0) return;
 
   const segs = await prisma.timeLogApproval.findMany({
-    where:  { timeLogId, cutoffPeriodId, status: "approved" },
-    select: { segmentType: true, actualHours: true },
+    where:  { timeLogId, cutoffPeriodId, status: { in: ["approved", "excluded"] } },
+    select: { segmentType: true, actualHours: true, status: true },
   });
 
   const segMap = {};
   for (const s of segs) {
-    if (s.actualHours != null) segMap[s.segmentType] = parseFloat(s.actualHours.toString());
+    // Excluded segments contribute 0 hours — actualHours stays null on those rows.
+    segMap[s.segmentType] = s.status === "approved" && s.actualHours != null
+      ? parseFloat(s.actualHours.toString())
+      : 0;
   }
 
   const netWorkedHours = parseFloat(

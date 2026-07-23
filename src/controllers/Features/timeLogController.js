@@ -324,6 +324,66 @@ const timeOut = async (req, res) => {
 
 const VALID_PUNCH_TYPES_SET = new Set(["REGULAR", "DRIVER_AIDE_AM", "DRIVER_AIDE_PM", "DRIVER_AIDE", "TRAINING"]);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared TimeLogApproval helpers — used by both getUserTimeLogs and
+// getCompanyTimeLogs so the two /api/timelogs* list endpoints stay in parity.
+//
+// BB-057: dedup TimeLogApproval rows by segmentType, preferring a decided row
+// (approved/excluded) over a pending one. `syncApprovalRecords` has no guard
+// against re-creating "pending" rows for a punch that's already been fully
+// decided (no real DB unique constraint backs its `skipDuplicates`), so a stray
+// pending duplicate can outrank the real decided row if we just took the most
+// recently created row per segment — which is what the legacy `cutoffApproval`
+// field still does on both endpoints, kept as-is for backward compatibility.
+// ─────────────────────────────────────────────────────────────────────────────
+function dedupApprovalsBySegment(approvals) {
+  const bestBySegment = new Map();
+  for (const a of approvals ?? []) {
+    const key = a.segmentType ?? "__none__";
+    const existing = bestBySegment.get(key);
+    if (!existing || (existing.status === "pending" && a.status !== "pending")) {
+      bestBySegment.set(key, a);
+    }
+  }
+  return Array.from(bestBySegment.values()).map((a) => ({
+    ...a,
+    actualHours: a.actualHours != null ? parseFloat(a.actualHours) : null,
+  }));
+}
+
+// Day-level rollup for the client's CutoffApprovalBadge. "approved" here means
+// "cutoff decision is final" — i.e. every segment is terminal (approved and/or
+// excluded) — not "payroll-approved". A day of excluded/approved/excluded is
+// still "approved" in this field's sense: nothing is left outstanding. Only an
+// actually-undecided segment keeps it at "pending". null when the punch has no
+// TimeLogApproval rows yet (not synced into a cutoff period).
+function computeDayCutoffStatus(dedupedApprovals) {
+  return dedupedApprovals.length === 0
+    ? null
+    : dedupedApprovals.some((a) => a.status === "pending")
+      ? "pending"
+      : "approved";
+}
+
+// BB-058: raw TimeLog.timeIn/timeOut are never touched by approval (by design —
+// ground truth stays intact), so an early-clockout day graced up to the scheduled
+// window end (schedule-mode approval) has no way to surface that corrected time
+// through timeIn/timeOut alone. Pick a single day-level approved clock time from
+// whichever segment is chronologically first (In) / last (Out) among APPROVED
+// segments only — excluded/pending segments never carry a meaningful clock time
+// for this purpose. A day ending on `regular` (no PM segment worked) falls back
+// to `regular`; a plain REGULAR punch (segmentType null) resolves via "__none__".
+const IN_PRIORITY  = ["driver_am", "regular", "driver_pm", "__none__"];
+const OUT_PRIORITY = ["driver_pm", "regular", "driver_am", "__none__"];
+function pickApprovedClockTime(dedupedApprovals, priority, field) {
+  const bySegment = new Map(dedupedApprovals.map((a) => [a.segmentType ?? "__none__", a]));
+  for (const key of priority) {
+    const a = bySegment.get(key);
+    if (a && a.status === "approved" && a[field] != null) return a[field].toISOString();
+  }
+  return null;
+}
+
 const getUserTimeLogs = async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -373,6 +433,8 @@ const getUserTimeLogs = async (req, res) => {
               status: true,
               segmentType: true,
               actualHours: true,
+              approvedClockIn:  true,
+              approvedClockOut: true,
               cutoffPeriod: {
                 select: {
                   id:          true,
@@ -382,7 +444,6 @@ const getUserTimeLogs = async (req, res) => {
                 },
               },
             },
-            take: 1,
             orderBy: { createdAt: "desc" },
           },
         },
@@ -442,7 +503,13 @@ const getUserTimeLogs = async (req, res) => {
 
     // ── Shape response ────────────────────────────────────────────────────────
     const isBnC = BNC_COMPANY_IDS.has(req.user.companyId);
-    const data = logs.map((l) => ({
+    const data = logs.map((l) => {
+      const dedupedApprovals    = dedupApprovalsBySegment(l.approvals);
+      const dayApprovedClockIn  = pickApprovedClockTime(dedupedApprovals, IN_PRIORITY,  "approvedClockIn");
+      const dayApprovedClockOut = pickApprovedClockTime(dedupedApprovals, OUT_PRIORITY, "approvedClockOut");
+      const dayCutoffStatus     = computeDayCutoffStatus(dedupedApprovals);
+
+      return {
       ...l,
       timeIn:          l.timeIn  ? l.timeIn.toISOString()  : null,
       timeOut:         l.timeOut ? l.timeOut.toISOString() : null,
@@ -457,10 +524,16 @@ const getUserTimeLogs = async (req, res) => {
       cutoffApproval:  l.approvals?.[0]
         ? { ...l.approvals[0], actualHours: l.approvals[0].actualHours != null ? parseFloat(l.approvals[0].actualHours) : null }
         : null,
+      // ✅ BB-057/BB-058 parity with getCompanyTimeLogs — see shared helpers above.
+      segmentApprovals: dedupedApprovals,
+      dayCutoffStatus,
+      dayApprovedClockIn,
+      dayApprovedClockOut,
       approvals:       undefined,
       overtime:        isBnC ? undefined : l.overtime,
       shiftName:       shiftNameMap[moment.tz(l.timeIn, tz).format("YYYY-MM-DD")] ?? null,
-    }));
+      };
+    });
 
     return res.status(200).json({
       message:     "Time logs retrieved.",
@@ -694,11 +767,12 @@ const getCompanyTimeLogs = async (req, res) => {
               status: true,
               segmentType: true,
               actualHours: true,
+              approvedClockIn:  true,
+              approvedClockOut: true,
               cutoffPeriod: {
                 select: { id: true, periodStart: true, periodEnd: true, status: true },
               },
             },
-            take: 1,
             orderBy: { createdAt: "desc" },
           },
           overtime: {
@@ -768,7 +842,13 @@ const getCompanyTimeLogs = async (req, res) => {
         notes:      b.notes ?? null,
       }));
     }
-    const rows = logs.map((l) => ({
+    const rows = logs.map((l) => {
+      const dedupedApprovals    = dedupApprovalsBySegment(l.approvals);
+      const dayApprovedClockIn  = pickApprovedClockTime(dedupedApprovals, IN_PRIORITY,  "approvedClockIn");
+      const dayApprovedClockOut = pickApprovedClockTime(dedupedApprovals, OUT_PRIORITY, "approvedClockOut");
+      const dayCutoffStatus     = computeDayCutoffStatus(dedupedApprovals);
+
+      return {
       id:                   l.id,
       userId:               l.user.id,
       employeeName:         `${l.user.profile?.firstName || ""} ${l.user.profile?.lastName || ""}`.trim(),
@@ -817,6 +897,22 @@ const getCompanyTimeLogs = async (req, res) => {
       cutoffApproval:       l.approvals?.[0]
         ? { ...l.approvals[0], actualHours: l.approvals[0].actualHours != null ? parseFloat(l.approvals[0].actualHours) : null }
         : null,
+      // ✅ BB-057: one TimeLogApproval per segmentType (driver_am/regular/driver_pm) on
+      // DRIVER_AIDE punches — the single `cutoffApproval` above only reflects the most
+      // recently created row, not necessarily the AM/PM segment being displayed. Client
+      // should match by segmentType to render per-segment exclusion status correctly.
+      segmentApprovals:     dedupedApprovals,
+      // ✅ BB-057 follow-up: single canonical day-level status for CutoffApprovalBadge —
+      // see dayCutoffStatus computation above. Use this instead of cutoffApproval.status,
+      // which is not deduped and can reflect a stray pending duplicate.
+      dayCutoffStatus,
+      // ✅ BB-058: approved/effective clock times for the day, distinct from raw
+      // timeIn/timeOut above — see pickApprovedClockTime computation above. null
+      // until the relevant segment is actually approved; prefer these over raw
+      // timeIn/timeOut once dayCutoffStatus === "approved", same gating convention
+      // already used elsewhere on the client for late/undertime columns.
+      dayApprovedClockIn,
+      dayApprovedClockOut,
       // OT requests linked to this punch log — DayCare only; B&C OT is cutoff-level aggregate
       ...(!isBnC && {
         overtime: (l.overtime ?? []).map((ot) => ({
@@ -826,7 +922,8 @@ const getCompanyTimeLogs = async (req, res) => {
           updatedAt:      ot.updatedAt.toISOString(),
         })),
       }),
-    }));
+      };
+    });
 
     if (rows.length) {
       const userIds = [...new Set(rows.map((r) => r.userId))];
