@@ -1073,10 +1073,22 @@ const getCutoffApprovals = async (req, res) => {
         ...approval,
         hasLeaveConflict: !!approvedLeave,
         leaveRecord:      approvedLeave
-          ? { id: approvedLeave.id, leaveType: approvedLeave.leaveType, status: "approved" }
+          ? {
+              id:                approvedLeave.id,
+              leaveType:         approvedLeave.leaveType,
+              status:            "approved",
+              isPaid:            approvedLeave.isPaid,
+              actualPaidHours:   approvedLeave.actualPaidHours,
+              actualUnpaidHours: approvedLeave.actualUnpaidHours,
+            }
           : null,
         pendingLeave: pendingLeave
-          ? { id: pendingLeave.id, leaveType: pendingLeave.leaveType, status: "pending" }
+          ? {
+              id:        pendingLeave.id,
+              leaveType: pendingLeave.leaveType,
+              status:    "pending",
+              isPaid:    pendingLeave.isPaid,
+            }
           : null,
       };
     });
@@ -1088,6 +1100,25 @@ const getCutoffApprovals = async (req, res) => {
         return `${a.timeLog.userId}__${punchDate}`;
       })
     );
+
+    // ✅ Real per-day paid/unpaid outcome — Leave.isPaid is only the submitted intent;
+    // a paid leave that ran out of balance mid-day can have both an isPaid:true and
+    // isPaid:false LeaveDay row on the same date (split day). Sum the paid portion only.
+    const approvedLeaveIds = leaveRecords
+      .filter((leave) => leave.status === "approved")
+      .map((leave) => leave.id);
+
+    const leaveDayRows = approvedLeaveIds.length
+      ? await prisma.leaveDay.findMany({ where: { leaveId: { in: approvedLeaveIds } } })
+      : [];
+
+    const payableByLeaveDate = new Map(); // `${leaveId}_${YYYY-MM-DD}` -> paid hours
+    for (const d of leaveDayRows) {
+      if (!d.isPaid) continue;
+      const dDateStr = (d.date instanceof Date ? d.date.toISOString() : String(d.date)).split("T")[0];
+      const dKey = `${d.leaveId}_${dDateStr}`;
+      payableByLeaveDate.set(dKey, (payableByLeaveDate.get(dKey) ?? 0) + Number(d.hours));
+    }
 
     const standaloneLeavesNested = await Promise.all(
       leaveRecords
@@ -1121,11 +1152,20 @@ const getCutoffApprovals = async (req, res) => {
               cursorDate >= cutoffPeriod.periodStart &&
               cursorDate <= cutoffPeriod.periodEnd;
             if (inCutoff && !punchUserDates.has(key)) {
+              // Legacy fallback: leaves approved before LeaveDay existed have no rows here —
+              // fall back to leave.isPaid deciding full scheduled hours vs. 0, so we don't
+              // silently zero out pre-existing paid leave.
+              const hasLeaveDayRows = leaveDayRows.some((d) => d.leaveId === leave.id);
+              const payableHours = hasLeaveDayRows
+                ? (payableByLeaveDate.get(`${leave.id}_${dateStr}`) ?? 0)
+                : (leave.isPaid ? (hoursByDate.get(dateStr) ?? 0) : 0);
+
               rows.push({
                 _type:     "leave",
                 id:        `leave_${leave.id}_${dateStr}`,
                 leaveDate: dateStr,
                 hours:     hoursByDate.get(dateStr) ?? null,
+                payableHours,
                 leave: {
                   ...leave,
                   leaveType: resolveLeaveType(leave.leaveType),

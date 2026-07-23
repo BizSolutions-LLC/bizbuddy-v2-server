@@ -1,0 +1,3762 @@
+[
+  {
+    "id": "cmqch292l01k1nm4vn80305mn",
+    "_date": "2026-06-13",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "0.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 86
+  },
+  {
+    "id": "cmqch9fm801tdnm4vhwqcm2pr",
+    "_date": "2026-06-13",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "0.07",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 82
+  },
+  {
+    "id": "cmok4a63v018zq84uhfx7388f",
+    "_date": "2026-04-29",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.08",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "7.83",
+    "rawOtMinutes": 21
+  },
+  {
+    "id": "cmolkcf3l07c7q84uxyh7qywf",
+    "_date": "2026-04-30",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "0.79",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "7.54",
+    "rawOtMinutes": 8
+  },
+  {
+    "id": "cmqazgfvc016pn74v7lnqr5qo",
+    "_date": "2026-06-12",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.62",
+    "netWorkedHours": "7.3",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmp43r76i0o4cp54xbgaxtdm7",
+    "_date": "2026-05-13",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 21
+  },
+  {
+    "id": "cmq9k3ro70agxon4wi9kf1oy6",
+    "_date": "2026-06-11",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.69",
+    "netWorkedHours": "8.44",
+    "rawOtMinutes": 10
+  },
+  {
+    "id": "cmqcgodkh0131nm4vwhm6z1iy",
+    "_date": "2026-06-13",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.35",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 91
+  },
+  {
+    "id": "cmqclro1a02h7nm4v33my53i5",
+    "_date": "2026-06-13",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "3.47",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 181
+  },
+  {
+    "id": "cmqcgu1bz01bjnm4v5ge9dfne",
+    "_date": "2026-06-13",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "0.27",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 87
+  },
+  {
+    "id": "cmqcgqr8r0171nm4v0lt8mews",
+    "_date": "2026-06-13",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "0.32",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 88
+  },
+  {
+    "id": "cmqqtib460nkerz502yvuxlvu",
+    "_date": "2026-06-23",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "4",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "5.25",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqch0qp701i7nm4vppdpb520",
+    "_date": "2026-06-13",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "0.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 83
+  },
+  {
+    "id": "cmqkzmrs805jfrz50m5rjm16c",
+    "_date": "2026-06-19",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.57",
+    "netWorkedHours": "8.32",
+    "rawOtMinutes": 3
+  },
+  {
+    "id": "cmqi4m5zn01i5u24z96gh87oc",
+    "_date": "2026-06-17",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.53",
+    "netWorkedHours": "8.28",
+    "rawOtMinutes": 1
+  },
+  {
+    "id": "cmqkzsems05r7rz50hnrd2hue",
+    "_date": "2026-06-19",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.56",
+    "netWorkedHours": "8.31",
+    "rawOtMinutes": 2
+  },
+  {
+    "id": "cmpqz7fy204qbsi4wcc6k9sbk",
+    "_date": "2026-05-30",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.22",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 10
+  },
+  {
+    "id": "cmpo4dol90ev7rl4w8rnbsfk2",
+    "_date": "2026-05-27",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 7
+  },
+  {
+    "id": "cmppjs7gf0spgrl4wshfwoose",
+    "_date": "2026-05-28",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 21
+  },
+  {
+    "id": "cmq2gsqlr0qzeru4ur60y8bq6",
+    "_date": "2026-06-06",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 108
+  },
+  {
+    "id": "cmq59zuz80xwkru4u58sfbll3",
+    "_date": "2026-06-08",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 10
+  },
+  {
+    "id": "cmq0z78pu0jvsru4ut5cav1n4",
+    "_date": "2026-06-05",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 1
+  },
+  {
+    "id": "cmq2g6nhw0qekru4u5q1a1az7",
+    "_date": "2026-06-06",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 109
+  },
+  {
+    "id": "cmqqpgzn90ls3rz50z1hzfv3y",
+    "_date": "2026-06-23",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.1",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "6.6",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqjkf54007you24zv9gchgme",
+    "_date": "2026-06-18",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.56",
+    "netWorkedHours": "8.31",
+    "rawOtMinutes": 3
+  },
+  {
+    "id": "cmqpfet6y0gl9rz50rq6ihcvq",
+    "_date": "2026-06-22",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqjvo7g800zvrz50dlk534hg",
+    "_date": "2026-06-18",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "1.28",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "2.53",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqi4pw2s01n7u24zxv6klisw",
+    "_date": "2026-06-17",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "6.66",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmql0s9bk06dlrz50rklltvqy",
+    "_date": "2026-06-19",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.6",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "6.12",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqcgeb7a00wxnm4vdr7hm5xn",
+    "_date": "2026-06-13",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "0.48",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 81
+  },
+  {
+    "id": "cmqayv0sl00h5n74v7v1f50ob",
+    "_date": "2026-06-12",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.56",
+    "netWorkedHours": "8.31",
+    "rawOtMinutes": 3
+  },
+  {
+    "id": "cmqi3xkan00zbu24zsjk1fgfs",
+    "_date": "2026-06-17",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.66",
+    "netWorkedHours": "8.41",
+    "rawOtMinutes": 8
+  },
+  {
+    "id": "cmq9j9fil09tvon4w9edpteo7",
+    "_date": "2026-06-11",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.12",
+    "netWorkedHours": "8.87",
+    "rawOtMinutes": 36
+  },
+  {
+    "id": "cmqqp0kg20l5drz50cnann2ic",
+    "_date": "2026-06-23",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.96",
+    "netWorkedHours": "8.71",
+    "rawOtMinutes": 26
+  },
+  {
+    "id": "cmqpacwv40f3drz506kmsz555",
+    "_date": "2026-06-22",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.62",
+    "netWorkedHours": "8.37",
+    "rawOtMinutes": 6
+  },
+  {
+    "id": "cmqi6ubo902olu24z857h81oi",
+    "_date": "2026-06-17",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.06",
+    "netWorkedHours": "5.72",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmq8493pz015ron4wbzfkv890",
+    "_date": "2026-06-10",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.78",
+    "netWorkedHours": "8.53",
+    "rawOtMinutes": 16
+  },
+  {
+    "id": "cmqaz360700jxn74vr00sfida",
+    "_date": "2026-06-12",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.55",
+    "netWorkedHours": "8.3",
+    "rawOtMinutes": 2
+  },
+  {
+    "id": "cmqf945f40bgvnm4v6a79u47r",
+    "_date": "2026-06-15",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.77",
+    "netWorkedHours": "8.52",
+    "rawOtMinutes": 15
+  },
+  {
+    "id": "cmqgoizf30i8rnm4v4gsndkpv",
+    "_date": "2026-06-16",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.72",
+    "netWorkedHours": "8.47",
+    "rawOtMinutes": 12
+  },
+  {
+    "id": "cmqi40hg0011bu24zppp4zzfv",
+    "_date": "2026-06-17",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.7",
+    "netWorkedHours": "8.45",
+    "rawOtMinutes": 11
+  },
+  {
+    "id": "cmqjjrrgr07eau24zsaysnqhc",
+    "_date": "2026-06-18",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.75",
+    "netWorkedHours": "8.5",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmqpa5kod0eo1rz503x2jg8y6",
+    "_date": "2026-06-22",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.74",
+    "netWorkedHours": "8.49",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmqch48kx01pfnm4v0esrjdxj",
+    "_date": "2026-06-13",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "0.14",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 83
+  },
+  {
+    "id": "cmqpab7ip0ezxrz5053it6uun",
+    "_date": "2026-06-22",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 2
+  },
+  {
+    "id": "cmqpfmmnr0gvjrz502t1trjp8",
+    "_date": "2026-06-22",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.87",
+    "netWorkedHours": "7.62",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqcg7lum00tjnm4vm8apgx5a",
+    "_date": "2026-06-13",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "0.57",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 88
+  },
+  {
+    "id": "cmq84k9m001l3on4w13v33t6f",
+    "_date": "2026-06-10",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.86",
+    "netWorkedHours": "8.61",
+    "rawOtMinutes": 21
+  },
+  {
+    "id": "cmq9jw07u0aa3on4wi5zhtuoj",
+    "_date": "2026-06-11",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.68",
+    "netWorkedHours": "8.43",
+    "rawOtMinutes": 10
+  },
+  {
+    "id": "cmqazbyv400zrn74vla3ssdec",
+    "_date": "2026-06-12",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.84",
+    "netWorkedHours": "8.59",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmqf9omu40bzpnm4vutbukg60",
+    "_date": "2026-06-15",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.9",
+    "netWorkedHours": "8.65",
+    "rawOtMinutes": 23
+  },
+  {
+    "id": "cmqgpccp10ivznm4vlbu5eobw",
+    "_date": "2026-06-16",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.83",
+    "netWorkedHours": "8.58",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmqi4lvv301fzu24zskm8e32u",
+    "_date": "2026-06-17",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.85",
+    "netWorkedHours": "8.6",
+    "rawOtMinutes": 20
+  },
+  {
+    "id": "cmqjk2ibq07i6u24zao9i1dda",
+    "_date": "2026-06-18",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.91",
+    "netWorkedHours": "8.66",
+    "rawOtMinutes": 24
+  },
+  {
+    "id": "cmqkzx2hl05xfrz50qhdsbk5g",
+    "_date": "2026-06-19",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.82",
+    "netWorkedHours": "8.57",
+    "rawOtMinutes": 18
+  },
+  {
+    "id": "cmqp9unxt0ef3rz50lvqlrrsa",
+    "_date": "2026-06-22",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.77",
+    "netWorkedHours": "8.52",
+    "rawOtMinutes": 15
+  },
+  {
+    "id": "cmqqp9xon0lbvrz500a2qkm9b",
+    "_date": "2026-06-23",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.82",
+    "netWorkedHours": "8.57",
+    "rawOtMinutes": 18
+  },
+  {
+    "id": "cmqpg8esd0h55rz509pogvs9d",
+    "_date": "2026-06-22",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.6",
+    "netWorkedHours": "7.35",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmq9jst1u0a4zon4wribbg994",
+    "_date": "2026-06-11",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.75",
+    "netWorkedHours": "8.5",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmqfaib9x0crlnm4vx6l17e8q",
+    "_date": "2026-06-15",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "0.84",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.84",
+    "netWorkedHours": "8.18",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmqgp3v450imnnm4v69c3e84q",
+    "_date": "2026-06-16",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.64",
+    "netWorkedHours": "8.39",
+    "rawOtMinutes": 7
+  },
+  {
+    "id": "cmqfbylsy0dapnm4vqvsx18xy",
+    "_date": "2026-06-15",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.04",
+    "netWorkedHours": "5.7",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqgrep8n0jwjnm4v35ao0ijb",
+    "_date": "2026-06-16",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "5.67",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqjm6dd308jwu24zsnjam69u",
+    "_date": "2026-06-18",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "5.72",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqch3ff601nbnm4vkg25rn7g",
+    "_date": "2026-06-13",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 87
+  },
+  {
+    "id": "cmqkz2lme0503rz50uaxtvrtq",
+    "_date": "2026-06-19",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.89",
+    "netWorkedHours": "8.64",
+    "rawOtMinutes": 22
+  },
+  {
+    "id": "cmqqp9g600larrz50sdtskgaq",
+    "_date": "2026-06-23",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "7.95",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqchs6dg02adnm4vkodfnrna",
+    "_date": "2026-06-13",
+    "_name": "Jonel Olleres",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "5.33",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 69
+  },
+  {
+    "id": "cmqchhuhg01yhnm4vjs52eq6v",
+    "_date": "2026-06-13",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "5.46",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 61
+  },
+  {
+    "id": "cmqkzmed205ifrz50vqa5veq4",
+    "_date": "2026-06-19",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.14",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "6.66",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmq84glv501g5on4w6oaaekhn",
+    "_date": "2026-06-10",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.01",
+    "netWorkedHours": "8.76",
+    "rawOtMinutes": 29
+  },
+  {
+    "id": "cmq9jvly70a7von4wdnilnr72",
+    "_date": "2026-06-11",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.88",
+    "netWorkedHours": "8.63",
+    "rawOtMinutes": 22
+  },
+  {
+    "id": "cmqaz9aga00t9n74vsi8ncksp",
+    "_date": "2026-06-12",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.09",
+    "netWorkedHours": "8.84",
+    "rawOtMinutes": 34
+  },
+  {
+    "id": "cmqf9lspa0bwxnm4v9mu2br6e",
+    "_date": "2026-06-15",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.07",
+    "netWorkedHours": "8.82",
+    "rawOtMinutes": 33
+  },
+  {
+    "id": "cmqgp0sc70ii9nm4vp3sdn4sr",
+    "_date": "2026-06-16",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.89",
+    "netWorkedHours": "8.64",
+    "rawOtMinutes": 22
+  },
+  {
+    "id": "cmqi4jzu401blu24zzbarmv1j",
+    "_date": "2026-06-17",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2",
+    "netWorkedHours": "8.75",
+    "rawOtMinutes": 29
+  },
+  {
+    "id": "cmqjjr7oo07ccu24zbkkacxlm",
+    "_date": "2026-06-18",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.07",
+    "netWorkedHours": "8.82",
+    "rawOtMinutes": 33
+  },
+  {
+    "id": "cmqkzi8ei05dnrz50b8jrddxl",
+    "_date": "2026-06-19",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.83",
+    "netWorkedHours": "8.58",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmqpajo9g0fdjrz50qfhr1bum",
+    "_date": "2026-06-22",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.01",
+    "netWorkedHours": "8.76",
+    "rawOtMinutes": 30
+  },
+  {
+    "id": "cmqqp2m3k0l6prz50iuwvaw4u",
+    "_date": "2026-06-23",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.03",
+    "netWorkedHours": "8.78",
+    "rawOtMinutes": 31
+  },
+  {
+    "id": "cmqcgfz0000yjnm4vfrwzfzhf",
+    "_date": "2026-06-13",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "0.46",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 88
+  },
+  {
+    "id": "cmq84kpmy01nlon4w9hfsqakm",
+    "_date": "2026-06-10",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "6.68",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqcfwqmj00sdnm4v37pv7eh9",
+    "_date": "2026-06-13",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.7",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 87
+  },
+  {
+    "id": "cmqcfu2j800oznm4v1gth0zqv",
+    "_date": "2026-06-13",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "0.74",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 80
+  },
+  {
+    "id": "cmqchi4t80217nm4vx75xq27b",
+    "_date": "2026-06-13",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "5.46",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 86
+  },
+  {
+    "id": "cmqcgrn0r019tnm4v1pkp3erp",
+    "_date": "2026-06-13",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "0.31",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 82
+  },
+  {
+    "id": "cmqv4xv2h0g6xuv50xzmhwg5z",
+    "_date": "2026-06-26",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.65",
+    "netWorkedHours": "7.4",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmquzykvi0duluv503vcjyo8y",
+    "_date": "2026-06-26",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.62",
+    "netWorkedHours": "8.37",
+    "rawOtMinutes": 6
+  },
+  {
+    "id": "cmqs4e8fk0rpirz5089yhd5xg",
+    "_date": "2026-06-24",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.92",
+    "netWorkedHours": "8.67",
+    "rawOtMinutes": 24
+  },
+  {
+    "id": "cmqtji29j00q3uv508s6djmss",
+    "_date": "2026-06-25",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.77",
+    "netWorkedHours": "8.52",
+    "rawOtMinutes": 15
+  },
+  {
+    "id": "cmquz33vy0cthuv50v83umehl",
+    "_date": "2026-06-26",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.83",
+    "netWorkedHours": "8.58",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmqz9qlpd0mebuv507ohzwsz7",
+    "_date": "2026-06-29",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.98",
+    "netWorkedHours": "8.73",
+    "rawOtMinutes": 28
+  },
+  {
+    "id": "cmr24p8z3050lvy50mps35lex",
+    "_date": "2026-07-01",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.79",
+    "netWorkedHours": "8.54",
+    "rawOtMinutes": 16
+  },
+  {
+    "id": "cmqs4pm5p0s5srz503nfq5ftf",
+    "_date": "2026-06-24",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.76",
+    "netWorkedHours": "8.51",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmqtp10cb06jruv5055stu4sa",
+    "_date": "2026-06-25",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmquzhiok0d07uv50kcqori7o",
+    "_date": "2026-06-26",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.94",
+    "netWorkedHours": "8.69",
+    "rawOtMinutes": 25
+  },
+  {
+    "id": "cmqz9tnh80mlpuv500erd6h7d",
+    "_date": "2026-06-29",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.88",
+    "netWorkedHours": "8.63",
+    "rawOtMinutes": 22
+  },
+  {
+    "id": "cmr0pkkhr0vihuv505y8bf9sm",
+    "_date": "2026-06-30",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.96",
+    "netWorkedHours": "8.71",
+    "rawOtMinutes": 27
+  },
+  {
+    "id": "cmr24tp8o0561vy50wz3kbc07",
+    "_date": "2026-07-01",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.71",
+    "netWorkedHours": "8.46",
+    "rawOtMinutes": 12
+  },
+  {
+    "id": "cmqs4i90l0rworz5058d4sj33",
+    "_date": "2026-06-24",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 24
+  },
+  {
+    "id": "cmqtko80s02kduv503tyz1uxr",
+    "_date": "2026-06-25",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "0.95",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.61",
+    "netWorkedHours": "8.06",
+    "rawOtMinutes": 6
+  },
+  {
+    "id": "cmquzxbzo0dppuv50lynh6j3c",
+    "_date": "2026-06-26",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.73",
+    "netWorkedHours": "8.48",
+    "rawOtMinutes": 13
+  },
+  {
+    "id": "cmqz9zt0y0n01uv508n0yts6h",
+    "_date": "2026-06-29",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.74",
+    "netWorkedHours": "8.49",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmr0pp28o0vmbuv50ttdnpegk",
+    "_date": "2026-06-30",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.73",
+    "netWorkedHours": "8.48",
+    "rawOtMinutes": 13
+  },
+  {
+    "id": "cmr2509l60605vy505rqt3tta",
+    "_date": "2026-07-01",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.72",
+    "netWorkedHours": "8.47",
+    "rawOtMinutes": 12
+  },
+  {
+    "id": "cmqtmf09c03zfuv504thxdgty",
+    "_date": "2026-06-25",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.13",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "6.88",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqzbdqjf0np1uv503t6i6geg",
+    "_date": "2026-06-29",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.51",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "6.02",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqs6zz5w0tlurz50jvh5nooy",
+    "_date": "2026-06-24",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.12",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "5.63",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqv1sxyl0ez1uv50xady2ihc",
+    "_date": "2026-06-26",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "5.68",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqs4ghfq0ruwrz50odpanw6c",
+    "_date": "2026-06-24",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.02",
+    "netWorkedHours": "8.77",
+    "rawOtMinutes": 30
+  },
+  {
+    "id": "cmqtjwdlq00zpuv5052ze93ri",
+    "_date": "2026-06-25",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.01",
+    "netWorkedHours": "8.76",
+    "rawOtMinutes": 30
+  },
+  {
+    "id": "cmquzorod0dffuv50jwp4jxcs",
+    "_date": "2026-06-26",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.09",
+    "netWorkedHours": "8.84",
+    "rawOtMinutes": 34
+  },
+  {
+    "id": "cmqs4p99f0s36rz50l7ka0v26",
+    "_date": "2026-06-24",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "6.7",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmquzt1el0dmbuv50i1s4u26e",
+    "_date": "2026-06-26",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.09",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "6.59",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqza2h3q0n2huv502dvvm1zh",
+    "_date": "2026-06-29",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.61",
+    "netWorkedHours": "8.36",
+    "rawOtMinutes": 5
+  },
+  {
+    "id": "cmr0pjffs0vgtuv50vc10bztz",
+    "_date": "2026-06-30",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.1",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "6.6",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr24uik2058bvy50eemcnv30",
+    "_date": "2026-07-01",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "6.68",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmqz9uxwf0mohuv50yspapl3r",
+    "_date": "2026-06-29",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.03",
+    "netWorkedHours": "8.78",
+    "rawOtMinutes": 31
+  },
+  {
+    "id": "cmr0pesnh0veluv50ll4mjiq7",
+    "_date": "2026-06-30",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.06",
+    "netWorkedHours": "8.81",
+    "rawOtMinutes": 32
+  },
+  {
+    "id": "cmr24k3f504y3vy50slnqddnp",
+    "_date": "2026-07-01",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.82",
+    "netWorkedHours": "8.57",
+    "rawOtMinutes": 18
+  },
+  {
+    "id": "cmqtjw54400y7uv50wbi9nqqe",
+    "_date": "2026-06-25",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "2.5",
+    "netWorkedHours": "9.25",
+    "rawOtMinutes": 59
+  },
+  {
+    "id": "cmquzieca0d1zuv50whf5g0px",
+    "_date": "2026-06-26",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.62",
+    "netWorkedHours": "8.37",
+    "rawOtMinutes": 6
+  },
+  {
+    "id": "cmqza9td60n8vuv50l8duuyya",
+    "_date": "2026-06-29",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.63",
+    "netWorkedHours": "8.38",
+    "rawOtMinutes": 7
+  },
+  {
+    "id": "cmr25phzr06envy501mmq0u00",
+    "_date": "2026-07-01",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.76",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.66",
+    "netWorkedHours": "7.92",
+    "rawOtMinutes": 9
+  },
+  {
+    "id": "cmr25vn5i06xlvy50u35qotqq",
+    "_date": "2026-07-01",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.68",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.55",
+    "netWorkedHours": "7.73",
+    "rawOtMinutes": 2
+  },
+  {
+    "id": "cmr3k73b50d3ivy50cgyh2soa",
+    "_date": "2026-07-02",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.98",
+    "netWorkedHours": "8.73",
+    "rawOtMinutes": 28
+  },
+  {
+    "id": "cmr3okvp00fryvy50sbw6imk0",
+    "_date": "2026-07-02",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr4z74u804l1vh50fz0kibeg",
+    "_date": "2026-07-03",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.95",
+    "netWorkedHours": "8.7",
+    "rawOtMinutes": 26
+  },
+  {
+    "id": "cmr99p6sq0jt5vh506zshvfzj",
+    "_date": "2026-07-06",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.75",
+    "netWorkedHours": "8.5",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmrape8ds0uaevh50unw6qfz0",
+    "_date": "2026-07-07",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.87",
+    "netWorkedHours": "8.62",
+    "rawOtMinutes": 21
+  },
+  {
+    "id": "cmr3k7zo90d6avy50j4pprdhd",
+    "_date": "2026-07-02",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.93",
+    "netWorkedHours": "8.68",
+    "rawOtMinutes": 25
+  },
+  {
+    "id": "cmr4zqjpn05j1vh50r7qysgwv",
+    "_date": "2026-07-03",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.75",
+    "netWorkedHours": "8.5",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmr99yvde0k41vh50p75w92sk",
+    "_date": "2026-07-06",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.75",
+    "netWorkedHours": "8.5",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmrapgo4b0uh8vh50ckm37ihg",
+    "_date": "2026-07-07",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.79",
+    "netWorkedHours": "8.54",
+    "rawOtMinutes": 16
+  },
+  {
+    "id": "cmr3kn5fv0dxuvy50uv7ila1n",
+    "_date": "2026-07-02",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.78",
+    "netWorkedHours": "8.28",
+    "rawOtMinutes": 16
+  },
+  {
+    "id": "cmr4zovff05b1vh50wfuszh7m",
+    "_date": "2026-07-03",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.83",
+    "netWorkedHours": "8.58",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmr9a6k010kvfvh50nm1uoaqn",
+    "_date": "2026-07-06",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.55",
+    "netWorkedHours": "8.3",
+    "rawOtMinutes": 2
+  },
+  {
+    "id": "cmrapjnxf0uravh506b2zdezj",
+    "_date": "2026-07-07",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.83",
+    "netWorkedHours": "8.58",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmr513a5l06xbvh50mf0sd9dw",
+    "_date": "2026-07-03",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.53",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.64",
+    "netWorkedHours": "7.67",
+    "rawOtMinutes": 7
+  },
+  {
+    "id": "cmr9c5e3h0m4tvh50mmbmrqwc",
+    "_date": "2026-07-06",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.04",
+    "netWorkedHours": "5.73",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrarnbgj0w8svh50tv3oluox",
+    "_date": "2026-07-07",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "5.68",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr4zcxaz04o5vh50ef2ygpk3",
+    "_date": "2026-07-03",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.83",
+    "netWorkedHours": "8.58",
+    "rawOtMinutes": 19
+  },
+  {
+    "id": "cmr99rjh20jv3vh50skizn31v",
+    "_date": "2026-07-06",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.92",
+    "netWorkedHours": "8.67",
+    "rawOtMinutes": 24
+  },
+  {
+    "id": "cmrap7ki80u4ivh506q6mae6m",
+    "_date": "2026-07-07",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.92",
+    "netWorkedHours": "8.67",
+    "rawOtMinutes": 24
+  },
+  {
+    "id": "cmr4zqnug05k1vh50ys38vxuk",
+    "_date": "2026-07-03",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "6.66",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrapnrz90v02vh50rx2c2bno",
+    "_date": "2026-07-07",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.09",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "6.6",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr3q85qa0g2avy503te40i0z",
+    "_date": "2026-07-02",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 31
+  },
+  {
+    "id": "cmr4zrhth05mpvh50to4shd7w",
+    "_date": "2026-07-03",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.77",
+    "netWorkedHours": "8.52",
+    "rawOtMinutes": 15
+  },
+  {
+    "id": "cmrapkrjk0ut0vh50xyytk9fw",
+    "_date": "2026-07-07",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.12",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.1",
+    "netWorkedHours": "6.72",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr3li2qr0ee2vy500x75hx3t",
+    "_date": "2026-07-02",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.6",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.05",
+    "netWorkedHours": "6.15",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr50oq8l06ervh50p7hjilgp",
+    "_date": "2026-07-03",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.72",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.08",
+    "netWorkedHours": "6.3",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr516d2c074dvh50a305b4e5",
+    "_date": "2026-07-03",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "0.49",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.63",
+    "netWorkedHours": "7.62",
+    "rawOtMinutes": 7
+  },
+  {
+    "id": "cmr5040wl05xvvh50vheo84yj",
+    "_date": "2026-07-03",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.99",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "6.5",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr2mgtrj0beevy50fzbzb6le",
+    "_date": "2026-06-30",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.75",
+    "netWorkedHours": "8.5",
+    "rawOtMinutes": 14
+  },
+  {
+    "id": "cmr3kcmo40df6vy50ird64ps6",
+    "_date": "2026-07-02",
+    "_name": "Marites Fernandez",
+    "driverAmSegmentHours": "1.14",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.85",
+    "netWorkedHours": "7.49",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmr4zqequ05i5vh50wvcvibtm",
+    "_date": "2026-07-03",
+    "_name": "Evangeline Velasquez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "8",
+    "rawOtMinutes": 9
+  },
+  {
+    "id": "cmqv0b5p90e5tuv50noa7i6ir",
+    "_date": "2026-06-26",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.86",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.55",
+    "netWorkedHours": "7.91",
+    "rawOtMinutes": 2
+  },
+  {
+    "id": "cmrc4yy261akqvh50bk4xlqky",
+    "_date": "2026-07-08",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.68",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkhgea1qm6vh50mkuv3fxn",
+    "_date": "2026-07-09",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.11",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.61",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmreztru31ynovh50tc1bw2y2",
+    "_date": "2026-07-10",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.6",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4cem119qivh50r6r8z2nl",
+    "_date": "2026-07-08",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdjz27r1pwivh50ndjdn8hr",
+    "_date": "2026-07-09",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4vhik1ad4vh5046467v4c",
+    "_date": "2026-07-08",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.8",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkgda71qfkvh50oeyc6eba",
+    "_date": "2026-07-09",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.13",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf03ps81z0wvh50ixuspsqr",
+    "_date": "2026-07-10",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.03",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja985t29fqvh50wrrjaq0p",
+    "_date": "2026-07-13",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.11",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkngva1qv8vh504icx44lx",
+    "_date": "2026-07-09",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.03",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf02phr1yxwvh50kj9qjgxn",
+    "_date": "2026-07-10",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.04",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrjaewio29ikvh50b2mh2728",
+    "_date": "2026-07-13",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.03",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc58q3g1bdevh50cbergj5g",
+    "_date": "2026-07-08",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.02",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkkbx51qsavh50pbit12ye",
+    "_date": "2026-07-09",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.07",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf0bugx1z5kvh506yuy4jka",
+    "_date": "2026-07-10",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "0.93",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc537pl1aymvh50td4yhr7y",
+    "_date": "2026-07-08",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.09",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmreyx8f21y6evh507a7theqb",
+    "_date": "2026-07-10",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrj9rstw28tgvh50xgk4arm6",
+    "_date": "2026-07-13",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4tayr1a8ivh5047qdbf7i",
+    "_date": "2026-07-08",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.22",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.64",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4y0aj1ah4vh50knp8mgwx",
+    "_date": "2026-07-08",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdka4tr1q68vh50iov5ctz0",
+    "_date": "2026-07-09",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezszxu1ykwvh50yc6q1aec",
+    "_date": "2026-07-10",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4ycig1aikvh509yy14un4",
+    "_date": "2026-07-08",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkjrgk1qq6vh50fhfubrhz",
+    "_date": "2026-07-09",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.08",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezumza1yr0vh50g1fhi4he",
+    "_date": "2026-07-10",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja0wlw292mvh50d3dtuvrt",
+    "_date": "2026-07-13",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4z42n1alkvh509yrhc2sl",
+    "_date": "2026-07-08",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.14",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.91",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkcynp1qb2vh50y83kvr3t",
+    "_date": "2026-07-09",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.88",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezurz01yruvh50kgned9ui",
+    "_date": "2026-07-10",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.14",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.7",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja58d2299mvh50k8l0of2g",
+    "_date": "2026-07-13",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.8",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4jynm19w4vh508zw38ij6",
+    "_date": "2026-07-08",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdjzacs1py6vh50nqwwqrl5",
+    "_date": "2026-07-09",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezf9cp1y9yvh50pyafiymr",
+    "_date": "2026-07-10",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4ltqf1a2cvh503n728oet",
+    "_date": "2026-07-08",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdki3vm1qo4vh50zhcuq6ik",
+    "_date": "2026-07-09",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.1",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf040wz1z1mvh50pzv7iert",
+    "_date": "2026-07-10",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.03",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja9hi729givh50j1vl81xu",
+    "_date": "2026-07-13",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.1",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkaw3e1q8svh50im43mgfq",
+    "_date": "2026-07-09",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.61",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezlrlm1ygyvh50cy03zp0r",
+    "_date": "2026-07-10",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.61",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja1l46294evh50nkpbd0n6",
+    "_date": "2026-07-13",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.64",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc59key1bfgvh505jd2mu1h",
+    "_date": "2026-07-08",
+    "_name": "Jonel Olleres",
+    "driverAmSegmentHours": "1.01",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdmj7351rqivh50cksl3jyu",
+    "_date": "2026-07-09",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.04",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf23y2b2052vh50fxen81ky",
+    "_date": "2026-07-10",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.09",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrjcb1mo2a6kvh50adj5in04",
+    "_date": "2026-07-13",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4ke9l19y4vh5024naolzw",
+    "_date": "2026-07-08",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdjzp8s1q0kvh50hnewrmdt",
+    "_date": "2026-07-09",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezgpmk1ybsvh50qx481wee",
+    "_date": "2026-07-10",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrj9t85j28v0vh50wvq7sgu8",
+    "_date": "2026-07-13",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrj9r5sh28rovh50vv78ptsh",
+    "_date": "2026-07-13",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4l3so1a0mvh50a5u11824",
+    "_date": "2026-07-08",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdk366l1q26vh507kc5q5kz",
+    "_date": "2026-07-09",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrez4hdo1y88vh50pqja8l3x",
+    "_date": "2026-07-10",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4vdsz1acgvh50ffhjyzlh",
+    "_date": "2026-07-08",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdjzion1pzsvh50g512rsdm",
+    "_date": "2026-07-09",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezqrr11yi8vh50lk2qwdfz",
+    "_date": "2026-07-10",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc56muy1b8qvh50i1nzzpuq",
+    "_date": "2026-07-08",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.05",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdk8y2y1q4uvh50rs52v01s",
+    "_date": "2026-07-09",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.22",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmreztulf1yo0vh50ss8oydtq",
+    "_date": "2026-07-10",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja5e8q29b6vh50awd3fuim",
+    "_date": "2026-07-13",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.9",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrj9uvzy28wivh50bf2mut73",
+    "_date": "2026-07-13",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4twzb1aa8vh506j92kw7d",
+    "_date": "2026-07-08",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.83",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdkavch1q8mvh50mvlrufoj",
+    "_date": "2026-07-09",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.85",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezko4u1yegvh50iwct48zx",
+    "_date": "2026-07-10",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.67",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja3qe4297gvh50i8rwtuk6",
+    "_date": "2026-07-13",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.77",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc664ku1d2avh502q9nunn7",
+    "_date": "2026-07-08",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.59",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdlmmxj1raivh506kxkccs6",
+    "_date": "2026-07-09",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.58",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf136j91zhivh50ga5vkgi7",
+    "_date": "2026-07-10",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.57",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrjbp18k2a3ivh50h9qlyipy",
+    "_date": "2026-07-13",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.44",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc6kfbn1dk2vh50ce3a5vrb",
+    "_date": "2026-07-08",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.4",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdlvs0q1rhovh50766bcilu",
+    "_date": "2026-07-09",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.46",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdl6rlq1r2evh50uj5psua4",
+    "_date": "2026-07-09",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.78",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.09",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf0ptr21zamvh50vrm6y460",
+    "_date": "2026-07-10",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.74",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.08",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrjauuka29pkvh50frefiphp",
+    "_date": "2026-07-13",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.83",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc4r23m1a6cvh505wm5srqm",
+    "_date": "2026-07-08",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdk46lv1q3cvh50e581fbap",
+    "_date": "2026-07-09",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrezjlbo1yd6vh505erh2jv7",
+    "_date": "2026-07-10",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.87",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrj9wuq028y2vh50y0earc9c",
+    "_date": "2026-07-13",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.9",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf0l81q1z82vh500g5k6wgi",
+    "_date": "2026-07-10",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.8",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrjayyir29r6vh5023kn0ofn",
+    "_date": "2026-07-13",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.77",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja5ue429cyvh50zrk668yc",
+    "_date": "2026-07-13",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.63",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrc5arso1bhmvh50mxi2if74",
+    "_date": "2026-07-08",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.99",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrdl0zuo1r0gvh50fblfs7pw",
+    "_date": "2026-07-09",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.86",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrf00ic11yvavh50dwnaozxk",
+    "_date": "2026-07-10",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "1.07",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrjakvdq29ncvh50023vbb8o",
+    "_date": "2026-07-13",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.96",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkporj52glgvh50qdzg8qc9",
+    "_date": "2026-07-14",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.11",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm566qs01mpxt500pxitjd8",
+    "_date": "2026-07-15",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.09",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm57gtw01ppxt50b80p50gp",
+    "_date": "2026-07-15",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.07",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.65",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpn71m2gjmvh50big71lj6",
+    "_date": "2026-07-14",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.13",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.62",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkg2l500r5mv4zo304v706",
+    "_date": "2026-07-16",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.55",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkplgc011vmv4z9gxf74a8",
+    "_date": "2026-07-16",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.04",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpurj12grivh504ldl09fs",
+    "_date": "2026-07-14",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.03",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm5bfl801ttxt50sdnoum9u",
+    "_date": "2026-07-15",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.02",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkmkzl0109mv4zp3cus2gu",
+    "_date": "2026-07-16",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.08",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp01yqa08w8mv4zxrxb6yt9",
+    "_date": "2026-07-17",
+    "_name": "Romulo Orpilla",
+    "driverAmSegmentHours": "1.09",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkp71ji2fxevh50bvd2hgr0",
+    "_date": "2026-07-14",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4na2s010dxt50eoay18e5",
+    "_date": "2026-07-15",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkph3w02g7kvh500j7xvjar",
+    "_date": "2026-07-14",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.66",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkdj9500inmv4z4vfmswxt",
+    "_date": "2026-07-16",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4yrhc0193xt50kc6v8ul4",
+    "_date": "2026-07-15",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpjw352geivh50nm878wos",
+    "_date": "2026-07-14",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmro14zxw05c2mv4zd6blo6no",
+    "_date": "2026-07-16",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkphtw42gayvh506yufxhsh",
+    "_date": "2026-07-14",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.87",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4v7f8016dxt50c4on2tb3",
+    "_date": "2026-07-15",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.23",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnk65te00a9mv4zj0kslgu9",
+    "_date": "2026-07-16",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.89",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrja3ta7297qvh50qsvnbugf",
+    "_date": "2026-07-13",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpk85d2gfyvh50ncxk1ecx",
+    "_date": "2026-07-14",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4vark016txt50z1ipewuv",
+    "_date": "2026-07-15",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.23",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnk71e100f3mv4z55xvrdes",
+    "_date": "2026-07-16",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpra942gpavh501doi2135",
+    "_date": "2026-07-14",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.08",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4mtbv00ybxt50t0ae5lt3",
+    "_date": "2026-07-15",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkhlf000vpmv4z78775ocn",
+    "_date": "2026-07-16",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkp6ixn2fuivh508rrpuktd",
+    "_date": "2026-07-14",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4mdyl00vnxt509036oh78",
+    "_date": "2026-07-15",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnk2ij0005zmv4z6hk96vtj",
+    "_date": "2026-07-16",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm50xd901h7xt5051mcmbvi",
+    "_date": "2026-07-15",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.58",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkgczl00sxmv4z3oghzanx",
+    "_date": "2026-07-16",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.55",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm5awd601rdxt50o9q8v7f8",
+    "_date": "2026-07-15",
+    "_name": "Jonel Olleres",
+    "driverAmSegmentHours": "1.03",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkq824t2gxwvh50wiepgq5h",
+    "_date": "2026-07-14",
+    "_name": "Jonel Olleres",
+    "driverAmSegmentHours": "0.86",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrjagc8s29kcvh50j0ss4duz",
+    "_date": "2026-07-13",
+    "_name": "Jonel Olleres",
+    "driverAmSegmentHours": "1.01",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkrqx5p2hnavh50wg1lhhq7",
+    "_date": "2026-07-14",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.05",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnmtull029nmv4zbsj6624l",
+    "_date": "2026-07-16",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.06",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpkdwc2ghevh50gjbw8jyx",
+    "_date": "2026-07-14",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkp6vlu2fvyvh50v16rks59",
+    "_date": "2026-07-14",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4mvmk00yrxt506xjpy007",
+    "_date": "2026-07-15",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnk2t55006tmv4z8j74b3ie",
+    "_date": "2026-07-16",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkp9ia72g0evh50j3yzpkqv",
+    "_date": "2026-07-14",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4onfk012rxt504fslqu96",
+    "_date": "2026-07-15",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkfb5a00o1mv4zhckcispp",
+    "_date": "2026-07-16",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkquuww2h62vh504fl3pogx",
+    "_date": "2026-07-14",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.57",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm6dxkx02bpxt50hjcoz8fp",
+    "_date": "2026-07-15",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.52",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnk6szv00ehmv4zhr5shcn4",
+    "_date": "2026-07-16",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrj9xon1290ovh50z3bqsul1",
+    "_date": "2026-07-13",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpb2q82g2ivh50ktbeioxy",
+    "_date": "2026-07-14",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4z03e01anxt50ow5trw68",
+    "_date": "2026-07-15",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnk5u1p008pmv4z3aj2dytp",
+    "_date": "2026-07-16",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm4z8at01c3xt50vbl4sylv",
+    "_date": "2026-07-15",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkdtsj00k7mv4zj8nmouqk",
+    "_date": "2026-07-16",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpdsma2g4uvh508sd40bkj",
+    "_date": "2026-07-14",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm51iyn01jjxt50fz212jze",
+    "_date": "2026-07-15",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnk6bgy00bjmv4zkke6zyr4",
+    "_date": "2026-07-16",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkphcbk2g8gvh50m6iybtyb",
+    "_date": "2026-07-14",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.85",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm51c4401ipxt50zsmqawie",
+    "_date": "2026-07-15",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkg8vo00sjmv4zx2ujx4b0",
+    "_date": "2026-07-16",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.85",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkq5k622gvovh50exz3g0nq",
+    "_date": "2026-07-14",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.89",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkqmlcl2h1avh50atvyk0nv",
+    "_date": "2026-07-14",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.67",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm62nv00253xt50q6pm51et",
+    "_date": "2026-07-15",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.67",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnldrn601cnmv4zqveqr1v8",
+    "_date": "2026-07-16",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.73",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrkpzanj2gtqvh5098dglrdf",
+    "_date": "2026-07-14",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.97",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm5zhxs01xbxt50xsqej4h2",
+    "_date": "2026-07-15",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.71",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnlggoi01e3mv4z6c0qnhvg",
+    "_date": "2026-07-16",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.7",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.14",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozvl4t08m0mv4zt7gwxvpa",
+    "_date": "2026-07-17",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.69",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrm620vm0237xt50jejlbn53",
+    "_date": "2026-07-15",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.68",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrnkw1ac014jmv4zjfv82xyv",
+    "_date": "2026-07-16",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.96",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozj4h8084amv4zyiaeq5nj",
+    "_date": "2026-07-17",
+    "_name": "Corazon Viola",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp02yoy0914mv4z2c8tvoe9",
+    "_date": "2026-07-17",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.08",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozjmql0866mv4zmsv3yfv3",
+    "_date": "2026-07-17",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozvjrt08lumv4zp1t7vip4",
+    "_date": "2026-07-17",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozxfbq08okmv4z0cpsman8",
+    "_date": "2026-07-17",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmroztaut08fcmv4zsm2t7ty6",
+    "_date": "2026-07-17",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.2",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.62",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozuj2b08j0mv4z0g2jv6kl",
+    "_date": "2026-07-17",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.6",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmroz8zns080mmv4zxlwu9x9x",
+    "_date": "2026-07-17",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "3.03",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp07d3s093omv4zscggkdtx",
+    "_date": "2026-07-17",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.02",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp01jxs08vemv4zw44ozdxj",
+    "_date": "2026-07-17",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "1.1",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozu6ow08hcmv4zambbngm6",
+    "_date": "2026-07-17",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozfi9n082mmv4z0o29os3r",
+    "_date": "2026-07-17",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp20ahp0a7amv4zbcv26zvx",
+    "_date": "2026-07-17",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp02xvw090umv4z7nk6mhis",
+    "_date": "2026-07-17",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.08",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozldbw088smv4zqjno55u9",
+    "_date": "2026-07-17",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozoki808a8mv4zc7mo8mo3",
+    "_date": "2026-07-17",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrozqog408cwmv4zku668y9y",
+    "_date": "2026-07-17",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.24",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.7",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp1873b09womv4zzc25x33w",
+    "_date": "2026-07-17",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.54",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp0nxm609iqmv4zy95kib0n",
+    "_date": "2026-07-17",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.81",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrp0wzom09qwmv4z464b07w4",
+    "_date": "2026-07-17",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.69",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrt9tyq108eju34z5zho8fr1",
+    "_date": "2026-07-20",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtfc7g30b45u34zxtvyq3qq",
+    "_date": "2026-07-20",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "1.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtam5r70999u34zsf5axi1h",
+    "_date": "2026-07-20",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.98",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrt9xpim08j7u34zho5l7am6",
+    "_date": "2026-07-20",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrta3ie808p5u34zcftaxggt",
+    "_date": "2026-07-20",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.22",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtaft4j094xu34zpb1ddwl1",
+    "_date": "2026-07-20",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.06",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrta71go08ubu34zispawird",
+    "_date": "2026-07-20",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.82",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrta777c08vlu34z2667nwj5",
+    "_date": "2026-07-20",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.68",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrta6nu808qru34zvz768nbw",
+    "_date": "2026-07-20",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.66",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtaew72090vu34zdaej3s4l",
+    "_date": "2026-07-20",
+    "_name": "Jonel Olleres",
+    "driverAmSegmentHours": "1.07",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtd4kwg0achu34zrya3x35d",
+    "_date": "2026-07-20",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "5.31",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtaarbi08yxu34zsgtdpasi",
+    "_date": "2026-07-20",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.13",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtsdn1n0ftnu34znw4knsdw",
+    "_date": "2026-07-20",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "1.42",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrta0uxd08mdu34zalqk36w1",
+    "_date": "2026-07-20",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrta8yos08xju34zs3qpnqfm",
+    "_date": "2026-07-20",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "1.15",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtafd8d092xu34zjrbwmr6c",
+    "_date": "2026-07-20",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.07",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrt9yhse08knu34z631624hv",
+    "_date": "2026-07-20",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtbe0n709lbu34zai9ioa8k",
+    "_date": "2026-07-20",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.62",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.16",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtb4vbo09epu34zf4fe7azi",
+    "_date": "2026-07-20",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.74",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmruq8wjo01rarn4zkdctvlvr",
+    "_date": "2026-07-21",
+    "_name": "Mario Amgao",
+    "driverAmSegmentHours": "0.89",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmruq7dz901pqrn4z83jdm5yu",
+    "_date": "2026-07-21",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "0.91",
+    "regularSegmentHours": "4.22",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrv42rqy04gyrn4zrh5ebgsd",
+    "_date": "2026-07-21",
+    "_name": "Beverly Brazil",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "0",
+    "driverPmSegmentHours": "1.19",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupppe101g6rn4zuigwm4yw",
+    "_date": "2026-07-21",
+    "_name": "Arnold Capati",
+    "driverAmSegmentHours": "1.14",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupgnn3014crn4z3bevr7pq",
+    "_date": "2026-07-21",
+    "_name": "Edgardo Nuestro",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupsgqh01jmrn4z9kj8i88e",
+    "_date": "2026-07-21",
+    "_name": "Albert Dalere",
+    "driverAmSegmentHours": "1.1",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupwm2s01mkrn4za6qhoyzy",
+    "_date": "2026-07-21",
+    "_name": "Donald Sabangan",
+    "driverAmSegmentHours": "1.05",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupnu5p01eern4zt3saaruo",
+    "_date": "2026-07-21",
+    "_name": "Peter Magtagad",
+    "driverAmSegmentHours": "1.16",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupm98501bqrn4z6irud478",
+    "_date": "2026-07-21",
+    "_name": "Josie Soriano",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.77",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupleib0190rn4zmwbffd7s",
+    "_date": "2026-07-21",
+    "_name": "Editha Macabeo",
+    "driverAmSegmentHours": "1.19",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.67",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrup8a6600u8rn4zl9nlj1qz",
+    "_date": "2026-07-21",
+    "_name": "Imelda Levi",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrurp0b302csrn4zci1vwgbn",
+    "_date": "2026-07-21",
+    "_name": "Evelyn Garnace",
+    "driverAmSegmentHours": "0.21",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupm5jk01b8rn4zzyhcj59u",
+    "_date": "2026-07-21",
+    "_name": "Jennefer Ortega",
+    "driverAmSegmentHours": "1.18",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.02",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrup9bl400vyrn4z0dg7omsw",
+    "_date": "2026-07-21",
+    "_name": "Robert Ramirez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmruqqaeu01vgrn4z10flm80t",
+    "_date": "2026-07-21",
+    "_name": "Johna Rey Galamiton",
+    "driverAmSegmentHours": "0.66",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrt9vkjg08hnu34zbq7yuv3r",
+    "_date": "2026-07-20",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupeucd0104rn4zvsc7lr16",
+    "_date": "2026-07-21",
+    "_name": "Daynee Cuaresma",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrup9soa00xirn4zqiht53tu",
+    "_date": "2026-07-21",
+    "_name": "Susana Pagaran",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupfmlr011arn4zex8n7zd0",
+    "_date": "2026-07-21",
+    "_name": "Philip Richard Gemino",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrtq8r860edbu34zldimhxxn",
+    "_date": "2026-07-20",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrur2eyu026urn4zx9kac0rw",
+    "_date": "2026-07-21",
+    "_name": "Shirley Capati",
+    "driverAmSegmentHours": "0.51",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrv5zfmo0504rn4zeb829dbg",
+    "_date": "2026-07-21",
+    "_name": "Josefina Chavez",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrwltuu8083lug54qlhajzcv",
+    "_date": "2026-07-21",
+    "_name": "Jasbleidi Mendoza",
+    "driverAmSegmentHours": "0.75",
+    "regularSegmentHours": "2.5",
+    "driverPmSegmentHours": "0",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrt9v4d008fpu34zbiffrv8v",
+    "_date": "2026-07-20",
+    "_name": "Aldin Bolalin",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupcq1700z6rn4zwegvt5b5",
+    "_date": "2026-07-21",
+    "_name": "Aldin Bolalin",
+    "driverAmSegmentHours": "1.25",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrta75z308vbu34zci6r7nk3",
+    "_date": "2026-07-20",
+    "_name": "Gerard Joseph Backeng",
+    "driverAmSegmentHours": "1.17",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "0.01",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  },
+  {
+    "id": "cmrupq42i01i2rn4z28g660ud",
+    "_date": "2026-07-21",
+    "_name": "Gerard Joseph Backeng",
+    "driverAmSegmentHours": "1.13",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "netWorkedHours": "0",
+    "rawOtMinutes": 0
+  }
+]
