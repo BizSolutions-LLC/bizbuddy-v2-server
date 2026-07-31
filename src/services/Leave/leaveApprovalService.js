@@ -68,6 +68,8 @@ async function previewLeaveApproval(leave, policy) {
   const dailyHours = await calcDailyHours(leave.userId, leave.startDate, leave.endDate, {
     requestedStartTime: leave.requestedStartTime,
     requestedEndTime:   leave.requestedEndTime,
+    excludeShiftIds:    Array.isArray(leave.excludedShiftIds) ? leave.excludedShiftIds : [],
+    includeWeekends:    leave.includeWeekends !== false,
   });
 
   if (!leave.isPaid) {
@@ -104,6 +106,8 @@ async function applyLeaveApproval(leave, policy, approverId, note) {
   const dailyHours = await calcDailyHours(leave.userId, leave.startDate, leave.endDate, {
     requestedStartTime: leave.requestedStartTime,
     requestedEndTime:   leave.requestedEndTime,
+    excludeShiftIds:    Array.isArray(leave.excludedShiftIds) ? leave.excludedShiftIds : [],
+    includeWeekends:    leave.includeWeekends !== false,
   });
 
   if (!leave.isPaid) {

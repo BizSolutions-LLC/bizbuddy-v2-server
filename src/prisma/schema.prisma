@@ -588,6 +588,11 @@ model Company {
   multiApprovalEnabled Boolean @default(false)
   secondaryApproverId  String?
 
+  // BB-051: when true, a punch-vs-leave conflict auto-resolves in favor of the punch
+  // instead of waiting for manual review in cutoff period approvals. Trigger only —
+  // does not change resolveConflict's existing revert mechanics.
+  leaveConflictAutoRevert Boolean @default(false)
+
   // Auto clock-out configuration
   autoClockOutWarningHours  Decimal? @default(0.5) @db.Decimal(4, 2) // hours BEFORE scheduledEnd to warn employee
   autoClockOutGraceHours    Decimal? @default(5.0) @db.Decimal(4, 2) // hours AFTER scheduledEnd to auto-close
@@ -1144,6 +1149,8 @@ model Leave {
   actualPaidHours           Decimal? @db.Decimal(6, 2) // real per-day proration outcome at approval time — null until decided; may differ from the submitted isPaid intent
   actualUnpaidHours         Decimal? @db.Decimal(6, 2)
   affectedShifts            Json?
+  excludedShiftIds          Json?    @default("[]") // BB-054: UserShift ids explicitly deselected on a multi-shift day — actually consumed by calcDailyHours, unlike affectedShifts above
+  includeWeekends           Boolean  @default(true) // BB-054: false excludes unplotted Sat/Sun from the deduction; a weekend day with a real shift is unaffected either way
   requestedStartTime        DateTime? @db.Time(6) // employee-entered daily time window, used only as the no-shift-day fallback in calcDailyHours (BB-048) — null for older leaves and requests that never set it
   requestedEndTime          DateTime? @db.Time(6)
   createdAt        DateTime @default(now()) @db.Timestamptz(6)

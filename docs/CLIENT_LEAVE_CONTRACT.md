@@ -330,6 +330,43 @@ If omitted, behavior falls back to the flat company default per day. **The time 
 
 ---
 
+## BB-054 — Per-shift leave selection, weekend exclusion, and BB-051's company-level auto-revert toggle
+
+**Endpoints:** `POST /api/leaves/submit` (two new optional fields), `GET /api/leaves/affected-schedules` (one new optional query param, one new response field), `GET /api/company-settings` and its `PATCH` (one new field).
+
+**Reason minimum length (15 vs 30 characters):** confirmed UI-only. No server-side length validation exists on `leaveReason` today (unvalidated, no length constraint in the schema) — the client-side change needed no server counterpart and nothing here was affected by it.
+
+### 1. Per-shift leave selection
+
+An employee with 2+ shifts on the same day (e.g. Driver AM and Driver PM) can now deselect specific shifts from a leave request — the leave applies only to the shifts left selected.
+
+- `POST /api/leaves/submit` gains optional `excludedShiftIds: string[]` — the `UserShift` ids the employee deselected. Distinct from the existing `affectedShiftIds` (which is unchanged, still just a display snapshot) — this is the field that's actually consumed by hours calculation. Ids not owned by the requesting user are silently dropped.
+- Deselecting a shift is **invisible everywhere else in the system** — the excluded `UserShift` shows as a completely normal scheduled shift, no marker, no approver-facing flag. It only changes how many hours the leave deducts.
+- A day where every shift is deselected correctly deducts **0h for that day** (not the full-day fallback default) — the day still "has a real shift," it's just not being taken as leave.
+- Punch-vs-leave conflict detection (cutoff review) is now shift-aware: punching in on a shift the employee explicitly excluded from the leave no longer flags as a conflict — it's treated as the normal work it is.
+
+### 2. Weekend exclusion checkbox
+
+- `POST /api/leaves/submit` and `GET /api/leaves/affected-schedules` both gain optional `includeWeekends: boolean`, **default `true`** (preserves today's behavior — no client change required to keep current results).
+- When `false`: an **unplotted** Saturday/Sunday in the range contributes 0h instead of the no-shift fallback. A weekend day with an **actual scheduled shift** is unaffected either way — the toggle never excludes real, worked hours.
+- `GET /api/leaves/affected-schedules` response: a fallback row zeroed out by this flag now carries `excludedByWeekend: true` (alongside `scheduledHours: 0`) — use this instead of computing day-of-week client-side, so the preview never has to reimplement server calendar logic.
+
+### 3. BB-051 — company-level "auto-revert on punch" setting
+
+`GET /api/company-settings` and its `PATCH` gain `leaveConflictAutoRevert: boolean`, **default `false`** (today's fully-manual flow, unchanged unless explicitly turned on).
+
+- This is a **trigger-only** setting — it does not change what happens on conflict, only who/what initiates it. The existing punch-wins mechanics (the whole `Leave` request gets cancelled, a flat 8h is refunded to balance, no ledger entry) are unchanged and not part of this ticket.
+- When `true`, a detected punch-vs-leave conflict resolves automatically (in favor of the punch) instead of waiting for an admin's manual "Honor Punch" action in cutoff review.
+- **Practical effect for the cutoff review screen:** once a conflict auto-resolves, it will no longer appear as a pending `hasLeaveConflict: true` row needing action — it shows up already resolved (approval `status: "approved"`, associated leave `status: "cancelled"`). A read-only indicator of the setting (e.g. "Auto-revert: ON") is enough; no change needed to the existing "Honor Punch"/"Honor Leave" buttons, since auto-resolved conflicts won't reach that decision point at all.
+
+### UI work
+
+- "New leave request" form: per-shift checkboxes on days with 2+ shifts in the "Affected schedules" panel (send `excludedShiftIds` on submit); a weekend-inclusion checkbox (send `includeWeekends` on both the preview call and submit, default checked).
+- Company leave settings: new toggle for `leaveConflictAutoRevert`, same on/off pattern as the existing multi-approval toggle.
+- Cutoff review: optional read-only badge reflecting `leaveConflictAutoRevert` — no gating changes to existing conflict-resolution buttons.
+
+---
+
 ## Not yet changed (still on old behavior)
 
 - Cancelling/reversing an **already-approved** leave — still doesn't exist, remaining Phase 6 scope. Also Phase 6's job: the punch-vs-leave "Leave Always Wins" → "Punch Wins" auto-exclusion rule, which is the one remaining case where `available` can still (rarely) disagree with a pure ledger reconstruction — see `docs/LEAVE_MODULE.md` §14e. (Pre-approval requester self-cancel is now available — see the Cancel Leave section above.)

@@ -56,6 +56,8 @@ async function _attachRequestedHours(leaves) {
       calcRequestedHours(l.userId, l.startDate, l.endDate, {
         requestedStartTime: l.requestedStartTime,
         requestedEndTime:   l.requestedEndTime,
+        excludeShiftIds:    Array.isArray(l.excludedShiftIds) ? l.excludedShiftIds : [],
+        includeWeekends:    l.includeWeekends !== false,
       }).catch(() => null)
     )
   );
@@ -129,7 +131,10 @@ async function _attachTransactions(leaves) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const submitLeaveRequest = async (req, res) => {
-  const { type, fromDate, toDate, approverId, leaveReason, isPaid, affectedShiftIds, fromTime, toTime } = req.body;
+  const {
+    type, fromDate, toDate, approverId, leaveReason, isPaid, affectedShiftIds, fromTime, toTime,
+    excludedShiftIds, includeWeekends,
+  } = req.body;
 
   if (!type || !fromDate || !toDate || !approverId)
     return res.status(400).json({ message: "All fields are required." });
@@ -243,6 +248,19 @@ const submitLeaveRequest = async (req, res) => {
     });
   }
 
+  // BB-054: shifts the employee explicitly deselected on a multi-shift day —
+  // actually consumed by calcDailyHours (unlike affectedShifts above, which is
+  // display-only). Sanitized to ids the requester actually owns.
+  let sanitizedExcludedShiftIds = [];
+  if (Array.isArray(excludedShiftIds) && excludedShiftIds.length > 0) {
+    const owned = await prisma.userShift.findMany({
+      where:  { id: { in: excludedShiftIds }, userId: req.user.id },
+      select: { id: true },
+    });
+    sanitizedExcludedShiftIds = owned.map((us) => us.id);
+  }
+  const includeWeekendsFlag = includeWeekends === false ? false : true;
+
   const data = await prisma.leave.create({
     data: {
       userId:     req.user.id,
@@ -256,6 +274,8 @@ const submitLeaveRequest = async (req, res) => {
       leaveReason,
       requestedStartTime,
       requestedEndTime,
+      excludedShiftIds: sanitizedExcludedShiftIds,
+      includeWeekends:  includeWeekendsFlag,
       ...(affectedShifts !== null && { affectedShifts }),
     },
   });
@@ -1185,7 +1205,9 @@ const listBalances = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const getAffectedSchedules = async (req, res) => {
-  const { startDate, endDate, fromTime, toTime } = req.query;
+  const { startDate, endDate, fromTime, toTime, includeWeekends } = req.query;
+  // BB-054: query params arrive as strings — only the literal "false" opts out.
+  const includeWeekendsFlag = includeWeekends === "false" ? false : true;
 
   if (!startDate || !endDate)
     return res.status(400).json({ message: "startDate and endDate are required." });
@@ -1257,10 +1279,16 @@ const getAffectedSchedules = async (req, res) => {
   const dailyHours = await calcDailyHours(req.user.id, startDate, endDate, {
     requestedStartTime,
     requestedEndTime,
+    includeWeekends: includeWeekendsFlag,
   }).catch(() => []);
 
   for (const day of dailyHours) {
     if (matchedDates.has(day.date)) continue;
+    // BB-054: a 0h fallback day only happens here when includeWeekends=false
+    // zeroed out an unplotted Sat/Sun — flag it so the client can render the
+    // excluded row without independently recomputing which dates are weekends.
+    const dow = new Date(`${day.date}T00:00:00.000Z`).getUTCDay();
+    const excludedByWeekend = includeWeekendsFlag === false && (dow === 0 || dow === 6) && day.hours === 0;
     data.push({
       userShiftId:     null,
       assignedDate:    new Date(`${day.date}T00:00:00.000Z`),
@@ -1270,6 +1298,7 @@ const getAffectedSchedules = async (req, res) => {
       crossesMidnight:  false,
       scheduledHours:   day.hours,
       isFallback:       true,
+      excludedByWeekend,
     });
   }
   data.sort((a, b) => a.assignedDate - b.assignedDate);

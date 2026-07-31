@@ -29,6 +29,7 @@ exports.getSettings = async (req, res) => {
         autoClockOutNotifyEmails:      true,
         multiApprovalEnabled:          true,
         secondaryApproverId:           true,
+        leaveConflictAutoRevert:       true,
         companyCutoffSettings:         true,
         autoBreakBasis:               true,
         autoLunchEnabled:             true,
@@ -94,6 +95,7 @@ exports.updateSettings = async (req, res) => {
       autoClockOutNotifyEmails,
       multiApprovalEnabled,
       secondaryApproverId,
+      leaveConflictAutoRevert,
       cutoffSettings,
       autoBreakBasis,
       autoLunchEnabled,
@@ -187,6 +189,9 @@ exports.updateSettings = async (req, res) => {
         ...(secondaryApproverId !== undefined && {
           secondaryApproverId: secondaryApproverId || null,
         }),
+        ...(leaveConflictAutoRevert !== undefined && {
+          leaveConflictAutoRevert: Boolean(leaveConflictAutoRevert),
+        }),
         // ── Auto-break configuration ──────────────────────────────────────────
         ...(autoBreakBasis !== undefined && {
           autoBreakBasis: ["department", "shift"].includes(autoBreakBasis) ? autoBreakBasis : null,
@@ -218,6 +223,7 @@ exports.updateSettings = async (req, res) => {
         autoClockOutNotifyEmails:      true,
         multiApprovalEnabled:          true,
         secondaryApproverId:           true,
+        leaveConflictAutoRevert:       true,
         autoBreakBasis:                true,
         autoLunchEnabled:              true,
         autoCoffeeEnabled:             true,
