@@ -26,6 +26,7 @@ const daycareCutoffStrategy                        = require("@services/Cutoff/d
 const { syncApprovedSegmentsToTimeLog, syncApprovedRegularToTimeLog } = daycareCutoffStrategy;
 const bncCutoffStrategy                            = require("@services/Cutoff/bncCutoffStrategy");
 const { recomputeAllOtForCutoff, recomputeOtForTimeLog } = require("@services/Cutoff/cutoffOtService");
+const { combineDateTime } = require("@services/Cutoff/shiftLookupUtils");
 const { calcDailyHours } = require("@utils/leaveUtils");
 
 function getApprovalStrategy(companyId) {
@@ -919,7 +920,7 @@ const getCutoffApprovals = async (req, res) => {
     // EOD calculation before any other company-dependent logic runs.
     const company = await prisma.company.findUnique({
       where: { id: companyId },
-      select: { gracePeriodMinutes: true, timeZone: true, otBasis: true, dailyOtThresholdHours: true, cutoffOtThresholdHours: true },
+      select: { gracePeriodMinutes: true, timeZone: true, otBasis: true, dailyOtThresholdHours: true, cutoffOtThresholdHours: true, leaveConflictAutoRevert: true },
     });
     const gracePeriodMinutes     = company?.gracePeriodMinutes ?? 15;
     const companyTimezone        = company?.timeZone || "America/Los_Angeles";
@@ -1044,7 +1045,7 @@ const getCutoffApprovals = async (req, res) => {
 
     // ✅ Attach pending leave warnings to matching punch records
     // ✅ Attach conflict flag when approved leave overlaps same day as punch
-    const withLeaveContext = normalized.map((approval) => {
+    const leaveContextDraft = normalized.map((approval) => {
       const timeIn    = new Date(approval.timeLog.timeIn);
       const userId    = approval.timeLog.userId;
       const shiftTz   = approval.schedule?.scheduledStart
@@ -1069,9 +1070,68 @@ const getCutoffApprovals = async (req, res) => {
       const approvedLeave = dayLeaves.find((l) => l.status === "approved");
       const pendingLeave  = dayLeaves.find((l) => l.status === "pending");
 
+      return { approval, timeIn, userId, punchDate, approvedLeave, pendingLeave };
+    });
+
+    // BB-054: a leave can now exclude specific shifts on a multi-shift day
+    // (Leave.excludedShiftIds). A punch on the shift the employee kept working
+    // isn't actually a conflict — only override away from the date-only match
+    // above when the punch's own UserShift is one the leave explicitly
+    // excluded. Batch the lookup for every affected user/date pair rather than
+    // querying per approval.
+    const shiftAwareChecks = leaveContextDraft.filter(
+      (d) => d.approvedLeave && Array.isArray(d.approvedLeave.excludedShiftIds) && d.approvedLeave.excludedShiftIds.length > 0
+    );
+    const shiftsByUserDate = new Map(); // `${userId}_${dateStr}` -> UserShift[] (id, shift window)
+    if (shiftAwareChecks.length > 0) {
+      const userIds = [...new Set(shiftAwareChecks.map((d) => d.userId))];
+      const dates   = shiftAwareChecks.map((d) => new Date(`${d.punchDate}T00:00:00.000Z`));
+      const minDate = new Date(Math.min(...dates));
+      const maxDate = new Date(Math.max(...dates));
+      const candidateShifts = await prisma.userShift.findMany({
+        where: {
+          userId:       { in: userIds },
+          assignedDate: { gte: minDate, lte: maxDate },
+          status:       { not: "cancelled" },
+        },
+        select: {
+          id: true, userId: true, assignedDate: true,
+          shift: { select: { startTime: true, endTime: true, crossesMidnight: true } },
+        },
+      });
+      for (const us of candidateShifts) {
+        if (!us.shift) continue;
+        const dateStr = us.assignedDate.toISOString().split("T")[0];
+        const key = `${us.userId}_${dateStr}`;
+        if (!shiftsByUserDate.has(key)) shiftsByUserDate.set(key, []);
+        shiftsByUserDate.get(key).push(us);
+      }
+    }
+
+    function _findPunchShift(userId, punchDate, timeIn) {
+      const shifts = shiftsByUserDate.get(`${userId}_${punchDate}`);
+      if (!shifts) return null;
+      for (const us of shifts) {
+        const start = combineDateTime(punchDate, us.shift.startTime, companyTimezone);
+        let end     = combineDateTime(punchDate, us.shift.endTime, companyTimezone);
+        if (us.shift.crossesMidnight || end <= start) end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+        if (timeIn >= start && timeIn <= end) return us;
+      }
+      return null;
+    }
+
+    const withLeaveContext = leaveContextDraft.map(({ approval, timeIn, userId, punchDate, approvedLeave, pendingLeave }) => {
+      let hasLeaveConflict = !!approvedLeave;
+      if (hasLeaveConflict && approvedLeave.excludedShiftIds?.length > 0) {
+        const punchShift = _findPunchShift(userId, punchDate, timeIn);
+        if (punchShift && approvedLeave.excludedShiftIds.includes(punchShift.id)) {
+          hasLeaveConflict = false; // punch is on the shift the employee excluded from leave — expected work, not a conflict
+        }
+      }
+
       return {
         ...approval,
-        hasLeaveConflict: !!approvedLeave,
+        hasLeaveConflict,
         leaveRecord:      approvedLeave
           ? {
               id:                approvedLeave.id,
@@ -1092,6 +1152,38 @@ const getCutoffApprovals = async (req, res) => {
           : null,
       };
     });
+
+    // BB-051: company-level toggle — when on, a detected punch-vs-leave conflict
+    // auto-resolves in favor of the punch instead of waiting for manual review.
+    // Reuses resolveConflict's existing mechanics unchanged (whole-leave cancel,
+    // flat 8h refund, no ledger entry) — only the trigger (automatic vs. an
+    // admin's manual PATCH) is new. userId is null (approvedBy) since no human
+    // acted — same nullable field a manual resolution would populate.
+    if (company?.leaveConflictAutoRevert) {
+      const autoResolvable = withLeaveContext.filter((a) => a.hasLeaveConflict && a.status === "pending");
+      for (const a of autoResolvable) {
+        try {
+          await getApprovalStrategy(companyId).resolveConflict(a.id, {
+            cutoffPeriodId: id,
+            choice: "punch",
+            userId: null,
+            companyId,
+          });
+          a.status = "approved";
+          a.hasLeaveConflict = false;
+          if (a.leaveRecord) {
+            a.leaveRecord.status = "cancelled";
+            // Keep leaveRecords in sync — the "standalone leave rows" pass below
+            // reads it directly and would otherwise still treat this leave as
+            // approved on its other (unpunched) days in the same range.
+            const staleLeave = leaveRecords.find((l) => l.id === a.leaveRecord.id);
+            if (staleLeave) staleLeave.status = "cancelled";
+          }
+        } catch (autoErr) {
+          console.warn("[⚠️ BB-051] Auto-revert failed for approval", a.id, autoErr.message);
+        }
+      }
+    }
 
     // ✅ Build standalone leave rows for approved leaves with NO matching punch
     const punchUserDates = new Set(
@@ -1137,7 +1229,10 @@ const getCutoffApprovals = async (req, res) => {
           // Real per-day scheduled hours for this leave — same calculation used for
           // approval proration, so the client can show the employee's actual hours
           // for that day instead of a hardcoded default.
-          const dailyHours = await calcDailyHours(leave.userId, startStr, endStr).catch(() => []);
+          const dailyHours = await calcDailyHours(leave.userId, startStr, endStr, {
+            excludeShiftIds: Array.isArray(leave.excludedShiftIds) ? leave.excludedShiftIds : [],
+            includeWeekends: leave.includeWeekends !== false,
+          }).catch(() => []);
           const hoursByDate = new Map(dailyHours.map((d) => [d.date, d.hours]));
 
           let cursor = moment(startStr); // plain moment — no timezone

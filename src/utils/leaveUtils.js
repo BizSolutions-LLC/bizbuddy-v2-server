@@ -44,10 +44,18 @@ function _timeToMinutes(t) {
  *   times are given. A time-of-day value on any base date; only the UTC
  *   hour/minute are read (matches how Shift.startTime/endTime are stored).
  * @param {Date|string} [options.requestedEndTime]
+ * @param {string[]} [options.excludeShiftIds] - BB-054: UserShift ids to leave out of the
+ *   shift-hours sum (an employee deselecting one shift on a multi-shift day). A day whose
+ *   shifts are entirely excluded still counts as a "real shift day" (0h, no fallback) —
+ *   only a day with no plotted UserShift at all uses the fallback branch below.
+ * @param {boolean} [options.includeWeekends] - BB-054: default true. When false, an unplotted
+ *   Saturday/Sunday contributes 0h instead of the fallback. A weekend day with an actual
+ *   plotted shift is unaffected either way.
  * @returns {Array<{date: string, hours: number}>} - One entry per deductible day, in order
  */
 async function calcDailyHours(userId, startISO, endISO, options = {}) {
-  const { requestedStartTime, requestedEndTime } = options;
+  const { requestedStartTime, requestedEndTime, excludeShiftIds, includeWeekends = true } = options;
+  const excludeSet = new Set(excludeShiftIds || []);
   const user = await prisma.user.findUnique({
     where:   { id: userId },
     include: { company: true },
@@ -72,18 +80,25 @@ async function calcDailyHours(userId, startISO, endISO, options = {}) {
       status: { not: "cancelled" },
     },
     select: {
+      id:           true,
       assignedDate: true,
       shift: { select: { startTime: true, endTime: true, crossesMidnight: true } },
     },
   });
 
-  // Build a Map: dateStr → actual shift hours for that day. assignedDate is a
+  // Two maps: datesWithShift tracks every date with at least one real plotted
+  // shift (excluded or not), so an all-excluded day still counts as "a real
+  // shift day, 0h" rather than falling through to the fallback branch below.
+  // shiftHoursMap sums only the non-excluded shifts' hours. assignedDate is a
   // plain @db.Date column (like Holiday.date above) — read it directly, never
   // through moment().tz(), which would roll it back a day in Pacific time.
+  const datesWithShift = new Set();
   const shiftHoursMap = new Map();
   for (const us of userShifts) {
     if (!us.shift) continue;
     const dateStr = us.assignedDate.toISOString().split("T")[0];
+    datesWithShift.add(dateStr);
+    if (excludeSet.has(us.id)) continue;
     const s = us.shift.startTime;
     const e = us.shift.endTime;
     let hrs = (e.getTime() - s.getTime()) / 36e5;
@@ -115,10 +130,16 @@ async function calcDailyHours(userId, startISO, endISO, options = {}) {
   while (cursor.isSameOrBefore(endDate, "day")) {
     const dateStr = cursor.format("YYYY-MM-DD");
 
-    if (shiftHoursMap.has(dateStr)) {
-      // Actual plotted shift for this day — always wins, regardless of
-      // weekday/weekend/holiday.
-      days.push({ date: dateStr, hours: +shiftHoursMap.get(dateStr).toFixed(2) });
+    if (datesWithShift.has(dateStr)) {
+      // Actual plotted shift(s) for this day — always wins, regardless of
+      // weekday/weekend/holiday. Sum already excludes any deselected shifts
+      // (BB-054); a day with every shift deselected correctly lands here at
+      // 0h rather than falling through to the fallback branch below.
+      days.push({ date: dateStr, hours: +((shiftHoursMap.get(dateStr) || 0).toFixed(2)) });
+    } else if (includeWeekends === false && (cursor.day() === 0 || cursor.day() === 6)) {
+      // BB-054: unplotted weekend day, employee excluded weekends — 0h,
+      // no fallback. A weekend day with a real shift never reaches here.
+      days.push({ date: dateStr, hours: 0 });
     } else {
       // No shift plotted for this day — fall back to the requested time
       // window if given, else the flat company default. Applies the same
