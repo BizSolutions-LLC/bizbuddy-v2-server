@@ -3,7 +3,9 @@
 const { prisma } = require("@config/connection");
 const { createNotification } = require("@services/notificationService");
 const moment = require("moment-timezone");
-const { resolvePunchType, applyTrainingFlatHours } = require("@utils/punchTypeUtils");
+const { resolvePunchType, applyTrainingFlatHours, VALID_PUNCH_TYPES, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
+const { computeTimeLogSummary } = require("@services/timeLogComputeService");
+const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 
 function parseClockTime(str, companyTimezone) {
   if (/Z$|[+-]\d{2}:\d{2}$/.test(str)) {
@@ -41,8 +43,7 @@ const submitRequestPunchLog = async (req, res) => {
       approverId,
       reason,
       description,
-      estimatedDuration,
-      estimatedNetHours,
+      punchType,
     } = req.body;
 
     // Validation
@@ -50,6 +51,18 @@ const submitRequestPunchLog = async (req, res) => {
       return res.status(400).json({
         message: "Missing required fields: requestedDate, requestedClockIn, requestedClockOut, approverId"
       });
+    }
+
+    // punchType is optional — omitted/REGULAR/TRAINING behave exactly as before.
+    // Driver/Aide correction types (BB-065) are only meaningful for DayCare companies —
+    // BNC doesn't use this concept at all, so reject rather than silently accept.
+    if (punchType !== undefined && punchType !== null) {
+      if (!VALID_PUNCH_TYPES.includes(punchType)) {
+        return res.status(400).json({ message: `Invalid punchType: ${punchType}` });
+      }
+      if (isDriverSegmentPunchType(punchType) && BNC_COMPANY_IDS.has(req.user.companyId)) {
+        return res.status(400).json({ message: "Driver/Aide punch types are not available for this company." });
+      }
     }
 
     // Resolve company timezone — used to correctly interpret naive clock strings from older clients
@@ -97,6 +110,18 @@ const submitRequestPunchLog = async (req, res) => {
       return res.status(400).json({ message: "Clock-in time must be before clock-out time." });
     }
 
+    // Compute estimatedDuration/estimatedNetHours server-side rather than trusting the
+    // client-sent values — web and mobile were independently computing these (one
+    // applying the standard lunch deduction, one not), producing inconsistent hours
+    // for identical clock-in/out spans in the approver's pending queue (BB-065).
+    // Deliberately NOT deducting a lunch break here: unlike a real clock-in/out, a
+    // manual request has no break data one way or the other, so the claimed span is
+    // taken at face value. Any deduction is the approver's explicit call, not an
+    // automatic system assumption.
+    const grossMinutes = Math.round((clockOut.getTime() - clockIn.getTime()) / 60000);
+    const estimatedDuration = grossMinutes;
+    const estimatedNetHours = +(grossMinutes / 60).toFixed(2);
+
     // Create the request
     const newRequest = await prisma.requestedTimeLog.create({
       data: {
@@ -107,8 +132,9 @@ const submitRequestPunchLog = async (req, res) => {
         requestedClockOut: clockOut,
         reason,
         description,
-        estimatedDuration: estimatedDuration ? parseInt(estimatedDuration) : null,
-        estimatedNetHours: estimatedNetHours ? parseFloat(estimatedNetHours) : null,
+        estimatedDuration,
+        estimatedNetHours,
+        requestedPunchType: punchType || null,
         status: "PENDING",
         submittedAt: new Date(),
       },
@@ -311,6 +337,7 @@ const viewAllRequestedPunchLogs = async (req, res) => {
       requestedClockOut: req.requestedClockOut,
       estimatedDuration: req.estimatedDuration,
       estimatedNetHours: req.estimatedNetHours,
+      requestedPunchType: req.requestedPunchType,
       submittedAt: req.submittedAt,
       approvedAt: req.approvedAt,
       userDisplayName: req.user?.profile
@@ -370,9 +397,15 @@ const approveRequestedPunchLog = async (req, res) => {
       });
     }
 
-    const punchType = resolvePunchType({ reason: request.reason });
+    const punchType = resolvePunchType({ punchType: request.requestedPunchType, reason: request.reason });
 
-    // Create the actual time log
+    // Create the actual time log.
+    // autoLunchDeductionMinutes: 0 — a manually-requested/approved punch has no break
+    // data one way or the other, so computeTimeLogSummary's default "no break logged ->
+    // deduct minimumLunchMinutes anyway" rule (meant for real device clock-ins) must not
+    // apply here. The employee's claimed span is taken at face value; any break deduction
+    // is the approver's explicit call (e.g. editing hours before approving), not an
+    // automatic system assumption (BB-065).
     let newTimeLog = await prisma.timeLog.create({
       data: {
         userId: request.userId,
@@ -382,11 +415,22 @@ const approveRequestedPunchLog = async (req, res) => {
         punchType,
         coffeeBreaks: [],
         lunchBreak: {},
+        autoLunchDeductionMinutes: 0,
       },
     });
 
     if (punchType === "TRAINING") {
       newTimeLog = await applyTrainingFlatHours(newTimeLog.id, request.user.companyId);
+    } else {
+      // Eager compute of derived fields (netWorkedHours, etc.) so the TimeLog isn't left
+      // with null hours until the next cutoff-period sweep. Non-fatal — approval itself
+      // is already persisted even if this fails.
+      try {
+        const derived = await computeTimeLogSummary(newTimeLog.id);
+        if (derived) Object.assign(newTimeLog, derived);
+      } catch (computeErr) {
+        console.error(`[approveRequestedPunchLog] computeTimeLogSummary failed for ${newTimeLog.id}:`, computeErr.message);
+      }
     }
 
     // Update request status

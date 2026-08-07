@@ -28,6 +28,8 @@ const bncCutoffStrategy                            = require("@services/Cutoff/b
 const { recomputeAllOtForCutoff, recomputeOtForTimeLog } = require("@services/Cutoff/cutoffOtService");
 const { combineDateTime } = require("@services/Cutoff/shiftLookupUtils");
 const { calcDailyHours } = require("@utils/leaveUtils");
+const { DRIVER_SEGMENT_MAP, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
+const { generatePayrollExportForCutoffPeriod } = require("@services/Payroll/payrollExportService");
 
 function getApprovalStrategy(companyId) {
   return BNC_COMPANY_IDS.has(companyId) ? bncCutoffStrategy : daycareCutoffStrategy;
@@ -523,6 +525,30 @@ const updateCutoffStatus = async (req, res) => {
 
     console.log("[✅ Cutoff status updated]", id, "→", status);
 
+    // BB-066: "processed" is the one truly final status — updateCutoffStatus
+    // blocks any further change once a period is processed, unlike "locked"
+    // which can still be reopened. So this recomputes this department's payroll
+    // summary and folds it into the single take-latest PayrollExportBatch JSON
+    // for the whole company+period on every transition to "processed" (initial
+    // or re-run). Non-blocking — the status change itself must not fail just
+    // because export generation did; on failure this just falls back to the
+    // pre-BB-066 response wording below rather than falsely claiming the period
+    // is "secured".
+    let payrollExport = { generated: false };
+    let departmentName = null;
+    if (status === "processed") {
+      try {
+        const result = await generatePayrollExportForCutoffPeriod(updated);
+        payrollExport = { generated: true, employeeCount: result.employeeCount };
+      } catch (exportErr) {
+        console.error("[⚠️ BB-066] Payroll export generation failed for", id, exportErr.message);
+      }
+      if (updated.departmentId) {
+        const dept = await prisma.department.findUnique({ where: { id: updated.departmentId }, select: { name: true } });
+        departmentName = dept?.name || null;
+      }
+    }
+
     // Send notifications based on the new status
     try {
       const startStr = cutoffPeriod.startDate ? new Date(cutoffPeriod.startDate).toLocaleDateString() : null;
@@ -547,7 +573,11 @@ const updateCutoffStatus = async (req, res) => {
           })
         ));
       } else if (status === 'processed') {
-        // Notify all active employees in the company
+        // Notify all active employees in the company — text intentionally NOT
+        // enriched with department/employeeCount (BB-066): unlike the "locked"
+        // notification (management only), this one broadcasts company-wide, so
+        // payroll headcount details stay out of it. The enriched wording only
+        // goes in the API response below, seen only by the admin who acted.
         const employees = await prisma.user.findMany({
           where: { companyId, status: 'active' },
           select: { id: true, departmentId: true },
@@ -568,9 +598,13 @@ const updateCutoffStatus = async (req, res) => {
       console.error('❌ Failed to send cutoff status notification:', notifError);
     }
 
+    const responseMessage = status === "processed" && payrollExport.generated
+      ? `Cutoff period status updated to processed. Payroll summary secured${departmentName ? ` for ${departmentName}` : ""} — ${payrollExport.employeeCount} employee(s).`
+      : `Cutoff period status updated to ${status}.`;
+
     return res.status(200).json({
-      message: `Cutoff period status updated to ${status}.`,
-      data: updated,
+      message: responseMessage,
+      data: status === "processed" ? { ...updated, payrollExport } : updated,
     });
   } catch (error) {
     console.error("❌ updateCutoffStatus:", error);
@@ -732,11 +766,13 @@ async function syncApprovalRecords(cutoffPeriod, companyId, companyTimezone = "U
     return 0;
   }
 
-  // DRIVER_AIDE punches get 3 segment records; all others get 1 record (segmentType = null).
-  // Clean up stale null-segmentType records for DRIVER_AIDE logs before inserting — a previous
-  // sync (or cutoff creation with old code) may have created a single segmentType:null record,
-  // which would become an orphan alongside the 3 proper segment records.
-  const driverAideLogs = timeLogs.filter((l) => l.punchType === "DRIVER_AIDE");
+  // Driver/Aide punches (DRIVER_AIDE = full AM+Regular+PM day, DRIVER_AIDE_AM/PM = single-route
+  // day) get one segment record per DRIVER_SEGMENT_MAP entry; all others get 1 record
+  // (segmentType = null). Clean up stale null-segmentType records for these logs before
+  // inserting — a previous sync (or an older approval, e.g. a Request Punch approved before
+  // BB-065 added AM/PM segment support) may have created a single segmentType:null record,
+  // which would become an orphan alongside the proper segment records.
+  const driverAideLogs = timeLogs.filter((l) => isDriverSegmentPunchType(l.punchType));
   const driverAideIds  = driverAideLogs.map((l) => l.id);
 
   if (driverAideIds.length > 0) {
@@ -750,15 +786,17 @@ async function syncApprovalRecords(cutoffPeriod, companyId, companyTimezone = "U
     });
   }
 
-  // Pre-resolve segment boundaries for DRIVER_AIDE logs so segmentStart / segmentEnd
+  // Pre-resolve segment boundaries for Driver/Aide logs so segmentStart / segmentEnd
   // are populated on the approval record at creation time.
   const segBoundaries = await resolveDriverAideSegments(driverAideLogs, companyId);
 
-  // DRIVER_AIDE punches get 3 segment records; all others get 1 record (segmentType = null)
+  // Driver/Aide punches get one segment record per DRIVER_SEGMENT_MAP entry; all others
+  // get 1 record (segmentType = null)
   const approvalData = timeLogs.flatMap((log) => {
-    if (log.punchType === "DRIVER_AIDE") {
+    const segmentTypes = DRIVER_SEGMENT_MAP[log.punchType];
+    if (segmentTypes) {
       const segs = segBoundaries[log.id] ?? {};
-      return ["driver_am", "regular", "driver_pm"].map((segmentType) => {
+      return segmentTypes.map((segmentType) => {
         const seg = segs[segmentType] ?? null;
         return {
           id: randomUUID(), timeLogId: log.id, cutoffPeriodId, status: "pending", segmentType,
