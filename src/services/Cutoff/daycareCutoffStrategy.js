@@ -13,6 +13,7 @@ const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff } = require("./cutoffOtService");
 const { combineDateTime,
         fetchScheduleForDate }   = require("./shiftLookupUtils");
+const { isDriverSegmentPunchType, lastDriverSegment } = require("@utils/punchTypeUtils");
 
 // ── Strategy-level HTTP error ─────────────────────────────────────────────────
 class StrategyError extends Error {
@@ -183,8 +184,10 @@ async function approveSingle(approvalId, {
     return { message: "Training record approved successfully.", data: updated };
   }
 
-  // ── DRIVER_AIDE segment: trust stored computed segment hours ──────────────
-  if (timeLog.punchType === "DRIVER_AIDE") {
+  // ── Driver/Aide segment: trust stored computed segment hours ──────────────
+  // Covers DRIVER_AIDE (full day, 3 segments) and DRIVER_AIDE_AM/PM (single-route
+  // day, 2 segments — see DRIVER_SEGMENT_MAP in punchTypeUtils.js).
+  if (isDriverSegmentPunchType(timeLog.punchType)) {
     try { await computeTimeLogSummary(timeLog.id); } catch (_) {}
 
     const fresh = await prisma.timeLog.findUnique({
@@ -206,9 +209,12 @@ async function approveSingle(approvalId, {
       : approval.segmentStart
         ? new Date(Math.max(new Date(timeLog.timeIn).getTime(), new Date(approval.segmentStart).getTime()))
         : new Date(timeLog.timeIn);
-    // PM is the last segment — Raw pays through actual clock-out (no subsequent segment to
-    // capture that time). AM/Regular still cap at segmentEnd to avoid double-counting.
-    const approvedOut = (approvalMode === "raw" && approval.segmentType === "driver_pm" && timeLog.timeOut)
+    // The chronologically-last segment for this punch type — Raw pays through actual
+    // clock-out (no subsequent segment to capture that time). For DRIVER_AIDE that's
+    // driver_pm; for DRIVER_AIDE_AM (no PM route that day) it's regular instead.
+    // Earlier segments still cap at segmentEnd to avoid double-counting.
+    const isLastSegment = approval.segmentType === lastDriverSegment(timeLog.punchType);
+    const approvedOut = (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
       ? new Date(timeLog.timeOut)
       : approval.segmentEnd
         ? new Date(approval.segmentEnd)
@@ -453,8 +459,8 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
         continue;
       }
 
-      // ── DRIVER_AIDE ─────────────────────────────────────────────────────
-      if (timeLog.punchType === "DRIVER_AIDE") {
+      // ── Driver/Aide (DRIVER_AIDE full day, or DRIVER_AIDE_AM/PM single route) ──
+      if (isDriverSegmentPunchType(timeLog.punchType)) {
         try { await computeTimeLogSummary(timeLog.id); } catch (_) {}
 
         const fresh = await prisma.timeLog.findUnique({
@@ -473,7 +479,8 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
           : approval.segmentStart
             ? new Date(Math.max(new Date(timeLog.timeIn).getTime(), new Date(approval.segmentStart).getTime()))
             : new Date(timeLog.timeIn);
-        const approvedOut = (approvalMode === "raw" && approval.segmentType === "driver_pm" && timeLog.timeOut)
+        const isLastSegment = approval.segmentType === lastDriverSegment(timeLog.punchType);
+        const approvedOut = (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
           ? new Date(timeLog.timeOut)
           : approval.segmentEnd
             ? new Date(approval.segmentEnd)
@@ -625,12 +632,12 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
       console.error("[OT] recomputeAllOt failed after bulk approve:", e.message)
     );
 
-    // Sync approved segment hours back to TimeLog fields for every DRIVER_AIDE
+    // Sync approved segment hours back to TimeLog fields for every Driver/Aide
     // punch that was touched. Fire-and-forget per timeLogId — each call is safe
     // to run independently.
     const driverTimeLogIds = [...new Set(
       approvals
-        .filter((a) => a.timeLog?.punchType === "DRIVER_AIDE")
+        .filter((a) => isDriverSegmentPunchType(a.timeLog?.punchType))
         .map((a) => a.timeLog.id)
     )];
     for (const tlId of driverTimeLogIds) {

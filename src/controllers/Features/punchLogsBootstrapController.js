@@ -54,6 +54,7 @@ const getPunchLogsBootstrap = async (req, res) => {
           requestedClockIn: true,
           requestedClockOut: true,
           reason: true,
+          requestedPunchType: true,
           approver: { select: { email: true, profile: { select: { firstName: true, lastName: true } } } },
         },
         orderBy: { submittedAt: "desc" },
