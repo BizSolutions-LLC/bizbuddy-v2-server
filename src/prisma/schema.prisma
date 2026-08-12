@@ -1016,6 +1016,46 @@ model CutoffOtBlock {
   @@index([userId])
 }
 
+// BB-066 — raw-SQL tables (scripts/create-payroll-archive-tables.sql +
+// scripts/add-payroll-export-department-and-batch-unique.sql), modeled here
+// to match the live schema exactly. id is BigInt (BIGSERIAL), not the cuid
+// String used elsewhere in this file, and every index/unique carries an
+// explicit map: name so it lines up with the index names those scripts
+// already created. No relations — the live columns have no FK constraints.
+model PayrollExport {
+  id            BigInt   @id @default(autoincrement())
+  periodStart   DateTime @db.Date
+  periodEnd     DateTime @db.Date
+  companyId     String
+  departmentId  String?
+  userId        String
+  employeeId    String?
+  employeeName  String?
+  regularHours  Decimal  @default(0) @db.Decimal(8, 2)
+  otHours       Decimal  @default(0) @db.Decimal(8, 2)
+  driverHours   Decimal  @default(0) @db.Decimal(8, 2)
+  trainingHours Decimal  @default(0) @db.Decimal(8, 2)
+  ptoHours      Decimal  @default(0) @db.Decimal(8, 2)
+  generatedAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([userId], map: "PayrollExport_userId_idx")
+  @@index([companyId, periodStart, periodEnd], map: "PayrollExport_period_idx")
+  @@index([companyId, periodStart, periodEnd, departmentId], map: "PayrollExport_dept_period_idx")
+}
+
+model PayrollExportBatch {
+  id            BigInt   @id @default(autoincrement())
+  companyId     String
+  periodStart   DateTime @db.Date
+  periodEnd     DateTime @db.Date
+  employeeCount Int      @default(0)
+  payload       Json
+  generatedAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([companyId, periodStart, periodEnd], map: "PayrollExportBatch_company_period_unique")
+  @@index([companyId, periodStart, periodEnd], map: "PayrollExportBatch_period_idx")
+}
+
 model DepartmentCutoffSettings {
   id                 String     @id @default(cuid())
   companyId          String

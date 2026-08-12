@@ -10,9 +10,10 @@
 //
 // PayrollExport / PayrollExportBatch are raw-SQL tables (see
 // scripts/create-payroll-archive-tables.sql +
-// scripts/add-payroll-export-department-and-batch-unique.sql), not modeled
-// in schema.prisma — everything here goes through $queryRaw/$executeRaw,
-// same convention as the one-time archive script this was ported from
+// scripts/add-payroll-export-department-and-batch-unique.sql). They are now
+// modeled in schema.prisma too, but this file still goes through
+// $queryRaw/$executeRaw rather than the typed client, same convention as the
+// one-time archive script this was ported from
 // (scripts/archive-and-export-payroll-2026-07-08-to-21.js).
 
 const { prisma } = require("@config/connection");
