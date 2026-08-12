@@ -6,9 +6,9 @@
 // department that has processed for the period, not just the caller's own,
 // so this is intentionally not exposed to typical (employee) users.
 //
-// PayrollExportBatch is a raw-SQL table (see scripts/create-payroll-archive-tables.sql),
-// not modeled in schema.prisma — read via $queryRaw, same convention as the
-// generation side.
+// PayrollExportBatch is a raw-SQL table (see scripts/create-payroll-archive-tables.sql).
+// It's now modeled in schema.prisma too, but this still reads via $queryRaw,
+// same convention as the generation side.
 
 const { prisma } = require("@config/connection");
 

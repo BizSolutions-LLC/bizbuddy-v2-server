@@ -16,6 +16,7 @@
 //  - Old records without companyId fall back to creator.companyId lookup
 
 const { prisma } = require("@config/connection");
+const { Prisma } = require("@prisma/client");
 const moment = require("moment-timezone");
 const { randomUUID } = require("crypto");
 const { createNotification } = require("@services/notificationService");
@@ -393,6 +394,40 @@ const getCutoffPeriods = async (req, res) => {
       prisma.cutoffPeriod.count({ where }),
     ]);
 
+    // BB-066: per-period payroll-export status — one batched query for the
+    // whole page (not per row), since PayrollExportBatch is raw-SQL and keyed
+    // by companyId+periodStart+periodEnd (shared across every department in
+    // the same period, not per-department).
+    const periodPairs = [
+      ...new Map(
+        cutoffPeriods.map((p) => {
+          const periodStart = p.periodStart.toISOString().slice(0, 10);
+          const periodEnd   = p.periodEnd.toISOString().slice(0, 10);
+          return [`${periodStart}_${periodEnd}`, { periodStart, periodEnd }];
+        })
+      ).values(),
+    ];
+
+    const batchRows = periodPairs.length
+      ? await prisma.$queryRaw`
+          SELECT "periodStart", "periodEnd", "employeeCount", "generatedAt"
+          FROM "PayrollExportBatch"
+          WHERE "companyId" = ${companyId}
+            AND (${Prisma.join(
+              periodPairs.map(
+                (pp) => Prisma.sql`("periodStart" = ${pp.periodStart}::date AND "periodEnd" = ${pp.periodEnd}::date)`
+              ),
+              " OR "
+            )})
+        `
+      : [];
+
+    const batchByPeriod = new Map();
+    for (const row of batchRows) {
+      const key = `${row.periodStart.toISOString().slice(0, 10)}_${row.periodEnd.toISOString().slice(0, 10)}`;
+      batchByPeriod.set(key, row);
+    }
+
     // Approval stats per period
     // ✅ 'rejected' counted as 'excluded' for display consistency
     const periodsWithStats = await Promise.all(
@@ -411,7 +446,15 @@ const getCutoffPeriods = async (req, res) => {
           else if (s.status === "excluded" || s.status === "rejected") stats.excluded += s._count;
         });
 
-        return { ...period, approvalStats: stats };
+        const periodKey = `${period.periodStart.toISOString().slice(0, 10)}_${period.periodEnd.toISOString().slice(0, 10)}`;
+        const batch = batchByPeriod.get(periodKey);
+        const payrollExport = {
+          generated: !!batch,
+          employeeCount: batch ? batch.employeeCount : null,
+          generatedAt: batch ? batch.generatedAt : null,
+        };
+
+        return { ...period, approvalStats: stats, payrollExport };
       })
     );
 
