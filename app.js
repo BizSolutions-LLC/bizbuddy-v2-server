@@ -37,7 +37,7 @@ app.use("/api/system-admin/auth/login", authLimiter);
 
 app.use(
   cors({
-    origin: ["http://localhost:19006", "https://mybizbuddy.co", "http://localhost:3000", "https://staging.mybizbuddy.co"],
+    origin: ["http://localhost:19006", "https://mybizbuddy.co", "http://localhost:3000", "http://localhost:3001", "https://staging.mybizbuddy.co"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
