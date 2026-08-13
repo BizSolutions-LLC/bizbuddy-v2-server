@@ -71,4 +71,53 @@ const getPayrollExportByCutoffPeriod = async (req, res) => {
   }
 };
 
-module.exports = { getPayrollExportByCutoffPeriod };
+/**
+ * GET /api/payroll-export/batches/:companyId
+ *
+ * Metadata-only list of PayrollExportBatch rows for a company (no payload).
+ * Admin/supervisor may only request their own companyId; superadmin may
+ * request any company.
+ */
+const getPayrollExportBatchesByCompany = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { companyId: callerCompanyId, role } = req.user;
+
+    if (!companyId) {
+      return res.status(400).json({ message: "companyId is required." });
+    }
+
+    if (role !== "superadmin" && companyId !== callerCompanyId) {
+      return res.status(403).json({ message: "Access denied: insufficient permissions." });
+    }
+
+    const rows = await prisma.$queryRaw`
+      SELECT id, "companyId", "periodStart", "periodEnd", "employeeCount", "generatedAt"
+      FROM "PayrollExportBatch"
+      WHERE "companyId" = ${companyId}
+      ORDER BY "periodEnd" DESC, "periodStart" DESC
+    `;
+
+    const batches = rows.map((row) => ({
+      id: typeof row.id === "bigint" ? Number(row.id) : row.id,
+      companyId: row.companyId,
+      periodStart: row.periodStart,
+      periodEnd: row.periodEnd,
+      employeeCount: Number(row.employeeCount),
+      generatedAt: row.generatedAt,
+    }));
+
+    return res.status(200).json({
+      message: "Payroll export batches retrieved.",
+      data: { batches },
+    });
+  } catch (error) {
+    console.error("❌ getPayrollExportBatchesByCompany:", error);
+    return res.status(500).json({ message: "Internal server error.", error: error.message });
+  }
+};
+
+module.exports = {
+  getPayrollExportByCutoffPeriod,
+  getPayrollExportBatchesByCompany,
+};
