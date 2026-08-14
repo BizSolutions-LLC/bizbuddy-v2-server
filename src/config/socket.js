@@ -13,7 +13,8 @@ function init(server) {
       origin: [
         "http://localhost:19006",
         "https://mybizbuddy.co",
-        "http://localhost:3000"
+        "http://localhost:3000",
+        "http://localhost:3001"
       ],
       methods: ["GET", "POST"],
       credentials: true,

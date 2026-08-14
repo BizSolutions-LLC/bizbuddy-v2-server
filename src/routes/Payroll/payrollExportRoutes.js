@@ -5,7 +5,22 @@ const router = express.Router();
 const { authorizeRoles } = require("@middlewares/roleMiddleware");
 const authenticate = require("@middlewares/authMiddleware");
 
-const { getPayrollExportByCutoffPeriod } = require("@controllers/Payroll/payrollExportController");
+const {
+  getPayrollExportByCutoffPeriod,
+  getPayrollExportBatchesByCompany,
+} = require("@controllers/Payroll/payrollExportController");
+
+/**
+ * @route   GET /api/payroll-export/batches/:companyId
+ * @desc    List PayrollExportBatch metadata for a company (no payload).
+ * @access  Admin, Supervisor, Superadmin — admin/supervisor limited to own companyId.
+ */
+router.get(
+  "/batches/:companyId",
+  authenticate,
+  authorizeRoles("admin", "supervisor", "superadmin"),
+  getPayrollExportBatchesByCompany
+);
 
 /**
  * @route   GET /api/payroll-export/by-cutoff-period/:id

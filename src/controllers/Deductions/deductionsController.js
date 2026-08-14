@@ -4,6 +4,24 @@ const { prisma } = require("@config/connection");
 
 const DEFAULT_FUTA_BALANCE = 7000;
 
+const DEDUCTION_RATE_DEFAULTS = {
+  stateIncomeTaxRate: 5,
+  ficaRate: 6.2,
+  medicareRate: 1.45,
+  sdiRate: 1.1,
+};
+
+const validatePercentageRate = (value, fieldName) => {
+  const rate = parseFloat(value);
+  if (Number.isNaN(rate) || rate < 0 || rate > 100) {
+    return {
+      valid: false,
+      error: `A valid ${fieldName} between 0 and 100 is required.`,
+    };
+  }
+  return { valid: true, rate };
+};
+
 const getOrCreatePayrollConfig = async (companyId) => {
   let payrollConfig = await prisma.payrollConfiguration.findUnique({
     where: { companyId },
@@ -19,6 +37,7 @@ const getOrCreatePayrollConfig = async (companyId) => {
         futaEnabled: false,
         sutaEnabled: false,
         futaRate: 7,
+        ...DEDUCTION_RATE_DEFAULTS,
       },
     });
   }
@@ -227,6 +246,7 @@ exports.updateFutaRate = async (req, res) => {
         futaEnabled: false,
         sutaEnabled: false,
         futaRate: rate,
+        ...DEDUCTION_RATE_DEFAULTS,
       },
     });
 
@@ -239,6 +259,130 @@ exports.updateFutaRate = async (req, res) => {
     });
   } catch (err) {
     console.error("updateFutaRate error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
+// ============================================
+// GET PAYROLL TAX RATES (State, FICA, Medicare, SDI)
+// Federal is bracket-based now — see federal-tax-rates endpoints in
+// companyInformationController.js instead of a flat rate here.
+// ============================================
+
+exports.getPayrollTaxRates = async (req, res) => {
+  try {
+    const { companyId } = req.user;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Company ID is required.",
+      });
+    }
+
+    const payrollConfig = await getOrCreatePayrollConfig(companyId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Payroll tax rates retrieved successfully",
+      data: {
+        stateIncomeTaxRate: parseFloat(payrollConfig.stateIncomeTaxRate),
+        ficaRate: parseFloat(payrollConfig.ficaRate),
+        medicareRate: parseFloat(payrollConfig.medicareRate),
+        sdiRate: parseFloat(payrollConfig.sdiRate),
+      },
+    });
+  } catch (err) {
+    console.error("getPayrollTaxRates error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
+// ============================================
+// UPDATE PAYROLL TAX RATES (State, FICA, Medicare, SDI)
+// ============================================
+
+exports.updatePayrollTaxRates = async (req, res) => {
+  try {
+    const { companyId } = req.user;
+    const {
+      stateIncomeTaxRate,
+      ficaRate,
+      medicareRate,
+      sdiRate,
+    } = req.body;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Company ID is required.",
+      });
+    }
+
+    const rateInputs = {
+      stateIncomeTaxRate,
+      ficaRate,
+      medicareRate,
+      sdiRate,
+    };
+
+    if (Object.values(rateInputs).every((v) => v === undefined)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "At least one of stateIncomeTaxRate, ficaRate, medicareRate, or sdiRate is required.",
+      });
+    }
+
+    const validatedRates = {};
+    for (const [field, value] of Object.entries(rateInputs)) {
+      if (value === undefined) continue;
+      const validation = validatePercentageRate(value, field);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error,
+        });
+      }
+      validatedRates[field] = validation.rate;
+    }
+
+    const payrollConfig = await prisma.payrollConfiguration.upsert({
+      where: { companyId },
+      update: validatedRates,
+      create: {
+        companyId,
+        payFrequency: "biweekly",
+        ptoEnabled: true,
+        ptoLabel: "PTO",
+        futaEnabled: false,
+        sutaEnabled: false,
+        futaRate: 7,
+        ...DEDUCTION_RATE_DEFAULTS,
+        ...validatedRates,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Payroll tax rates updated successfully",
+      data: {
+        stateIncomeTaxRate: parseFloat(payrollConfig.stateIncomeTaxRate),
+        ficaRate: parseFloat(payrollConfig.ficaRate),
+        medicareRate: parseFloat(payrollConfig.medicareRate),
+        sdiRate: parseFloat(payrollConfig.sdiRate),
+      },
+    });
+  } catch (err) {
+    console.error("updatePayrollTaxRates error:", err);
     return res.status(500).json({
       success: false,
       message: "Internal server error.",
