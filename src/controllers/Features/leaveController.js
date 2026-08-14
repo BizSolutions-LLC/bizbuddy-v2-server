@@ -78,16 +78,18 @@ async function _attachPolicyNames(leaves) {
   }));
 }
 
-// ─── Attach deduction transactions to a list of leave records ────────────────
+// ─── Attach deduction + cancellation transactions to a list of leave records ─
 async function _attachTransactions(leaves) {
   const leaveIds = leaves.map((l) => l.id).filter(Boolean);
-  if (!leaveIds.length) return leaves.map((l) => ({ ...l, transaction: null }));
+  if (!leaveIds.length)
+    return leaves.map((l) => ({ ...l, transaction: null, cancelledAt: null, cancellation: null }));
 
   const txns = await prisma.leaveTransaction.findMany({
-    where: { leaveId: { in: leaveIds }, type: "deduction" },
+    where: { leaveId: { in: leaveIds }, type: { in: ["deduction", "cancelled"] } },
     select: {
       id:            true,
       leaveId:       true,
+      type:          true,
       hours:         true,
       balanceBefore: true,
       balanceAfter:  true,
@@ -102,10 +104,22 @@ async function _attachTransactions(leaves) {
     },
   });
 
-  const txnMap = Object.fromEntries(txns.map((t) => [t.leaveId ?? "", t]));
+  const _resolvePerformedBy = (t) =>
+    t.performedBy
+      ? {
+          id:   t.performedBy.id,
+          name: t.performedBy.profile
+            ? `${t.performedBy.profile.firstName || ""} ${t.performedBy.profile.lastName || ""}`.trim()
+            : t.performedBy.email,
+        }
+      : null;
+
+  const deductionMap  = Object.fromEntries(txns.filter((t) => t.type === "deduction").map((t) => [t.leaveId ?? "", t]));
+  const cancelledMap  = Object.fromEntries(txns.filter((t) => t.type === "cancelled").map((t) => [t.leaveId ?? "", t]));
 
   return leaves.map((l) => {
-    const t = txnMap[l.id] ?? null;
+    const t = deductionMap[l.id] ?? null;
+    const c = cancelledMap[l.id] ?? null;
     return {
       ...l,
       transaction: t
@@ -114,15 +128,15 @@ async function _attachTransactions(leaves) {
             hours:         Number(t.hours),
             balanceBefore: Number(t.balanceBefore),
             balanceAfter:  Number(t.balanceAfter),
-            performedBy: t.performedBy
-              ? {
-                  id:   t.performedBy.id,
-                  name: t.performedBy.profile
-                    ? `${t.performedBy.profile.firstName || ""} ${t.performedBy.profile.lastName || ""}`.trim()
-                    : t.performedBy.email,
-                }
-              : null,
+            performedBy:   _resolvePerformedBy(t),
           }
+        : null,
+      // Populated for both self-cancel (leaveController cancelLeave) and
+      // punch-wins conflict cancellation (Cutoff/leaveConflictCredit) — both
+      // paths write a "cancelled" LeaveTransaction with its own createdAt.
+      cancelledAt: c?.createdAt ? c.createdAt.toISOString() : null,
+      cancellation: c
+        ? { performedBy: _resolvePerformedBy(c), note: c.note ?? null }
         : null,
     };
   });

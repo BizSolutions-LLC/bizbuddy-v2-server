@@ -21,6 +21,7 @@ const { StrategyError }                  = require("./daycareCutoffStrategy");
 const { fetchScheduleForDate }           = require("./shiftLookupUtils");
 const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff }        = require("./cutoffOtService");
+const { creditLeaveOnConflict }          = require("./leaveConflictCredit");
 
 // ── Raw-mode grace credit ──────────────────────────────────────────────────────
 // Raw approval preserves the actual punch (TimeLog.timeIn/timeOut untouched), but
@@ -422,7 +423,9 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     },
   });
 
-  // Cancel leave + return credit (best-effort)
+  // Cancel leave + return real credit (best-effort — don't fail the whole
+  // operation; a leave-cancellation failure shouldn't roll back the punch
+  // approval that already happened above).
   let leaveCancelled = false;
   try {
     const leave = await prisma.leave.findFirst({
@@ -435,39 +438,13 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     });
 
     if (leave) {
-      await prisma.leave.update({
-        where: { id: leave.id },
-        data: {
-          status:           "cancelled",
-          approverComments: "Cancelled — conflict resolved in favour of punch during cutoff review",
-        },
-      });
-
-      try {
-        const leavePolicy = await prisma.leavePolicy.findFirst({
-          where: { companyId, leaveType: leave.leaveType },
-        });
-        if (leavePolicy) {
-          const leaveBalance = await prisma.leaveBalance.findFirst({
-            where: { userId: timeLog.userId, policyId: leavePolicy.id },
-          });
-          if (leaveBalance) {
-            await prisma.leaveBalance.update({
-              where: { id: leaveBalance.id },
-              data:  { balanceHours: { increment: 8 } },
-            });
-            console.log("[✅ B&C] Leave credit returned to", timeLog.userId);
-          }
-        }
-      } catch (creditErr) {
-        console.warn("[⚠️  B&C] Could not return leave credit:", creditErr.message);
-      }
-
-      leaveCancelled = true;
-      console.log("[✅ B&C] Leave cancelled", leave.id);
+      leaveCancelled = await prisma.$transaction((tx) =>
+        creditLeaveOnConflict(tx, { leave, userId })
+      );
+      if (leaveCancelled) console.log("[✅ B&C] Leave cancelled and credit reconciled", leave.id);
     }
   } catch (leaveErr) {
-    console.warn("[⚠️  B&C] Could not cancel leave record:", leaveErr.message);
+    console.error("[⚠️  B&C] Could not cancel leave record:", leaveErr.message);
   }
 
   console.log("[✅ B&C] Conflict resolved — punch honored", approvalId);
