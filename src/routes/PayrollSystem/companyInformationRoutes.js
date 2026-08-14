@@ -12,6 +12,10 @@ const {
   createDeductionType,
   updateDeductionType,
   deleteDeductionType,
+  listFederalTaxRates,
+  createFederalTaxRate,
+  updateFederalTaxRate,
+  deleteFederalTaxRate,
 } = require("@controllers/PayrollSystem/companyInformationController");
 const authenticate = require("@middlewares/authMiddleware");
 
@@ -29,5 +33,11 @@ router.delete("/earning-types/:id", authenticate, deleteEarningType);
 router.post("/deduction-types", authenticate, createDeductionType);
 router.put("/deduction-types/:id", authenticate, updateDeductionType);
 router.delete("/deduction-types/:id", authenticate, deleteDeductionType);
+
+// Federal Tax Rates (brackets, per company)
+router.get("/federal-tax-rates", authenticate, listFederalTaxRates);
+router.post("/federal-tax-rates", authenticate, createFederalTaxRate);
+router.put("/federal-tax-rates/:id", authenticate, updateFederalTaxRate);
+router.delete("/federal-tax-rates/:id", authenticate, deleteFederalTaxRate);
 
 module.exports = router;
