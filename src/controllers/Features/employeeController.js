@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const { prisma } = require("@config/connection");
 const { sendMail } = require("@utils/mailer");
 const { renderWelcome } = require("@emails/renderTemplate");
+const { validateSupervisorId } = require("@utils/supervisorValidation");
 
 /**
  * Generate a unique username in the format: first initial + last name (e.g. ccorcuera)
@@ -159,6 +160,11 @@ const createEmployee = async (req, res) => {
       if (isNaN(parsedProbationEndDate.getTime())) return res.status(400).json({ error: "Invalid probation end date format." });
     }
 
+    if (supervisorId) {
+      const supervisorError = await validateSupervisorId({ supervisorId, companyId: targetCompanyId });
+      if (supervisorError) return res.status(400).json({ error: supervisorError });
+    }
+
     // Build employment detail data object
     const employmentDetailData = {};
     if (jobTitle) employmentDetailData.jobTitle = jobTitle.trim();
@@ -278,9 +284,9 @@ const updateEmployee = async (req, res) => {
     const id = req.params.id;
     let { 
       email, password, role, firstName, lastName, phone, status, 
-      companyId, departmentId, hireDate, employeeId, 
+      companyId, departmentId, hireDate, employeeId,
       jobTitle, employmentStatus, exemptStatus, employmentType,
-      workLocation, probationEndDate, timeZone, isDriver,
+      workLocation, probationEndDate, timeZone, isDriver, supervisorId,
     } = req.body;
 
     const employee = await prisma.user.findFirst({
@@ -415,6 +421,30 @@ const updateEmployee = async (req, res) => {
     if (typeof isDriver === "boolean") {
       employmentDetailData.isDriver = isDriver;
     }
+    if (supervisorId !== undefined) {
+      // BB-055: supervisor assignment is edit-only — it must not silently create
+      // a bare EmploymentDetail row for an employee who doesn't have one yet.
+      const existingDetail = await prisma.employmentDetail.findUnique({
+        where: { userId: id },
+        select: { id: true },
+      });
+
+      if (!supervisorId || supervisorId === 'none') {
+        if (existingDetail) employmentDetailData.supervisorId = null;
+      } else if (!existingDetail) {
+        return res.status(400).json({
+          error: "Set up this employee's employment details before assigning a supervisor.",
+        });
+      } else {
+        const supervisorError = await validateSupervisorId({
+          supervisorId,
+          companyId: targetCompanyId,
+          targetUserId: id,
+        });
+        if (supervisorError) return res.status(400).json({ error: supervisorError });
+        employmentDetailData.supervisorId = supervisorId;
+      }
+    }
 
     const updatedEmployee = await prisma.user.update({
       where: { id },
@@ -451,7 +481,13 @@ const updateEmployee = async (req, res) => {
         profile: { select: { firstName: true, lastName: true, phoneNumber: true, username: true } },
         company: { select: { id: true, name: true } },
         department: { select: { id: true, name: true } },
-        employmentDetail: true,
+        employmentDetail: {
+          include: {
+            supervisor: {
+              select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } },
+            },
+          },
+        },
       },
     });
 
@@ -727,6 +763,14 @@ const bulkCreateEmployees = async (req, res) => {
           parsedProbationEndDate = new Date(probationEndDate);
           if (isNaN(parsedProbationEndDate.getTime())) {
             failed.push({ index, email: cleanedEmail, reason: "Invalid probation end date format." });
+            continue;
+          }
+        }
+
+        if (supervisorId) {
+          const supervisorError = await validateSupervisorId({ supervisorId, companyId: targetCompanyId });
+          if (supervisorError) {
+            failed.push({ index, email: cleanedEmail, reason: supervisorError });
             continue;
           }
         }
