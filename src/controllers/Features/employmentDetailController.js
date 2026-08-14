@@ -2,6 +2,7 @@
 /* eslint-disable consistent-return */
 const { prisma } = require("@config/connection");
 const { getVisibleCutoffPeriods } = require("@services/Cutoff/cutoffPeriodVisibilityService");
+const { validateSupervisorId } = require("@utils/supervisorValidation");
 
 const buildPayload = (body) => ({
   jobTitle: body.jobTitle?.trim(),
@@ -38,6 +39,14 @@ const getMyEmploymentDetails = async (req, res) => {
 const upsertMyEmploymentDetails = async (req, res) => {
   try {
     const data = buildPayload(req.body);
+
+    const supervisorError = await validateSupervisorId({
+      supervisorId: data.supervisorId,
+      companyId: req.user.companyId,
+      targetUserId: req.user.id,
+    });
+    if (supervisorError) return res.status(400).json({ error: supervisorError });
+
     const detail = await prisma.employmentDetail.upsert({
       where: { userId: req.user.id },
       create: { userId: req.user.id, ...data },
@@ -83,6 +92,13 @@ const upsertEmploymentDetailsById = async (req, res) => {
     }
 
     const data = buildPayload(req.body);
+
+    const supervisorError = await validateSupervisorId({
+      supervisorId: data.supervisorId,
+      companyId: employee.companyId,
+      targetUserId: id,
+    });
+    if (supervisorError) return res.status(400).json({ error: supervisorError });
 
     const detail = await prisma.employmentDetail.upsert({
       where: { userId: id },
