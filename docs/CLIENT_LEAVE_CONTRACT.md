@@ -355,7 +355,7 @@ An employee with 2+ shifts on the same day (e.g. Driver AM and Driver PM) can no
 
 `GET /api/company-settings` and its `PATCH` gain `leaveConflictAutoRevert: boolean`, **default `false`** (today's fully-manual flow, unchanged unless explicitly turned on).
 
-- This is a **trigger-only** setting — it does not change what happens on conflict, only who/what initiates it. The existing punch-wins mechanics (the whole `Leave` request gets cancelled, a flat 8h is refunded to balance, no ledger entry) are unchanged and not part of this ticket.
+- This is a **trigger-only** setting — it does not change what happens on conflict, only who/what initiates it. The punch-wins mechanics (the whole `Leave` request gets cancelled, the real deducted hours are credited back to balance, a `cancelled` + `adjustment` ledger entry pair is written) are unchanged by this setting itself — BB-066 fixed those mechanics to credit the actual amount instead of a hardcoded flat 8h and to write a ledger entry, since this setting means the path can now fire without an admin in the loop.
 - When `true`, a detected punch-vs-leave conflict resolves automatically (in favor of the punch) instead of waiting for an admin's manual "Honor Punch" action in cutoff review.
 - **Practical effect for the cutoff review screen:** once a conflict auto-resolves, it will no longer appear as a pending `hasLeaveConflict: true` row needing action — it shows up already resolved (approval `status: "approved"`, associated leave `status: "cancelled"`). A read-only indicator of the setting (e.g. "Auto-revert: ON") is enough; no change needed to the existing "Honor Punch"/"Honor Leave" buttons, since auto-resolved conflicts won't reach that decision point at all.
 

@@ -14,6 +14,7 @@ const { recomputeOtForTimeLog,
 const { combineDateTime,
         fetchScheduleForDate }   = require("./shiftLookupUtils");
 const { isDriverSegmentPunchType, lastDriverSegment } = require("@utils/punchTypeUtils");
+const { creditLeaveOnConflict } = require("./leaveConflictCredit");
 
 // ── Strategy-level HTTP error ─────────────────────────────────────────────────
 class StrategyError extends Error {
@@ -764,7 +765,9 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     console.error("[OT] recompute failed after conflict resolve:", e.message)
   );
 
-  // Cancel leave + return credit (best-effort — don't fail the whole operation)
+  // Cancel leave + return real credit (best-effort — don't fail the whole
+  // operation; a leave-cancellation failure shouldn't roll back the punch
+  // approval that already happened above).
   let leaveCancelled = false;
   try {
     const leave = await prisma.leave.findFirst({
@@ -777,39 +780,13 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     });
 
     if (leave) {
-      await prisma.leave.update({
-        where: { id: leave.id },
-        data: {
-          status:           "cancelled",
-          approverComments: "Cancelled — conflict resolved in favour of punch during cutoff review",
-        },
-      });
-
-      try {
-        const leavePolicy = await prisma.leavePolicy.findFirst({
-          where: { companyId, leaveType: leave.leaveType },
-        });
-        if (leavePolicy) {
-          const leaveBalance = await prisma.leaveBalance.findFirst({
-            where: { userId: timeLog.userId, policyId: leavePolicy.id },
-          });
-          if (leaveBalance) {
-            await prisma.leaveBalance.update({
-              where: { id: leaveBalance.id },
-              data:  { balanceHours: { increment: 8 } },
-            });
-            console.log("[✅ DayCare] Leave credit returned to", timeLog.userId);
-          }
-        }
-      } catch (creditErr) {
-        console.warn("[⚠️  DayCare] Could not return leave credit:", creditErr.message);
-      }
-
-      leaveCancelled = true;
-      console.log("[✅ DayCare] Leave cancelled", leave.id);
+      leaveCancelled = await prisma.$transaction((tx) =>
+        creditLeaveOnConflict(tx, { leave, userId })
+      );
+      if (leaveCancelled) console.log("[✅ DayCare] Leave cancelled and credit reconciled", leave.id);
     }
   } catch (leaveErr) {
-    console.warn("[⚠️  DayCare] Could not cancel leave record:", leaveErr.message);
+    console.error("[⚠️  DayCare] Could not cancel leave record:", leaveErr.message);
   }
 
   console.log("[✅ DayCare] Conflict resolved — punch honored", approvalId);
