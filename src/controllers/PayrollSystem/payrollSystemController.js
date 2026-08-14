@@ -5,6 +5,18 @@ const generatePayslipPDF = require('@utils/generatePayslipPDF');
 const calculateYTD = require('@utils/calculateYTD');
 const { createNotification } = require('@services/notificationService');
 
+// Fallback rates (as decimal fractions) used only if a company has no
+// PayrollConfiguration row yet — kept in sync with the DEDUCTION_RATE_DEFAULTS
+// percentage defaults in companyInformationController.js / deductionsController.js.
+// Federal no longer has a flat fallback rate — it's bracket-based, see
+// DEFAULT_FEDERAL_TAX_BRACKETS in companyInformationController.js.
+const DEFAULT_TAX_RATES = {
+  stateRate: 0.05,
+  ficaRate: 0.062,
+  medicareRate: 0.0145,
+  sdiRate: 0.011,
+};
+
 exports.getEmployeeList = async (req, res) => {
   try {
     const { companyId } = req.user;
@@ -157,6 +169,50 @@ exports.savePayrollRun = async (req, res) => {
       });
     }
 
+    // Load this company's configured deduction rates (stored as percentages,
+    // e.g. 12 for 12%) and convert to the decimal fractions taxRatesUsed
+    // expects. Falls back to DEFAULT_TAX_RATES if no config row exists yet.
+    const [payrollConfig, federalTaxRates] = await Promise.all([
+      prisma.payrollConfiguration.findUnique({
+        where: { companyId },
+        select: {
+          stateIncomeTaxRate: true,
+          ficaRate: true,
+          medicareRate: true,
+          sdiRate: true,
+        },
+      }),
+      // Federal is bracket-based, not a flat rate — record whatever brackets
+      // are currently enabled for this company at the time of save.
+      prisma.federalTaxRate.findMany({
+        where: { companyId, enabled: true },
+        select: {
+          filingStatus: true,
+          minAnnualIncome: true,
+          maxAnnualIncome: true,
+          rate: true,
+        },
+        orderBy: [{ filingStatus: 'asc' }, { minAnnualIncome: 'asc' }],
+      }),
+    ]);
+
+    const taxRatesUsed = {
+      federalBrackets: federalTaxRates.map((b) => ({
+        filingStatus: b.filingStatus,
+        minAnnualIncome: parseFloat(b.minAnnualIncome),
+        maxAnnualIncome: b.maxAnnualIncome != null ? parseFloat(b.maxAnnualIncome) : null,
+        rate: parseFloat(b.rate) / 100,
+      })),
+      ...(payrollConfig
+        ? {
+            stateRate: parseFloat(payrollConfig.stateIncomeTaxRate) / 100,
+            ficaRate: parseFloat(payrollConfig.ficaRate) / 100,
+            medicareRate: parseFloat(payrollConfig.medicareRate) / 100,
+            sdiRate: parseFloat(payrollConfig.sdiRate) / 100,
+          }
+        : DEFAULT_TAX_RATES),
+    };
+
     // Build frozen JSON snapshot
     const payrollSnapshot = {
       payDate,
@@ -196,14 +252,9 @@ exports.savePayrollRun = async (req, res) => {
       deductionTypes: deductionTypes.filter(dt => dt.enabled !== false),
       totals,
       
-      // Tax rates used (for historical record)
-      taxRatesUsed: {
-        federalRate: 0.12,
-        stateRate: 0.05,
-        ficaRate: 0.062,
-        medicareRate: 0.0145,
-        sdiRate: 0.011,
-      },
+      // Tax rates used (for historical record) — sourced from this
+      // company's PayrollConfiguration, not hardcoded.
+      taxRatesUsed,
       
       systemVersion: '1.0',
     };

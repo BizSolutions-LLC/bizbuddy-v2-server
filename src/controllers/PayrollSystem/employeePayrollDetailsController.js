@@ -215,7 +215,10 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
       });
     }
 
-    // Validate maritalStatus
+    // Validate maritalStatus — unchanged. "married" is treated as equivalent
+    // to the "married_filing_separately" FederalTaxRate bracket for federal
+    // withholding purposes, but stays "married" here; no employee-facing
+    // change.
     const validMaritalStatuses = ["single", "married", "head_of_household"];
     if (maritalStatus && !validMaritalStatuses.includes(maritalStatus)) {
       return res.status(400).json({

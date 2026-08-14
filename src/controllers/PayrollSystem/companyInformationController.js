@@ -5,7 +5,9 @@ const { prisma } = require("@config/connection");
 const VALIDATION_RULES = {
   MAX_LABEL_LENGTH: 100,
   MAX_DEDUCTION_TYPES: 50,
+  MAX_FEDERAL_TAX_RATES: 50,
   VALID_PAY_FREQUENCIES: ['weekly', 'biweekly', 'semimonthly', 'monthly'],
+  VALID_FILING_STATUSES: ['single', 'married_filing_separately', 'head_of_household'],
 };
 
 const validateCode = (code) => {
@@ -34,6 +36,81 @@ const validatePayFrequency = (frequency) => {
   }
   return { valid: true };
 };
+
+const DEDUCTION_RATE_DEFAULTS = {
+  stateIncomeTaxRate: 5,
+  ficaRate: 6.2,
+  medicareRate: 1.45,
+  sdiRate: 1.1,
+};
+
+const validatePercentageRate = (value, fieldName) => {
+  const rate = parseFloat(value);
+  if (Number.isNaN(rate) || rate < 0 || rate > 100) {
+    return {
+      valid: false,
+      error: `A valid ${fieldName} between 0 and 100 is required.`,
+    };
+  }
+  return { valid: true, rate };
+};
+
+const validateFilingStatus = (filingStatus) => {
+  if (!VALIDATION_RULES.VALID_FILING_STATUSES.includes(filingStatus)) {
+    return {
+      valid: false,
+      error: `filingStatus must be one of: ${VALIDATION_RULES.VALID_FILING_STATUSES.join(', ')}`,
+    };
+  }
+  return { valid: true };
+};
+
+const validateAnnualIncomeRange = (minAnnualIncome, maxAnnualIncome) => {
+  const min = parseFloat(minAnnualIncome);
+  if (Number.isNaN(min) || min < 0) {
+    return { valid: false, error: 'A valid non-negative minAnnualIncome is required.' };
+  }
+
+  let max = null;
+  if (maxAnnualIncome !== undefined && maxAnnualIncome !== null) {
+    max = parseFloat(maxAnnualIncome);
+    if (Number.isNaN(max) || max <= min) {
+      return { valid: false, error: 'maxAnnualIncome must be greater than minAnnualIncome, or omitted for the top bracket.' };
+    }
+  }
+
+  return { valid: true, min, max };
+};
+
+// Default federal bracket seed data (Single / Head of Household / Married
+// Filing Separately only, per business decision) — used to give a new
+// company sensible starting brackets instead of an empty table.
+const DEFAULT_FEDERAL_TAX_BRACKETS = [
+  // Single
+  { filingStatus: 'single', minAnnualIncome: 0, maxAnnualIncome: 12400, rate: 10 },
+  { filingStatus: 'single', minAnnualIncome: 12401, maxAnnualIncome: 50400, rate: 12 },
+  { filingStatus: 'single', minAnnualIncome: 50401, maxAnnualIncome: 105700, rate: 22 },
+  { filingStatus: 'single', minAnnualIncome: 105701, maxAnnualIncome: 201775, rate: 24 },
+  { filingStatus: 'single', minAnnualIncome: 201776, maxAnnualIncome: 256225, rate: 32 },
+  { filingStatus: 'single', minAnnualIncome: 256226, maxAnnualIncome: 640600, rate: 35 },
+  { filingStatus: 'single', minAnnualIncome: 640601, maxAnnualIncome: null, rate: 37 },
+  // Head of Household
+  { filingStatus: 'head_of_household', minAnnualIncome: 0, maxAnnualIncome: 17700, rate: 10 },
+  { filingStatus: 'head_of_household', minAnnualIncome: 17701, maxAnnualIncome: 67450, rate: 12 },
+  { filingStatus: 'head_of_household', minAnnualIncome: 67451, maxAnnualIncome: 105700, rate: 22 },
+  { filingStatus: 'head_of_household', minAnnualIncome: 105701, maxAnnualIncome: 201750, rate: 24 },
+  { filingStatus: 'head_of_household', minAnnualIncome: 201751, maxAnnualIncome: 256200, rate: 32 },
+  { filingStatus: 'head_of_household', minAnnualIncome: 256201, maxAnnualIncome: 640600, rate: 35 },
+  { filingStatus: 'head_of_household', minAnnualIncome: 640601, maxAnnualIncome: null, rate: 37 },
+  // Married Filing Separately
+  { filingStatus: 'married_filing_separately', minAnnualIncome: 0, maxAnnualIncome: 12400, rate: 10 },
+  { filingStatus: 'married_filing_separately', minAnnualIncome: 12401, maxAnnualIncome: 50400, rate: 12 },
+  { filingStatus: 'married_filing_separately', minAnnualIncome: 50401, maxAnnualIncome: 105700, rate: 22 },
+  { filingStatus: 'married_filing_separately', minAnnualIncome: 105701, maxAnnualIncome: 201775, rate: 24 },
+  { filingStatus: 'married_filing_separately', minAnnualIncome: 201776, maxAnnualIncome: 256225, rate: 32 },
+  { filingStatus: 'married_filing_separately', minAnnualIncome: 256226, maxAnnualIncome: 384350, rate: 35 },
+  { filingStatus: 'married_filing_separately', minAnnualIncome: 384351, maxAnnualIncome: null, rate: 37 },
+];
 
 // ============================================
 // GET COMPANY SETTINGS (Everything in one call)
@@ -86,6 +163,7 @@ exports.getCompanySettings = async (req, res) => {
           futaEnabled: false,
           sutaEnabled: false,
           futaRate: 7,
+          ...DEDUCTION_RATE_DEFAULTS,
         }
       });
     }
@@ -125,6 +203,10 @@ exports.getCompanySettings = async (req, res) => {
           futaEnabled: payrollConfig.futaEnabled,
           sutaEnabled: payrollConfig.sutaEnabled,
           futaRate: parseFloat(payrollConfig.futaRate),
+          stateIncomeTaxRate: parseFloat(payrollConfig.stateIncomeTaxRate),
+          ficaRate: parseFloat(payrollConfig.ficaRate),
+          medicareRate: parseFloat(payrollConfig.medicareRate),
+          sdiRate: parseFloat(payrollConfig.sdiRate),
         },
         earningTypes: earningTypes.map(et => ({
           id: et.id,
@@ -161,7 +243,18 @@ exports.getCompanySettings = async (req, res) => {
 exports.updatePayrollConfig = async (req, res) => {
   try {
     const { companyId } = req.user;
-    const { payFrequency, ptoEnabled, ptoLabel, futaEnabled, sutaEnabled, futaRate } = req.body;
+    const {
+      payFrequency,
+      ptoEnabled,
+      ptoLabel,
+      futaEnabled,
+      sutaEnabled,
+      futaRate,
+      stateIncomeTaxRate,
+      ficaRate,
+      medicareRate,
+      sdiRate,
+    } = req.body;
 
     if (!companyId) {
       return res.status(400).json({ 
@@ -192,8 +285,28 @@ exports.updatePayrollConfig = async (req, res) => {
       }
     }
 
+    // Validate deduction tax rates if provided
+    const deductionRateInputs = {
+      stateIncomeTaxRate,
+      ficaRate,
+      medicareRate,
+      sdiRate,
+    };
+    const validatedDeductionRates = {};
+    for (const [field, value] of Object.entries(deductionRateInputs)) {
+      if (value === undefined) continue;
+      const validation = validatePercentageRate(value, field);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error,
+        });
+      }
+      validatedDeductionRates[field] = validation.rate;
+    }
+
     // Build update data
-    const updateData = {};
+    const updateData = { ...validatedDeductionRates };
     if (payFrequency) updateData.payFrequency = payFrequency.toLowerCase();
     if (ptoEnabled !== undefined) updateData.ptoEnabled = Boolean(ptoEnabled);
     if (ptoLabel) updateData.ptoLabel = ptoLabel.trim();
@@ -225,6 +338,8 @@ exports.updatePayrollConfig = async (req, res) => {
           futaRate !== undefined && !Number.isNaN(parseFloat(futaRate))
             ? parseFloat(futaRate)
             : 7,
+        ...DEDUCTION_RATE_DEFAULTS,
+        ...validatedDeductionRates,
       }
     });
 
@@ -239,6 +354,10 @@ exports.updatePayrollConfig = async (req, res) => {
         futaEnabled: payrollConfig.futaEnabled,
         sutaEnabled: payrollConfig.sutaEnabled,
         futaRate: parseFloat(payrollConfig.futaRate),
+        stateIncomeTaxRate: parseFloat(payrollConfig.stateIncomeTaxRate),
+        ficaRate: parseFloat(payrollConfig.ficaRate),
+        medicareRate: parseFloat(payrollConfig.medicareRate),
+        sdiRate: parseFloat(payrollConfig.sdiRate),
       }
     });
 
@@ -761,6 +880,274 @@ exports.deleteDeductionType = async (req, res) => {
     });
   } catch (err) {
     console.error("deleteDeductionType error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
+const formatFederalTaxRate = (rate) => ({
+  id: rate.id,
+  filingStatus: rate.filingStatus,
+  minAnnualIncome: parseFloat(rate.minAnnualIncome),
+  maxAnnualIncome: rate.maxAnnualIncome != null ? parseFloat(rate.maxAnnualIncome) : null,
+  rate: parseFloat(rate.rate),
+  enabled: rate.enabled,
+});
+
+// ============================================
+// LIST FEDERAL TAX RATES (Bracket table, per company)
+// ============================================
+
+exports.listFederalTaxRates = async (req, res) => {
+  try {
+    const { companyId } = req.user;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Company ID is required.",
+      });
+    }
+
+    const orderBy = [{ filingStatus: 'asc' }, { minAnnualIncome: 'asc' }];
+
+    let rates = await prisma.federalTaxRate.findMany({
+      where: { companyId },
+      orderBy,
+    });
+
+    if (rates.length === 0) {
+      // Seed sensible defaults so a company isn't starting from an empty table
+      await prisma.federalTaxRate.createMany({
+        data: DEFAULT_FEDERAL_TAX_BRACKETS.map((bracket) => ({
+          companyId,
+          ...bracket,
+        })),
+      });
+      rates = await prisma.federalTaxRate.findMany({
+        where: { companyId },
+        orderBy,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Federal tax rates retrieved successfully",
+      data: rates.map(formatFederalTaxRate),
+    });
+  } catch (err) {
+    console.error("listFederalTaxRates error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
+// ============================================
+// CREATE FEDERAL TAX RATE (Bracket row)
+// ============================================
+
+exports.createFederalTaxRate = async (req, res) => {
+  try {
+    const { companyId } = req.user;
+    const { filingStatus, minAnnualIncome, maxAnnualIncome, rate } = req.body;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Company ID is required.",
+      });
+    }
+
+    const filingStatusValidation = validateFilingStatus(filingStatus);
+    if (!filingStatusValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: filingStatusValidation.error,
+      });
+    }
+
+    const rangeValidation = validateAnnualIncomeRange(minAnnualIncome, maxAnnualIncome);
+    if (!rangeValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: rangeValidation.error,
+      });
+    }
+
+    const rateValidation = validatePercentageRate(rate, 'rate');
+    if (!rateValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: rateValidation.error,
+      });
+    }
+
+    const count = await prisma.federalTaxRate.count({ where: { companyId } });
+    if (count >= VALIDATION_RULES.MAX_FEDERAL_TAX_RATES) {
+      return res.status(400).json({
+        success: false,
+        message: `Maximum ${VALIDATION_RULES.MAX_FEDERAL_TAX_RATES} federal tax rate brackets allowed per company.`,
+      });
+    }
+
+    const created = await prisma.federalTaxRate.create({
+      data: {
+        companyId,
+        filingStatus,
+        minAnnualIncome: rangeValidation.min,
+        maxAnnualIncome: rangeValidation.max,
+        rate: rateValidation.rate,
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Federal tax rate bracket created successfully",
+      data: formatFederalTaxRate(created),
+    });
+  } catch (err) {
+    console.error("createFederalTaxRate error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
+// ============================================
+// UPDATE FEDERAL TAX RATE (Bracket row)
+// ============================================
+
+exports.updateFederalTaxRate = async (req, res) => {
+  try {
+    const { companyId } = req.user;
+    const { id } = req.params;
+    const { filingStatus, minAnnualIncome, maxAnnualIncome, rate, enabled } = req.body;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Company ID is required.",
+      });
+    }
+
+    const existing = await prisma.federalTaxRate.findFirst({
+      where: { id, companyId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Federal tax rate bracket not found.",
+      });
+    }
+
+    const updateData = {};
+
+    if (filingStatus !== undefined) {
+      const filingStatusValidation = validateFilingStatus(filingStatus);
+      if (!filingStatusValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: filingStatusValidation.error,
+        });
+      }
+      updateData.filingStatus = filingStatus;
+    }
+
+    if (minAnnualIncome !== undefined || maxAnnualIncome !== undefined) {
+      const rangeValidation = validateAnnualIncomeRange(
+        minAnnualIncome !== undefined ? minAnnualIncome : existing.minAnnualIncome,
+        maxAnnualIncome !== undefined ? maxAnnualIncome : existing.maxAnnualIncome
+      );
+      if (!rangeValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: rangeValidation.error,
+        });
+      }
+      updateData.minAnnualIncome = rangeValidation.min;
+      updateData.maxAnnualIncome = rangeValidation.max;
+    }
+
+    if (rate !== undefined) {
+      const rateValidation = validatePercentageRate(rate, 'rate');
+      if (!rateValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: rateValidation.error,
+        });
+      }
+      updateData.rate = rateValidation.rate;
+    }
+
+    if (enabled !== undefined) updateData.enabled = Boolean(enabled);
+
+    const updated = await prisma.federalTaxRate.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Federal tax rate bracket updated successfully",
+      data: formatFederalTaxRate(updated),
+    });
+  } catch (err) {
+    console.error("updateFederalTaxRate error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
+// ============================================
+// DELETE FEDERAL TAX RATE (Soft Delete)
+// ============================================
+
+exports.deleteFederalTaxRate = async (req, res) => {
+  try {
+    const { companyId } = req.user;
+    const { id } = req.params;
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Company ID is required.",
+      });
+    }
+
+    const existing = await prisma.federalTaxRate.findFirst({
+      where: { id, companyId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Federal tax rate bracket not found.",
+      });
+    }
+
+    await prisma.federalTaxRate.update({
+      where: { id },
+      data: { enabled: false },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Federal tax rate bracket disabled successfully",
+    });
+  } catch (err) {
+    console.error("deleteFederalTaxRate error:", err);
     return res.status(500).json({
       success: false,
       message: "Internal server error.",
