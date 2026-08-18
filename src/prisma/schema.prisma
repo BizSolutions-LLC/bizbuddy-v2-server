@@ -302,6 +302,8 @@ model EmployeePayrollDetails {
   payRate                  Decimal       @default(0) @db.Decimal(10, 2)
   additionalFedIncomeTax   Decimal       @default(0) @db.Decimal(10, 2)
   additionalStateIncomeTax Decimal       @default(0) @db.Decimal(10, 2)
+  customFederalRate        Decimal?      @db.Decimal(5, 2)
+  customStateRate          Decimal?      @db.Decimal(5, 2)
   ptoHoursBalance          Decimal       @default(0) @db.Decimal(10, 2)
   futaBalance              Decimal       @default(7000) @db.Decimal(10, 2)
   skipFicaMedicare         Boolean       @default(false)
