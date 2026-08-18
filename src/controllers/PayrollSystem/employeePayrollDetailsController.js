@@ -20,6 +20,22 @@ const validateNullablePercentageRate = (value, fieldName) => {
   return { valid: true, rate };
 };
 
+// Validates the optional per-employee driver pay rate. `null` is meaningful
+// here too — it marks the employee as not having a driver rate (e.g. not a
+// driver), distinct from `0`. Only call this when the field is present in
+// the request body (`!== undefined`); omitted fields should be left alone.
+const validateNullableDriverPayRate = (value) => {
+  if (value === null) return { valid: true, rate: null };
+  const rate = parseFloat(value);
+  if (Number.isNaN(rate) || rate < 0) {
+    return {
+      valid: false,
+      error: "driverPayRate must be a non-negative number, or null to clear it.",
+    };
+  }
+  return { valid: true, rate };
+};
+
 // ============================================
 // GET EMPLOYEE PAYROLL DETAILS
 // ============================================
@@ -128,6 +144,7 @@ exports.getEmployeePayrollDetails = async (req, res) => {
             maritalStatus: "single",
             payType: "hourly",
             payRate: 0,
+            driverPayRate: null,
             additionalFedIncomeTax: 0,
             additionalStateIncomeTax: 0,
             customFederalRate: null,
@@ -171,6 +188,10 @@ exports.getEmployeePayrollDetails = async (req, res) => {
           maritalStatus: payrollDetails.maritalStatus,
           payType: payrollDetails.payType,
           payRate: parseFloat(payrollDetails.payRate),
+          driverPayRate:
+            payrollDetails.driverPayRate != null
+              ? parseFloat(payrollDetails.driverPayRate)
+              : null,
           additionalFedIncomeTax: parseFloat(
             payrollDetails.additionalFedIncomeTax,
           ),
@@ -215,6 +236,7 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
       maritalStatus,
       payType,
       payRate,
+      driverPayRate,
       additionalFedIncomeTax,
       additionalStateIncomeTax,
       customFederalRate,
@@ -296,11 +318,26 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
       }
     }
 
+    // Validate driverPayRate — null is allowed and means the employee has no
+    // driver rate set (e.g. not a driver).
+    let driverPayRateValidation;
+    if (driverPayRate !== undefined) {
+      driverPayRateValidation = validateNullableDriverPayRate(driverPayRate);
+      if (!driverPayRateValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: driverPayRateValidation.error,
+        });
+      }
+    }
+
     // Build upsert data
     const payrollData = {};
     if (maritalStatus !== undefined) payrollData.maritalStatus = maritalStatus;
     if (payType !== undefined) payrollData.payType = payType;
     if (payRate !== undefined) payrollData.payRate = parseFloat(payRate) || 0;
+    if (driverPayRate !== undefined)
+      payrollData.driverPayRate = driverPayRateValidation.rate;
     if (additionalFedIncomeTax !== undefined)
       payrollData.additionalFedIncomeTax =
         parseFloat(additionalFedIncomeTax) || 0;
@@ -396,6 +433,10 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
           maritalStatus: updatedDetails.maritalStatus,
           payType: updatedDetails.payType,
           payRate: parseFloat(updatedDetails.payRate),
+          driverPayRate:
+            updatedDetails.driverPayRate != null
+              ? parseFloat(updatedDetails.driverPayRate)
+              : null,
           additionalFedIncomeTax: parseFloat(
             updatedDetails.additionalFedIncomeTax,
           ),
@@ -491,6 +532,7 @@ exports.resetEmployeePayrollDetails = async (req, res) => {
           maritalStatus: "single",
           payType: "hourly",
           payRate: 0,
+          driverPayRate: null,
           additionalFedIncomeTax: 0,
           additionalStateIncomeTax: 0,
           customFederalRate: null,
@@ -606,6 +648,7 @@ exports.getAllEmployeesWithPayrollDetails = async (req, res) => {
         maritalStatus: "single",
         payType: "hourly",
         payRate: 0,
+        driverPayRate: null,
         additionalFedIncomeTax: 0,
         additionalStateIncomeTax: 0,
         customFederalRate: null,
@@ -634,6 +677,10 @@ exports.getAllEmployeesWithPayrollDetails = async (req, res) => {
           maritalStatus: payrollDetails.maritalStatus,
           payType: payrollDetails.payType,
           payRate: parseFloat(payrollDetails.payRate || 0),
+          driverPayRate:
+            payrollDetails.driverPayRate != null
+              ? parseFloat(payrollDetails.driverPayRate)
+              : null,
           additionalFedIncomeTax: parseFloat(
             payrollDetails.additionalFedIncomeTax || 0,
           ),
