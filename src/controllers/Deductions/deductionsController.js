@@ -5,7 +5,6 @@ const { prisma } = require("@config/connection");
 const DEFAULT_FUTA_BALANCE = 7000;
 
 const DEDUCTION_RATE_DEFAULTS = {
-  stateIncomeTaxRate: 5,
   ficaRate: 6.2,
   medicareRate: 1.45,
   sdiRate: 1.1,
@@ -268,9 +267,10 @@ exports.updateFutaRate = async (req, res) => {
 };
 
 // ============================================
-// GET PAYROLL TAX RATES (State, FICA, Medicare, SDI)
-// Federal is bracket-based now — see federal-tax-rates endpoints in
-// companyInformationController.js instead of a flat rate here.
+// GET PAYROLL TAX RATES (FICA, Medicare, SDI)
+// Federal and State are bracket-based now — see federal-tax-rates and
+// state-tax-rates endpoints in companyInformationController.js instead of
+// a flat rate here.
 // ============================================
 
 exports.getPayrollTaxRates = async (req, res) => {
@@ -290,7 +290,6 @@ exports.getPayrollTaxRates = async (req, res) => {
       success: true,
       message: "Payroll tax rates retrieved successfully",
       data: {
-        stateIncomeTaxRate: parseFloat(payrollConfig.stateIncomeTaxRate),
         ficaRate: parseFloat(payrollConfig.ficaRate),
         medicareRate: parseFloat(payrollConfig.medicareRate),
         sdiRate: parseFloat(payrollConfig.sdiRate),
@@ -307,14 +306,13 @@ exports.getPayrollTaxRates = async (req, res) => {
 };
 
 // ============================================
-// UPDATE PAYROLL TAX RATES (State, FICA, Medicare, SDI)
+// UPDATE PAYROLL TAX RATES (FICA, Medicare, SDI)
 // ============================================
 
 exports.updatePayrollTaxRates = async (req, res) => {
   try {
     const { companyId } = req.user;
     const {
-      stateIncomeTaxRate,
       ficaRate,
       medicareRate,
       sdiRate,
@@ -328,7 +326,6 @@ exports.updatePayrollTaxRates = async (req, res) => {
     }
 
     const rateInputs = {
-      stateIncomeTaxRate,
       ficaRate,
       medicareRate,
       sdiRate,
@@ -338,7 +335,7 @@ exports.updatePayrollTaxRates = async (req, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "At least one of stateIncomeTaxRate, ficaRate, medicareRate, or sdiRate is required.",
+          "At least one of ficaRate, medicareRate, or sdiRate is required.",
       });
     }
 
@@ -375,7 +372,6 @@ exports.updatePayrollTaxRates = async (req, res) => {
       success: true,
       message: "Payroll tax rates updated successfully",
       data: {
-        stateIncomeTaxRate: parseFloat(payrollConfig.stateIncomeTaxRate),
         ficaRate: parseFloat(payrollConfig.ficaRate),
         medicareRate: parseFloat(payrollConfig.medicareRate),
         sdiRate: parseFloat(payrollConfig.sdiRate),

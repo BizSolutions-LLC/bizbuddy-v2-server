@@ -16,6 +16,10 @@ const {
   createFederalTaxRate,
   updateFederalTaxRate,
   deleteFederalTaxRate,
+  listStateTaxRates,
+  createStateTaxRate,
+  updateStateTaxRate,
+  deleteStateTaxRate,
 } = require("@controllers/PayrollSystem/companyInformationController");
 const authenticate = require("@middlewares/authMiddleware");
 
@@ -39,5 +43,11 @@ router.get("/federal-tax-rates", authenticate, listFederalTaxRates);
 router.post("/federal-tax-rates", authenticate, createFederalTaxRate);
 router.put("/federal-tax-rates/:id", authenticate, updateFederalTaxRate);
 router.delete("/federal-tax-rates/:id", authenticate, deleteFederalTaxRate);
+
+// State Tax Rates (brackets, per company)
+router.get("/state-tax-rates", authenticate, listStateTaxRates);
+router.post("/state-tax-rates", authenticate, createStateTaxRate);
+router.put("/state-tax-rates/:id", authenticate, updateStateTaxRate);
+router.delete("/state-tax-rates/:id", authenticate, deleteStateTaxRate);
 
 module.exports = router;

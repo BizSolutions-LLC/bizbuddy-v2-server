@@ -2,6 +2,24 @@
 
 const { prisma } = require("@config/connection");
 
+// Validates an optional flat percentage override (customFederalRate /
+// customStateRate). Unlike the other payroll fields, `null` is a
+// meaningful, explicit value here — it clears the override so the employee
+// falls back to the company's bracket-based FederalTaxRate /
+// StateIncomeTaxRate tables. Only call this when the field is present in
+// the request body (`!== undefined`); omitted fields should be left alone.
+const validateNullablePercentageRate = (value, fieldName) => {
+  if (value === null) return { valid: true, rate: null };
+  const rate = parseFloat(value);
+  if (Number.isNaN(rate) || rate < 0 || rate > 100) {
+    return {
+      valid: false,
+      error: `${fieldName} must be a number between 0 and 100, or null to clear it.`,
+    };
+  }
+  return { valid: true, rate };
+};
+
 // ============================================
 // GET EMPLOYEE PAYROLL DETAILS
 // ============================================
@@ -112,6 +130,8 @@ exports.getEmployeePayrollDetails = async (req, res) => {
             payRate: 0,
             additionalFedIncomeTax: 0,
             additionalStateIncomeTax: 0,
+            customFederalRate: null,
+            customStateRate: null,
             ptoHoursBalance: 0,
             futaBalance: 7000,
             skipFicaMedicare: false,
@@ -157,6 +177,14 @@ exports.getEmployeePayrollDetails = async (req, res) => {
           additionalStateIncomeTax: parseFloat(
             payrollDetails.additionalStateIncomeTax,
           ),
+          customFederalRate:
+            payrollDetails.customFederalRate != null
+              ? parseFloat(payrollDetails.customFederalRate)
+              : null,
+          customStateRate:
+            payrollDetails.customStateRate != null
+              ? parseFloat(payrollDetails.customStateRate)
+              : null,
           ptoHoursBalance: parseFloat(payrollDetails.ptoHoursBalance),
           futaBalance: parseFloat(payrollDetails.futaBalance),
           skipFicaMedicare: payrollDetails.skipFicaMedicare,
@@ -189,6 +217,8 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
       payRate,
       additionalFedIncomeTax,
       additionalStateIncomeTax,
+      customFederalRate,
+      customStateRate,
       ptoHoursBalance,
       skipFicaMedicare,
       withCalSavers,
@@ -216,9 +246,9 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
     }
 
     // Validate maritalStatus — unchanged. "married" is treated as equivalent
-    // to the "married_filing_separately" FederalTaxRate bracket for federal
-    // withholding purposes, but stays "married" here; no employee-facing
-    // change.
+    // to the "married_filing_separately" bracket for both FederalTaxRate and
+    // StateIncomeTaxRate withholding purposes, but stays "married" here; no
+    // employee-facing change.
     const validMaritalStatuses = ["single", "married", "head_of_household"];
     if (maritalStatus && !validMaritalStatuses.includes(maritalStatus)) {
       return res.status(400).json({
@@ -236,6 +266,36 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
       });
     }
 
+    // Validate custom rate overrides — null is allowed and means "clear the
+    // override, use the company's bracket tables for this employee."
+    let customFederalRateValidation;
+    if (customFederalRate !== undefined) {
+      customFederalRateValidation = validateNullablePercentageRate(
+        customFederalRate,
+        "customFederalRate",
+      );
+      if (!customFederalRateValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: customFederalRateValidation.error,
+        });
+      }
+    }
+
+    let customStateRateValidation;
+    if (customStateRate !== undefined) {
+      customStateRateValidation = validateNullablePercentageRate(
+        customStateRate,
+        "customStateRate",
+      );
+      if (!customStateRateValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: customStateRateValidation.error,
+        });
+      }
+    }
+
     // Build upsert data
     const payrollData = {};
     if (maritalStatus !== undefined) payrollData.maritalStatus = maritalStatus;
@@ -247,6 +307,10 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
     if (additionalStateIncomeTax !== undefined)
       payrollData.additionalStateIncomeTax =
         parseFloat(additionalStateIncomeTax) || 0;
+    if (customFederalRate !== undefined)
+      payrollData.customFederalRate = customFederalRateValidation.rate;
+    if (customStateRate !== undefined)
+      payrollData.customStateRate = customStateRateValidation.rate;
     if (ptoHoursBalance !== undefined)
       payrollData.ptoHoursBalance = parseFloat(ptoHoursBalance) || 0;
     if (skipFicaMedicare !== undefined)
@@ -338,6 +402,14 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
           additionalStateIncomeTax: parseFloat(
             updatedDetails.additionalStateIncomeTax,
           ),
+          customFederalRate:
+            updatedDetails.customFederalRate != null
+              ? parseFloat(updatedDetails.customFederalRate)
+              : null,
+          customStateRate:
+            updatedDetails.customStateRate != null
+              ? parseFloat(updatedDetails.customStateRate)
+              : null,
           ptoHoursBalance: parseFloat(updatedDetails.ptoHoursBalance),
           futaBalance: parseFloat(updatedDetails.futaBalance),
           skipFicaMedicare: updatedDetails.skipFicaMedicare,
@@ -421,6 +493,8 @@ exports.resetEmployeePayrollDetails = async (req, res) => {
           payRate: 0,
           additionalFedIncomeTax: 0,
           additionalStateIncomeTax: 0,
+          customFederalRate: null,
+          customStateRate: null,
           ptoHoursBalance: 0,
           futaBalance: 7000,
           skipFicaMedicare: false,
@@ -534,6 +608,8 @@ exports.getAllEmployeesWithPayrollDetails = async (req, res) => {
         payRate: 0,
         additionalFedIncomeTax: 0,
         additionalStateIncomeTax: 0,
+        customFederalRate: null,
+        customStateRate: null,
         ptoHoursBalance: 0,
         futaBalance: 7000,
         skipFicaMedicare: false,
@@ -564,6 +640,14 @@ exports.getAllEmployeesWithPayrollDetails = async (req, res) => {
           additionalStateIncomeTax: parseFloat(
             payrollDetails.additionalStateIncomeTax || 0,
           ),
+          customFederalRate:
+            payrollDetails.customFederalRate != null
+              ? parseFloat(payrollDetails.customFederalRate)
+              : null,
+          customStateRate:
+            payrollDetails.customStateRate != null
+              ? parseFloat(payrollDetails.customStateRate)
+              : null,
           ptoHoursBalance: parseFloat(payrollDetails.ptoHoursBalance || 0),
           futaBalance: parseFloat(payrollDetails.futaBalance ?? 7000),
           skipFicaMedicare: payrollDetails.skipFicaMedicare || false,
