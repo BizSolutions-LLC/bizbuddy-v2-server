@@ -256,7 +256,6 @@ model PayrollConfiguration {
   futaEnabled        Boolean  @default(false)
   sutaEnabled        Boolean  @default(false)
   futaRate           Decimal  @default(7) @db.Decimal(5, 2)
-  stateIncomeTaxRate Decimal  @default(5) @db.Decimal(5, 2)
   ficaRate           Decimal  @default(6.2) @db.Decimal(5, 2)
   medicareRate       Decimal  @default(1.45) @db.Decimal(5, 2)
   sdiRate            Decimal  @default(1.1) @db.Decimal(5, 2)
@@ -266,6 +265,21 @@ model PayrollConfiguration {
 }
 
 model FederalTaxRate {
+  id              String        @id @default(cuid())
+  companyId       String
+  filingStatus    MaritalStatus
+  minAnnualIncome Decimal       @db.Decimal(12, 2)
+  maxAnnualIncome Decimal?      @db.Decimal(12, 2)
+  rate            Decimal       @db.Decimal(5, 2)
+  enabled         Boolean       @default(true)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, filingStatus])
+}
+
+model StateIncomeTaxRate {
   id              String        @id @default(cuid())
   companyId       String
   filingStatus    MaritalStatus
@@ -566,6 +580,7 @@ model Company {
   runs                    PayrollRun[]
   Shift                   Shift[]
   ShiftSchedule           ShiftSchedule[]
+  stateIncomeTaxRates     StateIncomeTaxRate[]
   Subscription            Subscription[]
   Tax                     Tax[]
   User                    User[]
