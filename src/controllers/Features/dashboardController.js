@@ -60,7 +60,7 @@ const getSidebarStats = async (req, res) => {
       // pending_secondary, previously undercounted here.
       prisma.leave.count({
         where: {
-          ...leaveVisibilityWhere(companyId, req.user.role, requester?.departmentId),
+          ...leaveVisibilityWhere(companyId, req.user.role, req.user.id, requester?.departmentId),
           status: { in: ["pending", "pending_secondary"] },
         },
       }),

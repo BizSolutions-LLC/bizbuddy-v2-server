@@ -3,7 +3,7 @@ const { prisma } = require("@config/connection");
 const { leaveVisibilityWhere } = require("@utils/leaveUtils");
 
 const adjustBalance = async (req, res) => {
-  const { targetUserId, leaveTypes, hours } = req.body;
+  const { targetUserId, leaveTypes, hours, note } = req.body;
   if (
     !targetUserId ||
     !Array.isArray(leaveTypes) ||
@@ -16,6 +16,10 @@ const adjustBalance = async (req, res) => {
       .json({
         message: "targetUserId, leaveTypes[] and non-zero hours are required",
       });
+  if (!note || !note.trim())
+    return res
+      .status(400)
+      .json({ message: "A reason is required for a manual balance adjustment." });
 
   const employee = await prisma.user.findFirst({
     where: { id: targetUserId, companyId: req.user.companyId },
@@ -63,6 +67,7 @@ const adjustBalance = async (req, res) => {
         balanceBefore,
         balanceAfter:  Number(bal.balanceHours),
         performedById: req.user.id,
+        note:          note.trim(),
       },
     });
 
@@ -161,7 +166,7 @@ const getTransactions = async (req, res) => {
       select: { departmentId: true },
     });
     where = {
-      ...leaveVisibilityWhere(companyId, req.user.role, actingUser?.departmentId, "user"),
+      ...leaveVisibilityWhere(companyId, req.user.role, req.user.id, actingUser?.departmentId, "user"),
       policy: { companyId },
     };
   } else {

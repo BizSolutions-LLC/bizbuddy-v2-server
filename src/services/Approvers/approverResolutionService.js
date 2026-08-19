@@ -4,25 +4,15 @@ const { prisma } = require("@config/connection");
 const displayName = (profile, fallback) =>
   profile ? `${profile.firstName || ""} ${profile.lastName || ""}`.trim() || fallback : fallback;
 
-// Company-wide admins/superadmins + supervisors in the requester's own department.
-// Used as the fallback approver list for leave / punch-log-edit request dropdowns
-// (GET /api/leaves/approvers).
+// Company-wide admins/superadmins only. Direct-supervisor selection is
+// getDirectSupervisors's exclusive job (BB-072) — kept separate so the two
+// functions' responsibilities never overlap.
 async function getEligibleApprovers({ id: userId, companyId }) {
-  const requester = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { departmentId: true },
-  });
-
-  const roleConditions = [{ role: { in: ["admin", "superadmin"] } }];
-  if (requester?.departmentId) {
-    roleConditions.push({ role: "supervisor", departmentId: requester.departmentId });
-  }
-
   const approvers = await prisma.user.findMany({
     where: {
       companyId,
       NOT: { id: userId },
-      OR: roleConditions,
+      role: { in: ["admin", "superadmin"] },
     },
     select: {
       id: true, email: true, username: true, role: true,
@@ -36,52 +26,39 @@ async function getEligibleApprovers({ id: userId, companyId }) {
   }));
 }
 
-// Direct-supervisor resolution (GET /api/account/approver): department supervisor,
-// individual employee supervisors, or users with the supervisor role in the same
-// department. Falls back to company admins when the requester has no department.
-// Returns null if the requester can't be resolved for the given company.
+// Direct-supervisor resolution (GET /api/account/approver): the requester's
+// individually assigned supervisor (employmentDetail.supervisorId), and nothing
+// else — BB-072. Falls back to the company admin/superadmin list when no
+// supervisor is assigned, or the assigned one is no longer active/valid. No
+// department-level guessing. Returns null if the requester can't be resolved
+// for the given company.
 async function getDirectSupervisors({ id: userId, companyId }) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { employmentDetail: true, department: true },
+    include: { employmentDetail: true },
   });
 
   if (!user || user.companyId !== companyId) return null;
 
-  const userDepartmentId = user.departmentId || user.employmentDetail?.departmentId;
-
-  if (userDepartmentId) {
-    const departmentSupervisors = await prisma.user.findMany({
-      where: {
-        companyId,
-        OR: [
-          { supervisedDepartments: { some: { id: userDepartmentId } } },
-          { supervisedEmployees: { some: { departmentId: userDepartmentId } } },
-          {
-            role: "supervisor",
-            OR: [
-              { departmentId: userDepartmentId },
-              { employmentDetail: { departmentId: userDepartmentId } },
-            ],
-          },
-        ],
-        status: "active",
-      },
+  const supervisorId = user.employmentDetail?.supervisorId;
+  if (supervisorId) {
+    const supervisor = await prisma.user.findFirst({
+      where: { id: supervisorId, companyId, status: "active" },
       select: {
         id: true, email: true, role: true,
         profile: { select: { firstName: true, lastName: true } },
         employmentDetail: { select: { jobTitle: true } },
       },
-      distinct: ["id"],
     });
-
-    return departmentSupervisors.map((s) => ({
-      id: s.id,
-      name: displayName(s.profile, s.email),
-      email: s.email,
-      role: s.role,
-      jobTitle: s.employmentDetail?.jobTitle || "Supervisor",
-    }));
+    if (supervisor) {
+      return [{
+        id: supervisor.id,
+        name: displayName(supervisor.profile, supervisor.email),
+        email: supervisor.email,
+        role: supervisor.role,
+        jobTitle: supervisor.employmentDetail?.jobTitle || "Supervisor",
+      }];
+    }
   }
 
   const companyAdmins = await prisma.user.findMany({

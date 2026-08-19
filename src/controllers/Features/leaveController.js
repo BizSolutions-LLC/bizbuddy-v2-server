@@ -4,7 +4,7 @@ const { prisma } = require("@config/connection");
 const { calcDailyHours, calcRequestedHours, leaveVisibilityWhere } = require("@utils/leaveUtils");
 const { previewLeaveApproval, applyLeaveApproval } = require("@services/Leave/leaveApprovalService");
 const { createNotification } = require("@services/notificationService");
-const { getEligibleApprovers } = require("@services/Approvers/approverResolutionService");
+const { getEligibleApprovers, getDirectSupervisors } = require("@services/Approvers/approverResolutionService");
 const { getIO } = require("@config/socket");
 const moment = require("moment-timezone");
 
@@ -31,10 +31,12 @@ async function _resolvePolicy(leave, companyId) {
   return policy;
 }
 
-// ─── Eligible approver pool: any admin/superadmin (company-wide), or a ───────
-// ─── supervisor whose department matches the leave requester's department ────
-function _isEligibleApprover(actingRole, actingDepartmentId, requesterDepartmentId) {
+// ─── Eligible approver pool: any admin/superadmin (company-wide), the ────────
+// ─── requester's individually assigned direct supervisor (any department — ───
+// ─── BB-072), or a supervisor whose department matches the requester's ───────
+function _isEligibleApprover(actingUserId, actingRole, actingDepartmentId, requesterDepartmentId, requesterSupervisorId) {
   if (["admin", "superadmin"].includes(actingRole)) return true;
+  if (requesterSupervisorId && actingUserId === requesterSupervisorId) return true;
   if (actingRole === "supervisor") {
     return !!requesterDepartmentId && actingDepartmentId === requesterDepartmentId;
   }
@@ -177,15 +179,19 @@ const submitLeaveRequest = async (req, res) => {
 
   const requester = await prisma.user.findUnique({
     where:  { id: req.user.id },
-    select: { departmentId: true },
+    select: { departmentId: true, employmentDetail: { select: { supervisorId: true } } },
   });
 
-  // Eligible approvers: any admin/superadmin (company-wide), or a supervisor
-  // in the requester's own department. No department on the requester means
-  // only admins/superadmins are selectable.
+  // Eligible approvers: any admin/superadmin (company-wide), a supervisor in
+  // the requester's own department, or the requester's individually assigned
+  // direct supervisor regardless of department (BB-072). No department and no
+  // assigned supervisor means only admins/superadmins are selectable.
   const approverRoleConditions = [{ role: { in: ["admin", "superadmin"] } }];
   if (requester?.departmentId) {
     approverRoleConditions.push({ role: "supervisor", departmentId: requester.departmentId });
+  }
+  if (requester?.employmentDetail?.supervisorId) {
+    approverRoleConditions.push({ id: requester.employmentDetail.supervisorId });
   }
 
   const approver = await prisma.user.findFirst({
@@ -313,7 +319,10 @@ const submitLeaveRequest = async (req, res) => {
   try {
     const employee = await prisma.user.findUnique({
       where:  { id: req.user.id },
-      select: { departmentId: true, profile: { select: { firstName: true, lastName: true } } },
+      select: {
+        departmentId: true, profile: { select: { firstName: true, lastName: true } },
+        employmentDetail: { select: { supervisorId: true } },
+      },
     });
     const employeeName = employee?.profile
       ? `${employee.profile.firstName || ""} ${employee.profile.lastName || ""}`.trim()
@@ -325,11 +334,12 @@ const submitLeaveRequest = async (req, res) => {
       where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
       select: { id: true, role: true, departmentId: true },
     });
-    // Same pool as _isEligibleApprover — admins/superadmins company-wide, supervisors
-    // only for the requester's own department. Otherwise a supervisor in an unrelated
+    // Same pool as _isEligibleApprover — admins/superadmins company-wide, the
+    // requester's assigned direct supervisor (any department), or a supervisor
+    // in the requester's own department. Otherwise a supervisor in an unrelated
     // department gets notified about a request they'll never see in their pending list.
     const eligibleManagementUsers = managementUsers.filter((m) =>
-      _isEligibleApprover(m.role, m.departmentId, employee?.departmentId)
+      _isEligibleApprover(m.id, m.role, m.departmentId, employee?.departmentId, employee?.employmentDetail?.supervisorId)
     );
     await Promise.all(
       eligibleManagementUsers.map((m) =>
@@ -364,7 +374,11 @@ async function _loadActionableLeave(leaveId) {
 
   const leaveUser = await prisma.user.findUnique({
     where:  { id: leave.userId },
-    select: { departmentId: true, email: true, profile: { select: { firstName: true, lastName: true } } },
+    select: {
+      departmentId: true, email: true,
+      profile: { select: { firstName: true, lastName: true } },
+      employmentDetail: { select: { supervisorId: true } },
+    },
   });
   return { leave, leaveUser };
 }
@@ -382,7 +396,7 @@ const approveLeave = async (req, res) => {
     where:  { id: req.user.id },
     select: { departmentId: true },
   });
-  if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
+  if (!_isEligibleApprover(req.user.id, req.user.role, actingUser?.departmentId, leaveUser?.departmentId, leaveUser?.employmentDetail?.supervisorId))
     return res.status(403).json({ message: "You are not eligible to act on this leave request." });
   if (req.user.id === leave.userId)
     return res.status(403).json({ message: "You cannot act on your own leave request." });
@@ -458,7 +472,7 @@ const approveLeave = async (req, res) => {
         select: { id: true, role: true, departmentId: true },
       });
       const eligibleManagementUsers = managementUsers.filter((m) =>
-        _isEligibleApprover(m.role, m.departmentId, leaveUser?.departmentId)
+        _isEligibleApprover(m.id, m.role, m.departmentId, leaveUser?.departmentId, leaveUser?.employmentDetail?.supervisorId)
       );
       await Promise.all(
         eligibleManagementUsers.map((m) =>
@@ -555,7 +569,7 @@ const rejectLeave = async (req, res) => {
     where:  { id: req.user.id },
     select: { departmentId: true },
   });
-  if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
+  if (!_isEligibleApprover(req.user.id, req.user.role, actingUser?.departmentId, leaveUser?.departmentId, leaveUser?.employmentDetail?.supervisorId))
     return res.status(403).json({ message: "You are not eligible to act on this leave request." });
   if (req.user.id === leave.userId)
     return res.status(403).json({ message: "You cannot act on your own leave request." });
@@ -617,6 +631,7 @@ const rejectLeave = async (req, res) => {
 // rejection already relies on — no ledger entry, same reasoning.
 const cancelLeave = async (req, res) => {
   const leaveId = req.params.id;
+  const { note } = req.body;
 
   const loaded = await _loadActionableLeave(leaveId);
   if (!loaded)
@@ -644,6 +659,7 @@ const cancelLeave = async (req, res) => {
         type:          "cancelled",
         leaveId,
         performedById: req.user.id,
+        note:          note || null,
       },
     });
   } catch (ledgerErr) {
@@ -664,7 +680,7 @@ const cancelLeave = async (req, res) => {
     // Same eligible pool as submit's notification — admins/superadmins
     // company-wide, supervisors only for the requester's own department.
     const eligibleManagementUsers = managementUsers.filter((m) =>
-      _isEligibleApprover(m.role, m.departmentId, leaveUser?.departmentId)
+      _isEligibleApprover(m.id, m.role, m.departmentId, leaveUser?.departmentId, leaveUser?.employmentDetail?.supervisorId)
     );
     await Promise.all(
       eligibleManagementUsers.map((m) =>
@@ -700,7 +716,7 @@ const previewApproval = async (req, res) => {
     where:  { id: req.user.id },
     select: { departmentId: true },
   });
-  if (!_isEligibleApprover(req.user.role, actingUser?.departmentId, leaveUser?.departmentId))
+  if (!_isEligibleApprover(req.user.id, req.user.role, actingUser?.departmentId, leaveUser?.departmentId, leaveUser?.employmentDetail?.supervisorId))
     return res.status(403).json({ message: "You are not eligible to act on this leave request." });
   if (req.user.id === leave.userId)
     return res.status(403).json({ message: "You cannot act on your own leave request." });
@@ -736,7 +752,10 @@ const getLeaveDays = async (req, res) => {
 
     const leaveUser = await prisma.user.findUnique({
       where:  { id: leave.userId },
-      select: { departmentId: true, companyId: true },
+      select: {
+        departmentId: true, companyId: true,
+        employmentDetail: { select: { supervisorId: true } },
+      },
     });
     if (leaveUser?.companyId !== req.user.companyId)
       return res.status(404).json({ message: "Leave request not found." });
@@ -746,7 +765,11 @@ const getLeaveDays = async (req, res) => {
         where:  { id: req.user.id },
         select: { departmentId: true },
       });
-      if (!actingUser?.departmentId || actingUser.departmentId !== leaveUser?.departmentId)
+      // BB-072: same-department supervisor, or the requester's individually
+      // assigned direct supervisor regardless of department.
+      const isDirectSupervisor = leaveUser?.employmentDetail?.supervisorId === req.user.id;
+      const isSameDepartment   = !!actingUser?.departmentId && actingUser.departmentId === leaveUser?.departmentId;
+      if (!isDirectSupervisor && !isSameDepartment)
         return res.status(403).json({ message: "Not authorized to view this leave." });
     }
   }
@@ -849,7 +872,7 @@ const getPendingLeavesForApprover = async (req, res) => {
     });
     actingDepartmentId = requester?.departmentId ?? null;
     where = {
-      ...leaveVisibilityWhere(req.user.companyId, req.user.role, actingDepartmentId),
+      ...leaveVisibilityWhere(req.user.companyId, req.user.role, req.user.id, actingDepartmentId),
       status: { in: ["pending", "pending_secondary"] },
     };
   } else {
@@ -868,6 +891,7 @@ const getPendingLeavesForApprover = async (req, res) => {
         select: {
           id: true, email: true, username: true, role: true, departmentId: true,
           profile: { select: { firstName: true, lastName: true } },
+          employmentDetail: { select: { supervisorId: true } },
         },
       },
       approver: {
@@ -902,7 +926,7 @@ const getPendingLeavesForApprover = async (req, res) => {
     const canAct = isManagement
       ? ["pending", "pending_secondary"].includes(raw.status) &&
         raw.User?.id !== req.user.id &&
-        _isEligibleApprover(req.user.role, actingDepartmentId, raw.User?.departmentId)
+        _isEligibleApprover(req.user.id, req.user.role, actingDepartmentId, raw.User?.departmentId, raw.User?.employmentDetail?.supervisorId)
       : (raw.status === "pending"           && raw.approverId          === req.user.id) ||
         (raw.status === "pending_secondary" && raw.secondaryApproverId === req.user.id);
     return {
@@ -969,7 +993,7 @@ const getLeavesForApprover = async (req, res) => {
     });
     actingDepartmentId = requester?.departmentId ?? null;
     where = {
-      ...leaveVisibilityWhere(req.user.companyId, req.user.role, actingDepartmentId),
+      ...leaveVisibilityWhere(req.user.companyId, req.user.role, req.user.id, actingDepartmentId),
       ...(status ? { status: status.toLowerCase() } : {}),
     };
   } else {
@@ -1028,7 +1052,7 @@ const getLeavesForApprover = async (req, res) => {
     const canAct = isManagement
       ? ["pending", "pending_secondary"].includes(raw.status) &&
         raw.User?.id !== req.user.id &&
-        _isEligibleApprover(req.user.role, actingDepartmentId, raw.User?.departmentId)
+        _isEligibleApprover(req.user.id, req.user.role, actingDepartmentId, raw.User?.departmentId, raw.User?.employmentDetail?.supervisorId)
       : (raw.status === "pending"           && raw.approverId          === req.user.id) ||
         (raw.status === "pending_secondary" && raw.secondaryApproverId === req.user.id);
     return {
@@ -1075,10 +1099,19 @@ const getLeavesForApprover = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const getApprovers = async (req, res) => {
-  // Same eligible-approver rule as submitLeaveRequest: admins/superadmins
-  // company-wide, supervisors restricted to the requester's own department.
-  const data = await getEligibleApprovers({ id: req.user.id, companyId: req.user.companyId });
-  res.json({ data });
+  // BB-072: split shape, same pattern as punchLogsBootstrapController — the
+  // requester's 0-1 direct supervisor, separate from the full admin/superadmin
+  // list, since submitLeaveRequest now accepts either as approverId.
+  const [supervisorsRaw, approversRaw] = await Promise.all([
+    getDirectSupervisors({ id: req.user.id, companyId: req.user.companyId }),
+    getEligibleApprovers({ id: req.user.id, companyId: req.user.companyId }),
+  ]);
+  res.json({
+    data: {
+      supervisors: (supervisorsRaw || []).map(({ id, name, jobTitle, role }) => ({ id, name, jobTitle, role })),
+      approvers:   approversRaw.map(({ id, name, email, role }) => ({ id, name, email, role })),
+    },
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
