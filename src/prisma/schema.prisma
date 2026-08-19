@@ -300,6 +300,7 @@ model EmployeePayrollDetails {
   maritalStatus            MaritalStatus @default(single)
   payType                  PayType       @default(hourly)
   payRate                  Decimal       @default(0) @db.Decimal(10, 2)
+  driverPayRate            Decimal?      @db.Decimal(10, 2)
   additionalFedIncomeTax   Decimal       @default(0) @db.Decimal(10, 2)
   additionalStateIncomeTax Decimal       @default(0) @db.Decimal(10, 2)
   customFederalRate        Decimal?      @db.Decimal(5, 2)
