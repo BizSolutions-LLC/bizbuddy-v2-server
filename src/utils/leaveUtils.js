@@ -185,11 +185,16 @@ function monthlyIncrement(policy, defaultShiftHours = 8) {
  *   the model being queried. Defaults to "User" (Leave's relation field);
  *   pass "user" for LeaveTransaction, whose relation field is lowercase.
  */
-function leaveVisibilityWhere(companyId, role, departmentId, relationField = "User") {
+// BB-072: a supervisor sees a leave if the requester is in their department,
+// OR the supervisor is the requester's individually assigned direct supervisor
+// (employmentDetail.supervisorId) — regardless of department. No department and
+// no direct reports means the OR list only has the (never-matching) supervisorId
+// clause, same net effect as the old "matches no one" fallback.
+function leaveVisibilityWhere(companyId, role, actingUserId, departmentId, relationField = "User") {
   if (role === "supervisor") {
-    return departmentId
-      ? { [relationField]: { companyId, departmentId } }
-      : { [relationField]: { companyId, id: "" } }; // matches no one
+    const orConditions = [{ employmentDetail: { supervisorId: actingUserId } }];
+    if (departmentId) orConditions.push({ departmentId });
+    return { [relationField]: { companyId, OR: orConditions } };
   }
   return { [relationField]: { companyId } };
 }
