@@ -36,6 +36,48 @@ function getApprovalStrategy(companyId) {
   return BNC_COMPANY_IDS.has(companyId) ? bncCutoffStrategy : daycareCutoffStrategy;
 }
 
+// BB-074 — removes pending segment-typed TimeLogApproval rows that no longer
+// match the TimeLog's current punchType (e.g. a TimeLog originally synced as
+// full DRIVER_AIDE, later reclassified to DRIVER_AIDE_AM after its 3 segment
+// approvals already existed — the driver_pm one is now orphaned; DRIVER_AIDE_AM's
+// own valid set, driver_am + regular, is left alone). Reclassifying to REGULAR
+// (not in DRIVER_SEGMENT_MAP at all) removes every segment-typed row, leaving
+// only the flat null-segmentType approval as correct. Only touches status
+// "pending" rows; approved/excluded/rejected records are left alone. Returns
+// the number of rows removed.
+async function cleanupOrphanedSegmentApprovals(cutoffPeriodId, timeLogIds) {
+  if (!timeLogIds || timeLogIds.length === 0) return 0;
+
+  const logs = await prisma.timeLog.findMany({
+    where:  { id: { in: timeLogIds } },
+    select: { id: true, punchType: true },
+  });
+  const punchTypeByLogId = new Map(logs.map((l) => [l.id, l.punchType]));
+
+  const existing = await prisma.timeLogApproval.findMany({
+    where: {
+      cutoffPeriodId,
+      timeLogId:   { in: timeLogIds },
+      segmentType: { not: null },
+      status:      "pending",
+    },
+    select: { id: true, timeLogId: true, segmentType: true },
+  });
+
+  const staleIds = existing
+    .filter((a) => {
+      const validSegments = DRIVER_SEGMENT_MAP[punchTypeByLogId.get(a.timeLogId)] || [];
+      return !validSegments.includes(a.segmentType);
+    })
+    .map((a) => a.id);
+
+  if (staleIds.length === 0) return 0;
+
+  await prisma.timeLogApproval.deleteMany({ where: { id: { in: staleIds } } });
+  console.log(`[✅ Cleanup] Removed ${staleIds.length} orphaned segment approval(s) after a punch-type change`);
+  return staleIds.length;
+}
+
 // Break computation is handled by timeLogComputeService — enrichApprovals reads
 // stored lunchDeductionMinutes and totalBreakMinutes directly from the TimeLog.
 
@@ -829,6 +871,12 @@ async function syncApprovalRecords(cutoffPeriod, companyId, companyTimezone = "U
     });
   }
 
+  // BB-074 — scoped to ALL logs in the period, not just current driverAideIds:
+  // a TimeLog reclassified away from Driver/Aide entirely (e.g. to REGULAR)
+  // still needs its old segment-typed approvals cleaned up, but it no longer
+  // passes isDriverSegmentPunchType so it wouldn't be in driverAideIds.
+  await cleanupOrphanedSegmentApprovals(cutoffPeriodId, timeLogs.map((l) => l.id));
+
   // Pre-resolve segment boundaries for Driver/Aide logs so segmentStart / segmentEnd
   // are populated on the approval record at creation time.
   const segBoundaries = await resolveDriverAideSegments(driverAideLogs, companyId);
@@ -1051,6 +1099,20 @@ const getCutoffApprovals = async (req, res) => {
 
           console.log(`[✅ Backfill] Populated segmentStart/segmentEnd for ${nullSegmentApprovals.length} DRIVER_AIDE approval(s) in cutoff ${id}`);
         }
+
+        // BB-074 — clean up pending segment approvals orphaned by a punch-type
+        // change that happened after this cutoff's approvals were already
+        // synced (syncApprovalRecords only runs this cleanup on a cold sync,
+        // i.e. the `existingCount === 0` branch above — this covers every
+        // later page load of an already-synced cutoff). Scoped by existing
+        // segment-typed pending approvals directly, so it catches a TimeLog
+        // reclassified to any type — including away from Driver/Aide entirely.
+        const pendingSegmentApprovals = await prisma.timeLogApproval.findMany({
+          where: { cutoffPeriodId: id, segmentType: { not: null }, status: "pending" },
+          select: { timeLogId: true },
+        });
+        const pendingSegmentLogIds = [...new Set(pendingSegmentApprovals.map((a) => a.timeLogId))];
+        await cleanupOrphanedSegmentApprovals(id, pendingSegmentLogIds);
       }
     }
 
