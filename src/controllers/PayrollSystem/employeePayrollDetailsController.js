@@ -36,6 +36,59 @@ const validateNullableDriverPayRate = (value) => {
   return { valid: true, rate };
 };
 
+const TAX_EXEMPTION_DEFAULTS = {
+  federalIncomeTaxExempt: false,
+  socialSecurityExempt: false,
+  medicareExempt: false,
+  caPitExempt: false,
+  caSdiExempt: false,
+  skipFicaMedicare: false,
+};
+
+// skipFicaMedicare is kept for older clients as the conjunction of
+// socialSecurityExempt AND medicareExempt. Always derive it on read so
+// the two representations cannot drift.
+const formatTaxExemptions = (details) => {
+  const socialSecurityExempt = Boolean(details?.socialSecurityExempt);
+  const medicareExempt = Boolean(details?.medicareExempt);
+  return {
+    federalIncomeTaxExempt: Boolean(details?.federalIncomeTaxExempt),
+    socialSecurityExempt,
+    medicareExempt,
+    caPitExempt: Boolean(details?.caPitExempt),
+    caSdiExempt: Boolean(details?.caSdiExempt),
+    skipFicaMedicare: socialSecurityExempt && medicareExempt,
+  };
+};
+
+// Resolves the SS/Medicare pair and the legacy skipFicaMedicare flag.
+// New fields win when present. skipFicaMedicare only sets both when
+// neither new field is in the body.
+const resolveFicaMedicareExemptions = (body, existing) => {
+  const ssSent = body.socialSecurityExempt !== undefined;
+  const medSent = body.medicareExempt !== undefined;
+  const skipSent = body.skipFicaMedicare !== undefined;
+
+  if (!ssSent && !medSent && !skipSent) return null;
+
+  let socialSecurityExempt = Boolean(existing?.socialSecurityExempt);
+  let medicareExempt = Boolean(existing?.medicareExempt);
+
+  if (skipSent && !ssSent && !medSent) {
+    socialSecurityExempt = Boolean(body.skipFicaMedicare);
+    medicareExempt = Boolean(body.skipFicaMedicare);
+  } else {
+    if (ssSent) socialSecurityExempt = Boolean(body.socialSecurityExempt);
+    if (medSent) medicareExempt = Boolean(body.medicareExempt);
+  }
+
+  return {
+    socialSecurityExempt,
+    medicareExempt,
+    skipFicaMedicare: socialSecurityExempt && medicareExempt,
+  };
+};
+
 // ============================================
 // GET EMPLOYEE PAYROLL DETAILS
 // ============================================
@@ -151,7 +204,7 @@ exports.getEmployeePayrollDetails = async (req, res) => {
             customStateRate: null,
             ptoHoursBalance: 0,
             futaBalance: 7000,
-            skipFicaMedicare: false,
+            ...TAX_EXEMPTION_DEFAULTS,
             withCalSavers: false,
           },
           earningRates: customRateEarningTypes.map((et) => ({
@@ -208,7 +261,7 @@ exports.getEmployeePayrollDetails = async (req, res) => {
               : null,
           ptoHoursBalance: parseFloat(payrollDetails.ptoHoursBalance),
           futaBalance: parseFloat(payrollDetails.futaBalance),
-          skipFicaMedicare: payrollDetails.skipFicaMedicare,
+          ...formatTaxExemptions(payrollDetails),
           withCalSavers: payrollDetails.withCalSavers,
         },
         earningRates,
@@ -243,6 +296,11 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
       customStateRate,
       ptoHoursBalance,
       skipFicaMedicare,
+      federalIncomeTaxExempt,
+      socialSecurityExempt,
+      medicareExempt,
+      caPitExempt,
+      caSdiExempt,
       withCalSavers,
       earningRates, // Array of { earningTypeId, rate }
     } = req.body;
@@ -350,8 +408,37 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
       payrollData.customStateRate = customStateRateValidation.rate;
     if (ptoHoursBalance !== undefined)
       payrollData.ptoHoursBalance = parseFloat(ptoHoursBalance) || 0;
-    if (skipFicaMedicare !== undefined)
-      payrollData.skipFicaMedicare = Boolean(skipFicaMedicare);
+    if (federalIncomeTaxExempt !== undefined)
+      payrollData.federalIncomeTaxExempt = Boolean(federalIncomeTaxExempt);
+    if (caPitExempt !== undefined)
+      payrollData.caPitExempt = Boolean(caPitExempt);
+    if (caSdiExempt !== undefined)
+      payrollData.caSdiExempt = Boolean(caSdiExempt);
+
+    const ficaMedicareBody = {
+      socialSecurityExempt,
+      medicareExempt,
+      skipFicaMedicare,
+    };
+    if (
+      ficaMedicareBody.socialSecurityExempt !== undefined ||
+      ficaMedicareBody.medicareExempt !== undefined ||
+      ficaMedicareBody.skipFicaMedicare !== undefined
+    ) {
+      const existingExemptions =
+        await prisma.employeePayrollDetails.findUnique({
+          where: { userId },
+          select: {
+            socialSecurityExempt: true,
+            medicareExempt: true,
+          },
+        });
+      Object.assign(
+        payrollData,
+        resolveFicaMedicareExemptions(ficaMedicareBody, existingExemptions),
+      );
+    }
+
     if (withCalSavers !== undefined)
       payrollData.withCalSavers = Boolean(withCalSavers);
 
@@ -453,7 +540,7 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
               : null,
           ptoHoursBalance: parseFloat(updatedDetails.ptoHoursBalance),
           futaBalance: parseFloat(updatedDetails.futaBalance),
-          skipFicaMedicare: updatedDetails.skipFicaMedicare,
+          ...formatTaxExemptions(updatedDetails),
           withCalSavers: updatedDetails.withCalSavers,
         },
         earningRates: updatedDetails.earningRates.map((er) => ({
@@ -539,7 +626,7 @@ exports.resetEmployeePayrollDetails = async (req, res) => {
           customStateRate: null,
           ptoHoursBalance: 0,
           futaBalance: 7000,
-          skipFicaMedicare: false,
+          ...TAX_EXEMPTION_DEFAULTS,
           withCalSavers: false,
         },
         earningRates: customRateEarningTypes.map((et) => ({
@@ -655,7 +742,7 @@ exports.getAllEmployeesWithPayrollDetails = async (req, res) => {
         customStateRate: null,
         ptoHoursBalance: 0,
         futaBalance: 7000,
-        skipFicaMedicare: false,
+        ...TAX_EXEMPTION_DEFAULTS,
         withCalSavers: false,
       };
 
@@ -697,7 +784,7 @@ exports.getAllEmployeesWithPayrollDetails = async (req, res) => {
               : null,
           ptoHoursBalance: parseFloat(payrollDetails.ptoHoursBalance || 0),
           futaBalance: parseFloat(payrollDetails.futaBalance ?? 7000),
-          skipFicaMedicare: payrollDetails.skipFicaMedicare || false,
+          ...formatTaxExemptions(payrollDetails),
           withCalSavers: payrollDetails.withCalSavers || false,
         },
         earningRates: earningRatesMap,
