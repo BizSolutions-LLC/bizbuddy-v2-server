@@ -646,6 +646,10 @@ model Company {
   autoLunchEnabled       Boolean  @default(false)
   autoCoffeeEnabled      Boolean  @default(false)
 
+  // Company-wide employer ETT / SUI toggles
+  ettEnabled Boolean @default(true)
+  suiEnabled Boolean @default(true)
+
   LiveUser LiveUser[]
 
   companyCutoffSettings CompanyCutoffSettings?

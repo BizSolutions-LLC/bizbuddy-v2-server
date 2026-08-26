@@ -127,8 +127,10 @@ exports.updateUnemploymentTaxSettings = async (req, res) => {
     }
 
     const updateData = {};
-    if (futaEnabled !== undefined) updateData.futaEnabled = Boolean(futaEnabled);
-    if (sutaEnabled !== undefined) updateData.sutaEnabled = Boolean(sutaEnabled);
+    if (futaEnabled !== undefined)
+      updateData.futaEnabled = Boolean(futaEnabled);
+    if (sutaEnabled !== undefined)
+      updateData.sutaEnabled = Boolean(sutaEnabled);
     if (futaRate !== undefined) {
       const rate = parseFloat(futaRate);
       if (Number.isNaN(rate) || rate < 0) {
@@ -312,11 +314,7 @@ exports.getPayrollTaxRates = async (req, res) => {
 exports.updatePayrollTaxRates = async (req, res) => {
   try {
     const { companyId } = req.user;
-    const {
-      ficaRate,
-      medicareRate,
-      sdiRate,
-    } = req.body;
+    const { ficaRate, medicareRate, sdiRate } = req.body;
 
     if (!companyId) {
       return res.status(400).json({
@@ -449,7 +447,11 @@ exports.deductFutaBalance = async (req, res) => {
     }
 
     const deductionAmount = parseFloat(amount);
-    if (amount === undefined || Number.isNaN(deductionAmount) || deductionAmount < 0) {
+    if (
+      amount === undefined ||
+      Number.isNaN(deductionAmount) ||
+      deductionAmount < 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "A valid non-negative amount is required.",
@@ -538,7 +540,11 @@ exports.updateFutaBalance = async (req, res) => {
     }
 
     const newBalance = parseFloat(futaBalance);
-    if (futaBalance === undefined || Number.isNaN(newBalance) || newBalance < 0) {
+    if (
+      futaBalance === undefined ||
+      Number.isNaN(newBalance) ||
+      newBalance < 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "A valid non-negative futaBalance is required.",

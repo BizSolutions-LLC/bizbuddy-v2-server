@@ -34,6 +34,8 @@ exports.getSettings = async (req, res) => {
         autoBreakBasis:               true,
         autoLunchEnabled:             true,
         autoCoffeeEnabled:            true,
+        ettEnabled:                   true,
+        suiEnabled:                   true,
       },
     });
     const formatted = {
@@ -100,6 +102,8 @@ exports.updateSettings = async (req, res) => {
       autoBreakBasis,
       autoLunchEnabled,
       autoCoffeeEnabled,
+      ettEnabled,
+      suiEnabled,
     } = req.body;
 
     const VALID_OT_BASES = ["daily", "weekly", "cutoff"];
@@ -198,6 +202,9 @@ exports.updateSettings = async (req, res) => {
         }),
         ...(autoLunchEnabled !== undefined && { autoLunchEnabled: Boolean(autoLunchEnabled) }),
         ...(autoCoffeeEnabled !== undefined && { autoCoffeeEnabled: Boolean(autoCoffeeEnabled) }),
+        // ── Employer ETT / SUI ───────────────────────────────────────────────
+        ...(ettEnabled !== undefined && { ettEnabled: Boolean(ettEnabled) }),
+        ...(suiEnabled !== undefined && { suiEnabled: Boolean(suiEnabled) }),
         // ─────────────────────────────────────────────────────────────────────
       },
       select: {
@@ -227,6 +234,8 @@ exports.updateSettings = async (req, res) => {
         autoBreakBasis:                true,
         autoLunchEnabled:              true,
         autoCoffeeEnabled:             true,
+        ettEnabled:                    true,
+        suiEnabled:                    true,
       },
     });
 
