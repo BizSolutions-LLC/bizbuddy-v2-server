@@ -33,6 +33,48 @@ async function findOverlappingLog(userId, clockIn, clockOut) {
   });
 }
 
+// Creates the actual TimeLog for an approved (or auto-approved) request and computes
+// its derived hour fields. Shared by the single-approve endpoint (approveRequestedPunchLog)
+// and the CSV bulk-import path (BB-077) so both stay in lock-step instead of drifting apart.
+// autoLunchDeductionMinutes: 0 — a manually-requested/approved punch has no break
+// data one way or the other, so computeTimeLogSummary's default "no break logged ->
+// deduct minimumLunchMinutes anyway" rule (meant for real device clock-ins) must not
+// apply here. The employee's claimed span is taken at face value; any break deduction
+// is the approver's explicit call (e.g. editing hours before approving), not an
+// automatic system assumption (BB-065).
+async function createTimeLogFromRequest({ userId, companyId, timeIn, timeOut, requestedPunchType, reason }) {
+  const punchType = resolvePunchType({ punchType: requestedPunchType, reason });
+
+  let newTimeLog = await prisma.timeLog.create({
+    data: {
+      userId,
+      timeIn,
+      timeOut,
+      status: false, // Completed
+      punchType,
+      coffeeBreaks: [],
+      lunchBreak: {},
+      autoLunchDeductionMinutes: 0,
+    },
+  });
+
+  if (punchType === "TRAINING") {
+    newTimeLog = await applyTrainingFlatHours(newTimeLog.id, companyId);
+  } else {
+    // Eager compute of derived fields (netWorkedHours, etc.) so the TimeLog isn't left
+    // with null hours until the next cutoff-period sweep. Non-fatal — creation itself
+    // is already persisted even if this fails.
+    try {
+      const derived = await computeTimeLogSummary(newTimeLog.id);
+      if (derived) Object.assign(newTimeLog, derived);
+    } catch (computeErr) {
+      console.error(`[createTimeLogFromRequest] computeTimeLogSummary failed for ${newTimeLog.id}:`, computeErr.message);
+    }
+  }
+
+  return newTimeLog;
+}
+
 const submitRequestPunchLog = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -397,41 +439,14 @@ const approveRequestedPunchLog = async (req, res) => {
       });
     }
 
-    const punchType = resolvePunchType({ punchType: request.requestedPunchType, reason: request.reason });
-
-    // Create the actual time log.
-    // autoLunchDeductionMinutes: 0 — a manually-requested/approved punch has no break
-    // data one way or the other, so computeTimeLogSummary's default "no break logged ->
-    // deduct minimumLunchMinutes anyway" rule (meant for real device clock-ins) must not
-    // apply here. The employee's claimed span is taken at face value; any break deduction
-    // is the approver's explicit call (e.g. editing hours before approving), not an
-    // automatic system assumption (BB-065).
-    let newTimeLog = await prisma.timeLog.create({
-      data: {
-        userId: request.userId,
-        timeIn: request.requestedClockIn,
-        timeOut: request.requestedClockOut,
-        status: false, // Completed
-        punchType,
-        coffeeBreaks: [],
-        lunchBreak: {},
-        autoLunchDeductionMinutes: 0,
-      },
+    const newTimeLog = await createTimeLogFromRequest({
+      userId: request.userId,
+      companyId: request.user.companyId,
+      timeIn: request.requestedClockIn,
+      timeOut: request.requestedClockOut,
+      requestedPunchType: request.requestedPunchType,
+      reason: request.reason,
     });
-
-    if (punchType === "TRAINING") {
-      newTimeLog = await applyTrainingFlatHours(newTimeLog.id, request.user.companyId);
-    } else {
-      // Eager compute of derived fields (netWorkedHours, etc.) so the TimeLog isn't left
-      // with null hours until the next cutoff-period sweep. Non-fatal — approval itself
-      // is already persisted even if this fails.
-      try {
-        const derived = await computeTimeLogSummary(newTimeLog.id);
-        if (derived) Object.assign(newTimeLog, derived);
-      } catch (computeErr) {
-        console.error(`[approveRequestedPunchLog] computeTimeLogSummary failed for ${newTimeLog.id}:`, computeErr.message);
-      }
-    }
 
     // Update request status
     const updatedRequest = await prisma.requestedTimeLog.update({
@@ -662,4 +677,8 @@ module.exports = {
   approveRequestedPunchLog,
   rejectRequestedPunchLog,
   deleteRequestedPunchLog,
+  // Shared with punchLogImportService.js (BB-077 CSV bulk import)
+  parseClockTime,
+  findOverlappingLog,
+  createTimeLogFromRequest,
 };
