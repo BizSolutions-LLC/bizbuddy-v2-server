@@ -1147,6 +1147,33 @@ async function getLockedCutoffForLog(timeLogId) {
   return approval?.cutoffPeriod ?? null;
 }
 
+// Date-based counterpart to getLockedCutoffForLog, for callers creating a NEW TimeLog
+// (e.g. CSV bulk import, BB-077) where no TimeLog/TimeLogApproval exists yet to look up
+// from. Finds the CutoffPeriod that covers `date` for this company/department — preferring
+// a department-specific period over a company-wide one if both happen to cover the date —
+// and returns it only if locked/processed, null otherwise.
+// periodEnd is stored as UTC midnight of the last calendar day, so it's widened to end-of-day
+// in the company timezone before comparing (same convention as cutoffPeriodController.js).
+async function getLockedCutoffForDate(companyId, departmentId, date, companyTimezone) {
+  const dateStr = new Date(date).toISOString().slice(0, 10);
+  const dayStart = moment.tz(dateStr, companyTimezone).startOf("day").toDate();
+  const dayEnd = moment.tz(dateStr, companyTimezone).endOf("day").toDate();
+
+  const periods = await prisma.cutoffPeriod.findMany({
+    where: {
+      companyId,
+      status: { in: ["locked", "processed"] },
+      OR: [{ departmentId: departmentId || null }, { departmentId: null }],
+      periodStart: { lte: dayEnd },
+      periodEnd: { gte: dayStart },
+    },
+    select: { id: true, status: true, periodStart: true, periodEnd: true, departmentId: true },
+  });
+
+  if (periods.length === 0) return null;
+  return periods.find((p) => p.departmentId === departmentId) || periods[0];
+}
+
 /**
  * PATCH /api/timelogs/:id/punch-type
  * Admin/HR/supervisor. Updates the punch type on an existing log and
@@ -1327,4 +1354,5 @@ module.exports = {
   clearAutoBreaks,
   updatePunchType,
   adminDeleteTimeLog,
+  getLockedCutoffForDate,
 };
