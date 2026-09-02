@@ -18,7 +18,7 @@ const {
 } = require("@services/shiftNotificationService");
 const {
   parseScheduleCsv,
-  mergeBlocksToTimeRange,
+  mergeBlocksToTimeRanges,
   IDENTIFIER_COLUMNS,
 } = require("@utils/csvScheduleParser");
 
@@ -129,7 +129,10 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
   const { byEmployeeId, byEmail } = buildIdentifierMaps(users);
 
   const preview = [];
-  const seenInFile = new Set();
+  // Rows for the same employee/date are now allowed to coexist (multi-shift days,
+  // e.g. a split shift) as long as their derived time ranges don't overlap each
+  // other — mirrors the same hasTimeOverlap check already used against the DB.
+  const seenRangesByKey = new Map();
 
   for (const { rowNumber, data } of rows) {
     const identifier = rowIdentifier(data);
@@ -140,10 +143,6 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
       if (!data.date) throw new Error("Missing date.");
       if (isNaN(new Date(data.date).getTime())) throw new Error(`Invalid date: "${data.date}".`);
 
-      const dupeKey = `${identifier}|${data.date}`;
-      if (seenInFile.has(dupeKey)) throw new Error("Duplicate row for this employee/date in this file.");
-      seenInFile.add(dupeKey);
-
       const user =
         (data.employeeId && byEmployeeId.get(data.employeeId.trim())) ||
         (data.email && byEmail.get(data.email.trim().toLowerCase()));
@@ -153,22 +152,41 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
         );
       }
 
-      const { startTime, endTime, crossesMidnight } = mergeBlocksToTimeRange(data, !!overnight);
+      // A row's marked blocks can form multiple disjoint runs (e.g. a lunch-break
+      // split shift) — each becomes its own proposed shift, so one CSV row can now
+      // yield more than one preview entry.
+      const ranges = mergeBlocksToTimeRanges(data, !!overnight);
 
-      const conflict = await findOverlappingUserShift(user.id, data.date, startTime, endTime);
+      const dupeKey = `${identifier}|${data.date}`;
+      const seenRanges = seenRangesByKey.get(dupeKey) || [];
+      seenRangesByKey.set(dupeKey, seenRanges);
 
-      preview.push({
-        ...base,
-        userId: user.id,
-        employeeName: user.profile ? `${user.profile.firstName || ""} ${user.profile.lastName || ""}`.trim() : user.email,
-        startTime,
-        endTime,
-        crossesMidnight,
-        shiftName: defaultShiftName(startTime, endTime),
-        timeRangeKey: timeRangeKey(startTime, endTime, crossesMidnight),
-        status: conflict ? "conflict" : "ready",
-        reason: conflict ? `Overlaps an existing shift ("${conflict.shift.shiftName}") on this date.` : null,
-      });
+      for (const { startTime, endTime, crossesMidnight } of ranges) {
+        const proposed = { startTime: hhmmToEpochDate(startTime), endTime: hhmmToEpochDate(endTime) };
+        const overlapsInFile = seenRanges.some((r) =>
+          hasTimeOverlap({ startTime: hhmmToEpochDate(r.startTime), endTime: hhmmToEpochDate(r.endTime) }, proposed)
+        );
+        if (overlapsInFile) {
+          preview.push({ ...base, status: "error", reason: "Overlaps another shift for this employee/date in this file." });
+          continue;
+        }
+        seenRanges.push({ startTime, endTime });
+
+        const conflict = await findOverlappingUserShift(user.id, data.date, startTime, endTime);
+
+        preview.push({
+          ...base,
+          userId: user.id,
+          employeeName: user.profile ? `${user.profile.firstName || ""} ${user.profile.lastName || ""}`.trim() : user.email,
+          startTime,
+          endTime,
+          crossesMidnight,
+          shiftName: defaultShiftName(startTime, endTime),
+          timeRangeKey: timeRangeKey(startTime, endTime, crossesMidnight),
+          status: conflict ? "conflict" : "ready",
+          reason: conflict ? `Overlaps an existing shift ("${conflict.shift.shiftName}") on this date.` : null,
+        });
+      }
     } catch (rowErr) {
       preview.push({ ...base, status: "error", reason: rowErr.message });
     }

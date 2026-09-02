@@ -6,8 +6,9 @@
 // Each data row is one employee for one date. Instead of explicit startTime/endTime
 // columns, the row carries one column per 30-minute block of the day (01:00 through
 // 23:30 — 46 columns) that the uploader marks for every block the employee is
-// scheduled. mergeBlocksToTimeRange() collapses the marked blocks into a single
-// startTime/endTime span.
+// scheduled. mergeBlocksToTimeRanges() collapses the marked blocks into one or more
+// startTime/endTime spans — a row with gapped marks (e.g. a split shift) yields
+// multiple spans.
 
 const { parse } = require("csv-parse/sync");
 
@@ -82,15 +83,35 @@ function parseScheduleCsv(buffer) {
   return records.map((data, i) => ({ rowNumber: i + 2, data }));
 }
 
+// Converts one contiguous run of block indices into a { startTime, endTime,
+// crossesMidnight } span (both HH:MM strings).
+function runToRange(startIdx, endIdx) {
+  const startTime = blockLabel(startIdx);
+  // The block's own end, not its label (which is its start) — wraps 23:30's block to "00:00".
+  const endTotalMinutes = BLOCK_START_HOUR * 60 + (endIdx + 1) * 30;
+  const endHour = Math.floor(endTotalMinutes / 60) % 24;
+  const endMinute = endTotalMinutes % 60;
+  const endTime = `${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`;
+
+  const startMinutesOfDay = BLOCK_START_HOUR * 60 + startIdx * 30;
+  const endMinutesOfDay = endTotalMinutes % (24 * 60);
+  const crossesMidnight = startMinutesOfDay > endMinutesOfDay;
+
+  return { startTime, endTime, crossesMidnight };
+}
+
 /**
- * Collapses one row's marked time-block cells into a single { startTime, endTime,
- * crossesMidnight } span (both HH:MM strings). Marked blocks must form one continuous
- * run (no gaps). When `overnight` is true, a run touching the very last block (23:30)
- * and a run touching the very first block (01:00) are treated as one wrapped overnight
- * span — the untracked 00:00-01:00 hour between them is assumed to be part of the shift.
- * Throws a plain Error (row-level, caught by the caller) for no-marks/non-contiguous rows.
+ * Collapses one row's marked time-block cells into one or more { startTime, endTime,
+ * crossesMidnight } spans (both HH:MM strings), one per contiguous run of marked
+ * blocks — so a row with gaps (e.g. a lunch-break split shift) yields multiple ranges,
+ * each becoming its own proposed shift. Ranges are returned in chronological order.
+ * When `overnight` is true, a run touching the very last block (23:30) and a run
+ * touching the very first block (01:00) are merged into one wrapped overnight span
+ * first — the untracked 00:00-01:00 hour between them is assumed to be part of the
+ * shift — before the remaining runs are converted individually.
+ * Throws a plain Error (row-level, caught by the caller) when no blocks are marked.
  */
-function mergeBlocksToTimeRange(row, overnight) {
+function mergeBlocksToTimeRanges(row, overnight) {
   const markedIndices = [];
   for (let i = 0; i < BLOCK_COUNT; i++) {
     if (isBlockMarked(row[BLOCK_COLUMNS[i]])) markedIndices.push(i);
@@ -115,34 +136,15 @@ function mergeBlocksToTimeRange(row, overnight) {
   }
   runs.push([runStart, prev]);
 
-  let startIdx, endIdx;
-
-  if (runs.length === 1) {
-    [startIdx, endIdx] = runs[0];
-  } else if (overnight && runs.length === 2 && runs[0][0] === 0 && runs[1][1] === BLOCK_COUNT - 1) {
-    // Late-day run + early-day run, wrapped into one overnight span.
-    startIdx = runs[1][0];
-    endIdx = runs[0][1];
-  } else {
-    throw new Error(
-      overnight
-        ? "Marked time blocks must form a single continuous span (or wrap past midnight)."
-        : "Marked time blocks must form a single continuous span."
-    );
+  // Merge the overnight wrap-around pair (last block's run + first block's run) into
+  // one span, if present, before converting whatever runs remain.
+  if (overnight && runs.length >= 2 && runs[0][0] === 0 && runs[runs.length - 1][1] === BLOCK_COUNT - 1) {
+    const earlyRun = runs.shift();
+    const lateRun = runs.pop();
+    runs.push([lateRun[0], earlyRun[1]]);
   }
 
-  const startTime = blockLabel(startIdx);
-  // The block's own end, not its label (which is its start) — wraps 23:30's block to "00:00".
-  const endTotalMinutes = BLOCK_START_HOUR * 60 + (endIdx + 1) * 30;
-  const endHour = Math.floor(endTotalMinutes / 60) % 24;
-  const endMinute = endTotalMinutes % 60;
-  const endTime = `${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`;
-
-  const startMinutesOfDay = BLOCK_START_HOUR * 60 + startIdx * 30;
-  const endMinutesOfDay = endTotalMinutes % (24 * 60);
-  const crossesMidnight = startMinutesOfDay > endMinutesOfDay;
-
-  return { startTime, endTime, crossesMidnight };
+  return runs.map(([startIdx, endIdx]) => runToRange(startIdx, endIdx)).sort((a, b) => (a.startTime < b.startTime ? -1 : 1));
 }
 
 /**
@@ -183,7 +185,7 @@ function buildTemplateCsv({ weekStart, overnight = false } = {}) {
 module.exports = {
   parseScheduleCsv,
   buildTemplateCsv,
-  mergeBlocksToTimeRange,
+  mergeBlocksToTimeRanges,
   CsvShapeError,
   KNOWN_COLUMNS,
   BLOCK_COLUMNS,
