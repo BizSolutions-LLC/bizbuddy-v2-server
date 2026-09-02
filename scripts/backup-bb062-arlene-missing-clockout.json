@@ -1,0 +1,62 @@
+{
+  "deletedAt": "2026-08-04T02:53:16.955Z",
+  "timeLog": {
+    "id": "cms3d0g900qq0t051h43yvmrd",
+    "userId": "cmqqsr0de0n6urz50z792cyju",
+    "timeIn": "2026-07-27T15:05:53.074Z",
+    "timeOut": null,
+    "coffeeBreaks": [],
+    "lunchBreak": null,
+    "deviceInfo": {
+      "end": null,
+      "start": {
+        "brand": "Apple",
+        "osName": "iOS",
+        "modelId": "iPhone18,1",
+        "modelName": "iPhone18,1",
+        "osVersion": "26.1",
+        "deviceName": "iPhone",
+        "manufacturer": "Apple"
+      }
+    },
+    "location": {
+      "end": null,
+      "start": {
+        "latitude": 37.40066206138219,
+        "longitude": -121.8490562106414
+      }
+    },
+    "status": true,
+    "createdAt": "2026-07-27T15:06:10.116Z",
+    "updatedAt": "2026-07-27T15:06:10.116Z",
+    "lateHours": "7.1",
+    "contestedPolicyApproved": false,
+    "originalTimeIn": null,
+    "originalTimeOut": null,
+    "isApproved": false,
+    "punchType": "REGULAR",
+    "remarks": [],
+    "autoClockOut": false,
+    "autoClockOutAt": null,
+    "autoLunchDeductionMinutes": null,
+    "autoLunchApplied": false,
+    "autoCoffeeApplied": false,
+    "undertimeHours": null,
+    "netWorkedHours": null,
+    "lunchDeductionMinutes": null,
+    "totalBreakMinutes": null,
+    "regularSegmentHours": null,
+    "driverAmSegmentHours": null,
+    "driverPmSegmentHours": null,
+    "rawOtMinutes": null,
+    "scheduledHours": null,
+    "grossHours": null,
+    "calculatedAt": null,
+    "isTooEarlyPunch": false
+  },
+  "liveUser": null,
+  "approvals": [],
+  "contests": [],
+  "overtimeRows": [],
+  "referencingRequestIds": []
+}

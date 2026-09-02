@@ -1,0 +1,33 @@
+{
+  "timeLog": {
+    "id": "cmsgbl4gw0sw1rl5120alk8tk",
+    "timeIn": "2026-08-05T13:45:00.000Z",
+    "timeOut": "2026-08-05T21:45:00.000Z",
+    "isApproved": false,
+    "netWorkedHours": "6.75",
+    "driverAmSegmentHours": "0",
+    "regularSegmentHours": "5.5",
+    "driverPmSegmentHours": "1.25",
+    "rawOtMinutes": 0,
+    "scheduledHours": "8",
+    "grossHours": "8",
+    "lateHours": "0",
+    "undertimeHours": "0",
+    "lunchDeductionMinutes": 0,
+    "totalBreakMinutes": 0,
+    "autoLunchDeductionMinutes": null,
+    "calculatedAt": "2026-08-19T21:42:01.863Z"
+  },
+  "approval": {
+    "id": "c4642fff-ab9d-4f01-b6e0-10e3e6e1e21d",
+    "status": "excluded",
+    "actualHours": null,
+    "approvedClockIn": null,
+    "approvedClockOut": null,
+    "approvedBy": "cmnejl0ji00i4nr4ubxche5ij",
+    "approvedAt": "2026-08-07T04:52:58.956Z",
+    "editedHours": null,
+    "scheduledHours": null,
+    "notes": "Suspected invalid punch"
+  }
+}
