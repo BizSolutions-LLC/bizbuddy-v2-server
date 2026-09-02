@@ -14,6 +14,20 @@ function parseClockTime(str, companyTimezone) {
   return moment.tz(str, companyTimezone).toDate();
 }
 
+// BB-080: who may file a punch/time-correction request on behalf of another
+// employee — same eligibility rule as leave approvals (leaveController.js's
+// _isEligibleApprover, BB-072): admin/superadmin unrestricted, a directly
+// assigned supervisor (EmploymentDetail.supervisorId) regardless of
+// department, or a supervisor whose department matches the target's.
+function _isEligibleToActFor(actingRole, actingUserId, actingDepartmentId, targetDepartmentId, targetSupervisorId) {
+  if (["admin", "superadmin"].includes(actingRole)) return true;
+  if (targetSupervisorId && actingUserId === targetSupervisorId) return true;
+  if (actingRole === "supervisor") {
+    return !!targetDepartmentId && actingDepartmentId === targetDepartmentId;
+  }
+  return false;
+}
+
 // Returns the first TimeLog that overlaps [clockIn, clockOut) for the given user.
 // A null timeOut (currently clocked in) is always treated as a conflict.
 async function findOverlappingLog(userId, clockIn, clockOut) {
@@ -77,7 +91,7 @@ async function createTimeLogFromRequest({ userId, companyId, timeIn, timeOut, re
 
 const submitRequestPunchLog = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const actingUserId = req.user.id;
     const {
       requestedDate,
       requestedClockIn,
@@ -86,6 +100,7 @@ const submitRequestPunchLog = async (req, res) => {
       reason,
       description,
       punchType,
+      targetUserId,
     } = req.body;
 
     // Validation
@@ -93,6 +108,43 @@ const submitRequestPunchLog = async (req, res) => {
       return res.status(400).json({
         message: "Missing required fields: requestedDate, requestedClockIn, requestedClockOut, approverId"
       });
+    }
+
+    // BB-080: supervisor/admin/superadmin filing this request on behalf of
+    // another employee in their scope. Employees may only file for themselves.
+    let userId = actingUserId;
+    let createdByUserId = null;
+    if (targetUserId && targetUserId !== actingUserId) {
+      if (req.user.role === "employee") {
+        return res.status(403).json({ message: "You are not allowed to file a request on behalf of another employee." });
+      }
+
+      const targetUser = await prisma.user.findFirst({
+        where: { id: targetUserId, companyId: req.user.companyId },
+        select: {
+          id: true,
+          departmentId: true,
+          employmentDetail: { select: { supervisorId: true } },
+        },
+      });
+
+      if (!targetUser) {
+        return res.status(404).json({ message: "Target employee not found." });
+      }
+
+      const eligible = _isEligibleToActFor(
+        req.user.role,
+        actingUserId,
+        req.user.departmentId,
+        targetUser.departmentId,
+        targetUser.employmentDetail?.supervisorId,
+      );
+      if (!eligible) {
+        return res.status(403).json({ message: "You are not allowed to file a request on behalf of this employee." });
+      }
+
+      userId = targetUser.id;
+      createdByUserId = actingUserId;
     }
 
     // punchType is optional — omitted/REGULAR/TRAINING behave exactly as before.
@@ -169,6 +221,7 @@ const submitRequestPunchLog = async (req, res) => {
       data: {
         userId,
         approverId,
+        createdByUserId,
         requestedDate: new Date(requestedDate),
         requestedClockIn: clockIn,
         requestedClockOut: clockOut,
@@ -191,6 +244,15 @@ const submitRequestPunchLog = async (req, res) => {
           },
         },
         approver: {
+          select: {
+            id: true,
+            email: true,
+            profile: {
+              select: { firstName: true, lastName: true },
+            },
+          },
+        },
+        createdBy: {
           select: {
             id: true,
             email: true,
@@ -266,6 +328,15 @@ const viewMyRequestedPunchLogs = async (req, res) => {
           },
         },
         approver: {
+          select: {
+            id: true,
+            email: true,
+            profile: {
+              select: { firstName: true, lastName: true },
+            },
+          },
+        },
+        createdBy: {
           select: {
             id: true,
             email: true,
@@ -361,6 +432,15 @@ const viewAllRequestedPunchLogs = async (req, res) => {
               },
             },
           },
+          createdBy: {
+            select: {
+              id: true,
+              email: true,
+              profile: {
+                select: { firstName: true, lastName: true },
+              },
+            },
+          },
         },
         orderBy: { submittedAt: "desc" },
         take: limit,
@@ -388,6 +468,9 @@ const viewAllRequestedPunchLogs = async (req, res) => {
       approverDisplayName: req.approver?.profile
         ? `${req.approver.profile.firstName} ${req.approver.profile.lastName}`
         : req.approver?.email,
+      createdByDisplayName: req.createdBy?.profile
+        ? `${req.createdBy.profile.firstName} ${req.createdBy.profile.lastName}`
+        : req.createdBy?.email || null,
     }));
 
     return res.status(200).json({
@@ -472,6 +555,13 @@ const approveRequestedPunchLog = async (req, res) => {
             profile: { select: { firstName: true, lastName: true } },
           },
         },
+        createdBy: {
+          select: {
+            id: true,
+            email: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
       },
     });
 
@@ -550,6 +640,13 @@ const rejectRequestedPunchLog = async (req, res) => {
           },
         },
         approver: {
+          select: {
+            id: true,
+            email: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
+        createdBy: {
           select: {
             id: true,
             email: true,

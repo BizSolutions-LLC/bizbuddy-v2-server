@@ -104,6 +104,51 @@ const getAllEmployees = async (req, res) => {
   }
 };
 
+// BB-080: the employees a supervisor/admin/superadmin is allowed to act for —
+// same scope as leave approvals (leaveUtils.js's leaveVisibilityWhere,
+// BB-072): own department, or a direct report via EmploymentDetail.supervisorId,
+// regardless of department. Admin/superadmin get the whole company.
+const getMyTeam = async (req, res) => {
+  try {
+    const { companyId, id: actingUserId, role, departmentId } = req.user;
+    if (!companyId) {
+      return res.status(400).json({ error: "No company associated with the employee." });
+    }
+
+    const where = ["admin", "superadmin"].includes(role)
+      ? { companyId }
+      : {
+          companyId,
+          OR: [
+            { employmentDetail: { supervisorId: actingUserId } },
+            ...(departmentId ? [{ departmentId }] : []),
+          ],
+        };
+
+    const employees = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        status: true,
+        profile: {
+          select: { firstName: true, lastName: true },
+        },
+        department: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { id: "asc" },
+    });
+
+    return res.status(200).json({ data: employees, message: "Team retrieved successfully." });
+  } catch (error) {
+    console.error("Error in getMyTeam:", error);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+};
+
 const createEmployee = async (req, res) => {
   try {
     let { 
@@ -888,6 +933,7 @@ const bulkCreateEmployees = async (req, res) => {
 
 module.exports = {
   getAllEmployees,
+  getMyTeam,
   createEmployee,
   updateEmployee,
   deleteEmployee,
