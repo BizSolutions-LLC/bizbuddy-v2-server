@@ -6,6 +6,7 @@ const authenticate = require("@middlewares/authMiddleware");
 const { authorizeRoles } = require("@middlewares/roleMiddleware");
 const {
   getAllEmployees,
+  getMyTeam,
   createEmployee,
   updateEmployee,
   deleteEmployee,
@@ -16,6 +17,7 @@ const {
 } = require("@controllers/Features/employeeController");
 
 router.get("/", authenticate, authorizeRoles("admin", "superadmin", "supervisor"), getAllEmployees);
+router.get("/team", authenticate, authorizeRoles("admin", "superadmin", "supervisor"), getMyTeam);
 router.post("/bulk", authenticate, authorizeRoles("admin", "superadmin"), bulkCreateEmployees);
 router.post("/", authenticate, authorizeRoles("admin", "superadmin"), createEmployee);
 router.put("/:id", authenticate, authorizeRoles("admin", "superadmin"), updateEmployee);

@@ -481,6 +481,7 @@ model User {
   passwordResetTokens      PasswordResetToken[]
   approvedRequestedLogs    RequestedTimeLog[]       @relation("RequestedTimeLogApprover")
   requestedTimeLogs        RequestedTimeLog[]       @relation("RequestedTimeLogUser")
+  createdRequestedTimeLogs RequestedTimeLog[]       @relation("RequestedTimeLogCreatedBy")
   payrollDetails           EmployeePayrollDetails?
   createdCutoffPeriods     CutoffPeriod[]
   approvedTimeLogs         TimeLogApproval[]
@@ -1157,6 +1158,7 @@ model RequestedTimeLog {
   id                String    @id @default(uuid())
   userId            String
   approverId        String?
+  createdByUserId   String?
   requestedDate     DateTime
   requestedClockIn  DateTime
   requestedClockOut DateTime
@@ -1173,12 +1175,14 @@ model RequestedTimeLog {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   approver          User?     @relation("RequestedTimeLogApprover", fields: [approverId], references: [id])
+  createdBy         User?     @relation("RequestedTimeLogCreatedBy", fields: [createdByUserId], references: [id])
   createdTimeLog    TimeLog?  @relation("CreatedFromRequest", fields: [createdTimeLogId], references: [id])
   user              User      @relation("RequestedTimeLogUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([approverId])
   @@index([status])
+  @@index([createdByUserId])
   @@map("requested_time_logs")
 }
 
