@@ -2114,4 +2114,9 @@ module.exports = {
   approveOtBlock,
   resetApproval,
   setPunchType,
+  // Exposed for reuse by the backtrack punch-log importer (BB-086), which
+  // needs to look up a target CutoffPeriod and trigger the same
+  // TimeLogApproval sync this file's own /:id/sync route uses.
+  findCutoffForCompany,
+  syncApprovalRecords,
 };
