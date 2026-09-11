@@ -440,12 +440,23 @@ exports.getAdminAnalyticsDashboard = async (req, res) => {
     const coverageRate = ((coveredShifts / totalScheduledShifts) * 100).toFixed(1);
 
     // 5. Leave Analytics
+    // leaveType is a legacy field that actually holds the LeavePolicy id, not
+    // a display name — resolve to names the same way leaveController.js's
+    // _attachPolicyNames() does, so the chart doesn't show raw ids.
+    const leaveTypeIds = [...new Set(leaves.map((l) => l.leaveType).filter(Boolean))];
+    const leavePolicies = await prisma.leavePolicy.findMany({
+      where: { id: { in: leaveTypeIds } },
+      select: { id: true, leaveType: true },
+    });
+    const leaveTypeNameById = Object.fromEntries(leavePolicies.map((p) => [p.id, p.leaveType]));
+
     const leaveByType = {};
     const approvedLeaves = leaves.filter(l => l.status === 'approved');
-    
+
     approvedLeaves.forEach((lv) => {
       const days = Math.max(1, diffHours(lv.startDate, lv.endDate) / 8);
-      leaveByType[lv.leaveType] = (leaveByType[lv.leaveType] || 0) + days;
+      const typeName = leaveTypeNameById[lv.leaveType] || lv.leaveType;
+      leaveByType[typeName] = (leaveByType[typeName] || 0) + days;
     });
 
     const totalLeaveRequests = leaves.length || 1;
