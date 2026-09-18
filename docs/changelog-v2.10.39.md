@@ -1,4 +1,4 @@
-# Changelog — v2.14.39
+# Changelog — v2.10.39
 
 > **BB-074** — cutoff-approval segment rows left over from a punch-type reclassification (e.g. a
 > duplicate-punch day where one punch gets retyped to Driver AM Only and another to Regular) are
