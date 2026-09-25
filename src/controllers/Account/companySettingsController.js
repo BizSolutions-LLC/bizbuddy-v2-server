@@ -523,7 +523,7 @@ exports.generateTestCheckPDF = async (req, res) => {
       // Net Pay
       netPay: 1817.81,
       
-      // Optional employee address for check
+      // Employee address prints on the pay stub, not the cheque face
       address: '123 Main Street',
       city: 'Anytown',
       state: 'CA',

@@ -83,27 +83,15 @@ function generateCheckPDF(payrollRun, employee, company, earningTypes, deduction
                { width: 85, align: 'right' });
 
       // 5. PAYEE NAME
+      // The PropMent cheque has no address slot under this line.
+      // The employee address is printed on the pay stubs below.
       doc.fontSize(positions.payeeName?.fontSize || 11)
          .font('Helvetica-Bold')
          .text(employeeName.toUpperCase(), 
                positions.payeeName?.x || 90, 
                positions.payeeName?.y || 145);
 
-      // 6. PAYEE ADDRESS
-      if (employee.address || employee.city || employee.state) {
-        const addressLine1 = employee.address || '';
-        const addressLine2 = `${employee.city || ''}, ${employee.state || ''} ${employee.postalCode || ''}`.trim();
-        
-        const addressY = positions.payeeAddress?.y || 160;
-        doc.fontSize(positions.payeeAddress?.fontSize || 9)
-           .font('Helvetica')
-           .text(addressLine1, positions.payeeAddress?.x || 90, addressY);
-        if (addressLine2.trim()) {
-          doc.text(addressLine2, positions.payeeAddress?.x || 90, addressY + 12);
-        }
-      }
-
-      // 7. MEMO LINE (Optional)
+      // 6. MEMO LINE (Optional)
       if (positions.memo && employee.memo) {
         doc.fontSize(positions.memo?.fontSize || 9)
            .font('Helvetica')
@@ -201,7 +189,12 @@ function renderPayStub(doc, startY, copyType, payrollRun, employee, company, ear
   // Employee Details
   currentY += 40;
   doc.fontSize(9).font('Helvetica-Bold').text(employee.employeeName || 'Employee', 50, currentY);
-  doc.fontSize(8).font('Helvetica').text(employee.position || 'No position', 50, currentY + 12);
+  let detailOffset = 12;
+  doc.fontSize(8).font('Helvetica').text(employee.position || 'No position', 50, currentY + detailOffset);
+  payeeAddressLines(employee).forEach((line) => {
+    detailOffset += 10;
+    doc.fontSize(8).font('Helvetica').text(line, 50, currentY + detailOffset, { width: 230 });
+  });
 
   // Employee Pay Info (Right Side)
   doc.fontSize(8).font('Helvetica-Bold').text('PTO Balance', 300, currentY);
@@ -214,7 +207,7 @@ function renderPayStub(doc, startY, copyType, payrollRun, employee, company, ear
 
   // ================== EARNINGS & DEDUCTIONS TABLE ==================
   
-  currentY += 40;
+  currentY += Math.max(40, detailOffset + 16);
   
   const tableTop = currentY;
   const tableBottom = currentY + 140;
@@ -344,6 +337,13 @@ function renderPayStub(doc, startY, copyType, payrollRun, employee, company, ear
 }
 
 // ================== HELPER FUNCTIONS ==================
+
+function payeeAddressLines(employee) {
+  const street = employee.address || '';
+  const cityState = [employee.city, employee.state].filter(Boolean).join(', ');
+  const cityLine = [cityState, employee.postalCode].filter(Boolean).join(' ');
+  return [street, cityLine].filter(Boolean);
+}
 
 function formatCurrency(num) {
   return num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
