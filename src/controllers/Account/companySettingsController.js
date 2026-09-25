@@ -482,15 +482,26 @@ exports.generateTestCheckPDF = async (req, res) => {
       employeeName: 'John Sample Employee',
       position: 'Software Engineer',
       checkNumber: '1001',
+      payType: 'hourly',
+      driverPayRate: 15,
+      payrollDetails: {
+        payType: 'hourly',
+        payRate: 30,
+        driverPayRate: 15,
+      },
+      hoursData: {
+        regularHours: 80,
+        overtimeHours: 5,
+        driverHours: 10,
+      },
       
       // Earnings
       earnings: {
-        regularHours: 80,
-        regularPay: 2400.00,
-        overtimeHours: 5,
-        overtimePay: 225.00,
+        regularHours: 2400.00,
+        overtimeHours: 225.00,
+        __fallback_driver: 150.00,
       },
-      grossPay: 2625.00,
+      grossPay: 2775.00,
       
       // Taxes
       taxes: {
@@ -510,7 +521,7 @@ exports.generateTestCheckPDF = async (req, res) => {
       totalDeductions: 281.25,
       
       // Net Pay
-      netPay: 1667.81,
+      netPay: 1817.81,
       
       // Optional employee address for check
       address: '123 Main Street',
@@ -520,7 +531,7 @@ exports.generateTestCheckPDF = async (req, res) => {
     };
 
     const mockEarningTypes = [
-      { id: 'regularHours', label: 'Regular Hours', code: 'regular_hours' },
+      { id: 'regularHours', label: 'Regular Hours Pay', code: 'regular_hours' },
       { id: 'overtimeHours', label: 'Overtime Hours', code: 'overtime' },
     ];
 
@@ -531,9 +542,10 @@ exports.generateTestCheckPDF = async (req, res) => {
 
     // ✅ ADD: Mock YTD data
     const mockYTD = {
-      grossEarnings: 7875.00,    // 3 pay periods
+      grossEarnings: 8325.00,    // 3 pay periods
       regularPay: 7200.00,
       overtimePay: 675.00,
+      driverPay: 450.00,
       
       federalTax: 945.00,
       stateTax: 393.75,
@@ -546,7 +558,7 @@ exports.generateTestCheckPDF = async (req, res) => {
       retirement401k: 393.75,
       totalDeductions: 843.75,
       
-      netPay: 5003.43,
+      netPay: 5453.43,
       
       payPeriodsIncluded: 3,
     };

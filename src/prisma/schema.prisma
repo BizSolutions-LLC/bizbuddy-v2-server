@@ -122,9 +122,10 @@ model PayrollRun {
   totalTaxes         Decimal    @default(0) @db.Decimal(14, 2)
   totalDeductions    Decimal    @default(0) @db.Decimal(14, 2)
   
-  entries     PayrollEntry[]
-  company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  schedule    PaySchedule?     @relation(fields: [scheduleId], references: [id])
+  entries              PayrollEntry[]
+  disbursementBatches  DisbursementBatch[]
+  company              Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  schedule             PaySchedule?     @relation(fields: [scheduleId], references: [id])
 
   @@unique([companyId, periodStart, periodEnd])
   @@index([companyId, periodStart, periodEnd])
@@ -314,6 +315,8 @@ model EmployeePayrollDetails {
   caPitExempt              Boolean       @default(false)
   caSdiExempt              Boolean       @default(false)
   withCalSavers            Boolean       @default(false)
+  payoutProvider           String?
+  payoutProviderAccountId  String?
   createdAt                DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
 
@@ -482,8 +485,14 @@ model User {
   approvedRequestedLogs    RequestedTimeLog[]       @relation("RequestedTimeLogApprover")
   requestedTimeLogs        RequestedTimeLog[]       @relation("RequestedTimeLogUser")
   createdRequestedTimeLogs RequestedTimeLog[]       @relation("RequestedTimeLogCreatedBy")
-  payrollDetails           EmployeePayrollDetails?
-  createdCutoffPeriods     CutoffPeriod[]
+  payrollDetails                EmployeePayrollDetails?
+  createdDisbursementBatches    DisbursementBatch[]        @relation("DisbursementCreatedBy")
+  approvedDisbursementBatches   DisbursementBatch[]        @relation("DisbursementApprovedBy")
+  markedPaidDisbursementBatches DisbursementBatch[]        @relation("DisbursementPaymentMarkedBy")
+  markedPaidDisbursementRecipients DisbursementRecipient[] @relation("DisbursementRecipientPaymentMarkedBy")
+  disbursementRecipients        DisbursementRecipient[]
+  disbursementAuditEvents       DisbursementAuditEvent[]
+  createdCutoffPeriods          CutoffPeriod[]
   approvedTimeLogs         TimeLogApproval[]
   otBlocks                 CutoffOtBlock[]  @relation("OtBlockUser")
   approvedOtBlocks         CutoffOtBlock[]  @relation("OtBlockApprover")
@@ -587,6 +596,7 @@ model Company {
   paySchedules            PaySchedule[]
   payrollConfiguration    PayrollConfiguration?
   runs                    PayrollRun[]
+  disbursementBatches     DisbursementBatch[]
   Shift                   Shift[]
   ShiftSchedule           ShiftSchedule[]
   stateIncomeTaxRates     StateIncomeTaxRate[]
@@ -1596,4 +1606,131 @@ enum PunchType {
   DRIVER_AIDE_PM
   DRIVER_AIDE
   TRAINING
+}
+
+enum DisbursementBatchStatus {
+  DRAFT
+  READY_FOR_REVIEW
+  APPROVED
+  READY_FOR_DISBURSEMENT
+  PROCESSING
+  COMPLETED
+  FAILED
+  NEEDS_REVIEW
+  CANCELLED
+}
+
+enum DisbursementRecipientStatus {
+  PENDING
+  READY
+  WARNING
+  BLOCKED
+  FAILED
+  PAID
+}
+
+enum DisbursementAuditAction {
+  BATCH_CREATED
+  BATCH_MODIFIED
+  BATCH_APPROVED
+  BATCH_CANCELLED
+  BATCH_SUBMITTED
+  BATCH_COMPLETED
+  BATCH_FAILED
+  RECIPIENT_STATUS_CHANGED
+}
+
+enum DisbursementPaymentMethod {
+  CHECK
+  BANK_TRANSFER
+  CASH
+  OTHER
+}
+
+model DisbursementBatch {
+  id                   String                   @id @default(cuid())
+  companyId            String
+  payrollRunId         String
+  currency             String                   @default("USD")
+  totalAmount          Decimal                  @default(0) @db.Decimal(14, 2)
+  recipientCount       Int                      @default(0)
+  status               DisbursementBatchStatus  @default(READY_FOR_REVIEW)
+  idempotencyKey       String                   @unique
+  activePayrollRunKey  String?                  @unique
+  createdById          String
+  approvedById         String?
+  createdAt            DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime                 @updatedAt @db.Timestamptz(6)
+  approvedAt           DateTime?                @db.Timestamptz(6)
+  submittedAt          DateTime?                @db.Timestamptz(6)
+  completedAt          DateTime?                @db.Timestamptz(6)
+  failureCode          String?
+  failureMessage       String?
+  providerBatchId      String?
+  metadata             Json?
+  paymentMethod        DisbursementPaymentMethod?
+  paymentMarkedById    String?
+  paymentMarkedAt      DateTime?                @db.Timestamptz(6)
+  paymentProofFileName String?
+  paymentProofMimeType String?
+  paymentProofBytes    Bytes?
+
+  company          Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  payrollRun       PayrollRun               @relation(fields: [payrollRunId], references: [id], onDelete: Restrict)
+  createdBy        User                     @relation("DisbursementCreatedBy", fields: [createdById], references: [id])
+  approvedBy       User?                    @relation("DisbursementApprovedBy", fields: [approvedById], references: [id])
+  paymentMarkedBy  User?                    @relation("DisbursementPaymentMarkedBy", fields: [paymentMarkedById], references: [id])
+  recipients  DisbursementRecipient[]
+  auditEvents DisbursementAuditEvent[]
+
+  @@index([companyId, status])
+  @@index([payrollRunId, status])
+  @@index([companyId, createdAt])
+}
+
+model DisbursementRecipient {
+  id                       String                        @id @default(cuid())
+  batchId                  String
+  employeeId               String
+  amount                   Decimal                       @db.Decimal(14, 2)
+  currency                 String                        @default("USD")
+  payoutProviderAccountId  String?
+  status                   DisbursementRecipientStatus   @default(PENDING)
+  providerTransactionId    String?
+  failureReason            String?
+  issues                   Json?
+  paymentMethod            DisbursementPaymentMethod?
+  paymentMarkedById        String?
+  paymentMarkedAt          DateTime?                     @db.Timestamptz(6)
+  paymentProofFileName     String?
+  paymentProofMimeType     String?
+  paymentProofBytes        Bytes?
+  createdAt                DateTime                      @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime                      @updatedAt @db.Timestamptz(6)
+
+  batch            DisbursementBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  employee         User              @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  paymentMarkedBy  User?             @relation("DisbursementRecipientPaymentMarkedBy", fields: [paymentMarkedById], references: [id], onDelete: SetNull)
+
+  @@unique([batchId, employeeId])
+  @@index([employeeId])
+  @@index([batchId, status])
+}
+
+model DisbursementAuditEvent {
+  id            String                  @id @default(cuid())
+  actorUserId   String?
+  action        DisbursementAuditAction
+  batchId       String
+  recipientId   String?
+  previousState String?
+  newState      String?
+  metadata      Json?
+  createdAt     DateTime                @default(now()) @db.Timestamptz(6)
+
+  actor User?             @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  batch DisbursementBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, createdAt])
+  @@index([actorUserId, createdAt])
 }

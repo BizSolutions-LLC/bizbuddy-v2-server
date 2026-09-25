@@ -9,7 +9,7 @@
     "seed": "node src/prisma/seed.js",
     "prisma:sync": "prisma db push --accept-data-loss && prisma generate",
     "postinstall": "prisma generate",
-    "test": "node --test tests/mobileDeviceLogin.test.js tests/clockInReminderWorker.test.js tests/punchTypeUtils.test.js"
+    "test": "node --test tests/mobileDeviceLogin.test.js tests/clockInReminderWorker.test.js tests/punchTypeUtils.test.js tests/disbursementService.test.js"
   },
   "prisma": {
     "schema": "src/prisma/schema.prisma",
@@ -46,7 +46,7 @@
     "module-alias": "^2.2.3",
     "moment-timezone": "^0.6.0",
     "morgan": "^1.10.1",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^1.4.5-lts.2",
     "node-cron": "^3.0.3",
     "nodemailer": "^7.0.9",
     "pdfkit": "^0.17.2",

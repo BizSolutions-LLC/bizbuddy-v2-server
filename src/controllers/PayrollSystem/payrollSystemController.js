@@ -241,6 +241,14 @@ exports.savePayrollRun = async (req, res) => {
         employeeName: emp.name,
         position: emp.position,
         payType: emp.payrollDetails?.payType || 'hourly',
+        driverPayRate: emp.payrollDetails?.driverPayRate ?? null,
+        payrollDetails: emp.payrollDetails
+          ? {
+              payType: emp.payrollDetails.payType || 'hourly',
+              payRate: emp.payrollDetails.payRate ?? null,
+              driverPayRate: emp.payrollDetails.driverPayRate ?? null,
+            }
+          : null,
         checkNumber: String(parseInt(checkNumberStart) + index),
         
         // Earnings breakdown

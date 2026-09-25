@@ -1,4 +1,9 @@
 const PDFDocument = require('pdfkit');
+const {
+  collectEarningRows,
+  formatHours,
+  resolveEarningYtd,
+} = require('./payrollEarningRows');
 
 function generateCheckPDF(payrollRun, employee, company, earningTypes, deductionTypes, ytd) {
   return new Promise((resolve, reject) => {
@@ -146,6 +151,8 @@ function renderPayStub(doc, startY, copyType, payrollRun, employee, company, ear
     overtimeHours: 0,
     ptoPay: 0,
     ptoHours: 0,
+    driverPay: 0,
+    driverHours: 0,
     federalTax: 0,
     stateTax: 0,
     fica: 0,
@@ -240,33 +247,15 @@ function renderPayStub(doc, startY, copyType, payrollRun, employee, company, ear
   // ====== EARNINGS DATA ======
   doc.fontSize(7).font('Helvetica');
 
-  if (employee.earnings && earningTypes) {
-    Object.entries(employee.earnings).forEach(([earningTypeId, value]) => {
-      if (parseFloat(value) > 0) {
-        const earningType = earningTypes.find(et => et.id === earningTypeId);
-        const label = earningType ? earningType.label : 'Other';
-        
-        doc.text(label, 60, currentY, { width: 80 });
-        
-        // Show hours for hourly types
-        let hoursValue = '-';
-        const hoursField = `${earningTypeId}Hours`;
-        if (employee.earnings[hoursField]) {
-          hoursValue = parseFloat(employee.earnings[hoursField]).toFixed(2);
-        }
-        
-        doc.text(hoursValue, 150, currentY, { width: 40, align: 'right' });
-        doc.text(parseFloat(value).toFixed(2), 200, currentY, { width: 50, align: 'right' });
-        
-        // ✅ YTD from safeYTD object
-        const ytdField = earningTypeId.replace(/([A-Z])/g, (match) => match.toLowerCase());
-        const ytdAmount = safeYTD[ytdField] || safeYTD[`${ytdField}Pay`] || 0;
-        doc.text(parseFloat(ytdAmount).toFixed(2), 260, currentY, { width: 60, align: 'right' });
-        
-        currentY += 10;
-      }
-    });
-  }
+  collectEarningRows(employee, earningTypes).forEach((row) => {
+    doc.text(row.label, 60, currentY, { width: 80 });
+    doc.text(formatHours(row.hours), 150, currentY, { width: 40, align: 'right' });
+    doc.text(parseFloat(row.amount).toFixed(2), 200, currentY, { width: 50, align: 'right' });
+
+    doc.text(resolveEarningYtd(row, safeYTD).toFixed(2), 260, currentY, { width: 60, align: 'right' });
+
+    currentY += 10;
+  });
 
   // Gross Earnings Total
   currentY += 5;
