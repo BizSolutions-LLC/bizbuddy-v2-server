@@ -32,6 +32,7 @@ const contestPolicyRoutes = require("@routes/Features/contestPolicyRoutes");
 const requestPunchRoutes = require("@routes/Features/requestPunchLogRoutes");
 const punchLogImportRoutes = require("@routes/Features/punchLogImportRoutes");
 const scheduleImportRoutes = require("@routes/Features/scheduleImportRoutes");
+const backtrackPunchLogImportRoutes = require("@routes/Features/backtrackPunchLogImportRoutes");
 const companyInformationRoutes = require("@routes/PayrollSystem/companyInformationRoutes");
 const deductionsRoutes = require("@routes/Deductions/deductionsRoutes");
 const payrollSystemRoutes = require("@routes/PayrollSystem/payrollSystemRoutes");
@@ -45,6 +46,7 @@ const feedbackRoutes = require("@routes/Features/feedbackRoutes");
 const punchLogsBootstrapRoutes = require("@routes/Features/punchLogsBootstrapRoutes");
 const payrollExportRoutes = require("@routes/Payroll/payrollExportRoutes");
 const disbursementRoutes = require("@routes/Disbursement/disbursementRoutes");
+const yearlyTotalHoursReportRoutes = require("@routes/Reports/yearlyTotalHoursReportRoutes");
 
 const testRoutes = require("@routes/testRoutes");
 
@@ -77,6 +79,7 @@ router.use("/contest-policy", contestPolicyRoutes);
 router.use("/request-punch-log", requestPunchRoutes);
 router.use("/punch-log-import", punchLogImportRoutes);
 router.use("/schedule-import", scheduleImportRoutes);
+router.use("/backtrack-punch-log-import", backtrackPunchLogImportRoutes);
 router.use("/payroll-system", payrollSystemRoutes);
 router.use("/company-information", companyInformationRoutes);
 router.use("/deductions", deductionsRoutes);
@@ -89,6 +92,7 @@ router.use("/feedback", feedbackRoutes);
 router.use("/punch-logs", punchLogsBootstrapRoutes);
 router.use("/payroll-export", payrollExportRoutes);
 router.use("/disbursements", disbursementRoutes);
+router.use("/reports", yearlyTotalHoursReportRoutes);
 
 router.use("/analytics", analyticsRoutes);
 router.use("/system-admin", systemAdminRoutes);
