@@ -19,7 +19,7 @@
 const { prisma } = require("@config/connection");
 
 const DRIVER_SEGMENT_TYPES = ["driver_am", "driver_pm"];
-const DRIVER_PUNCH_TYPES   = ["DRIVER_AIDE_AM", "DRIVER_AIDE_PM"];
+const DRIVER_AIDE_PUNCH_TYPES = ["DRIVER_AIDE", "DRIVER_AIDE_AM", "DRIVER_AIDE_PM"];
 
 function n(v) {
   return v == null ? 0 : parseFloat(v.toString());
@@ -98,9 +98,9 @@ async function generatePayrollExportForCutoffPeriod(cutoffPeriod) {
       b.regular += hrs;
     } else if (tl.punchType === "TRAINING") {
       b.training += hrs;
-    } else if (DRIVER_PUNCH_TYPES.includes(tl.punchType)) {
-      b.driver += hrs;
-    } else if (tl.punchType === "DRIVER_AIDE") {
+    } else if (DRIVER_AIDE_PUNCH_TYPES.includes(tl.punchType)) {
+      // Full, AM-only, and PM-only days all include a regular segment.
+      // Classify by segment so that segment is regular hours.
       if (a.segmentType === "regular") {
         b.regular += hrs;
       } else if (DRIVER_SEGMENT_TYPES.includes(a.segmentType)) {

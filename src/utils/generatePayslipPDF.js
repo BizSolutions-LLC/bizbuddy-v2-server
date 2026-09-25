@@ -1,4 +1,11 @@
 const PDFDocument = require('pdfkit');
+const {
+  collectEarningRows,
+  formatHours,
+  formatRate,
+  resolveEarningRate,
+  resolveEarningYtd,
+} = require('./payrollEarningRows');
 
 async function generatePayslipPDF(payrollRun, employee, company, earningTypes, deductionTypes, ytd) {
   return new Promise((resolve, reject) => {
@@ -100,40 +107,18 @@ async function generatePayslipPDF(payrollRun, employee, company, earningTypes, d
       
       // Earnings data rows
       doc.fontSize(9).font('Helvetica');
-      
-      if (employee.earnings && earningTypes) {
-        Object.entries(employee.earnings).forEach(([earningTypeId, value]) => {
-          if (value > 0) {
-            const earningType = earningTypes.find(et => et.id === earningTypeId);
-            const label = earningType ? earningType.label : 'Other Earning';
-            
-            // Get hours
-            const hoursField = `${earningTypeId}Hours`;
-            const hours = employee.earnings[hoursField] || '';
-            const displayHours = hours ? parseFloat(hours).toFixed(2) : '-';
-            
-            // Get rate
-            const rateField = `${earningTypeId}Rate`;
-            const rate = employee.earnings[rateField] || '';
-            const displayRate = rate ? parseFloat(rate).toFixed(2) : '-';
-            
-            // Get YTD
-            const ytdField = earningTypeId.replace(/([A-Z])/g, (match) => match.toLowerCase());
-            const ytdValue = ytd[ytdField] || ytd[`${ytdField}Pay`] || 0;
-            
-            // Row with border
-            doc.rect(40, tableY, 532, 16).stroke();
-            
-            doc.text(label, 50, tableY + 4);
-            doc.text(displayHours, 280, tableY + 4, { width: 50, align: 'right' });
-            doc.text(displayRate, 340, tableY + 4, { width: 60, align: 'right' });
-            doc.text(parseFloat(value).toFixed(2), 410, tableY + 4, { width: 70, align: 'right' });
-            doc.text(parseFloat(ytdValue).toFixed(2), 490, tableY + 4, { width: 72, align: 'right' });
-            
-            tableY += 16;
-          }
-        });
-      }
+
+      collectEarningRows(employee, earningTypes).forEach((row) => {
+        doc.rect(40, tableY, 532, 16).stroke();
+
+        doc.text(row.label, 50, tableY + 4);
+        doc.text(formatHours(row.hours), 280, tableY + 4, { width: 50, align: 'right' });
+        doc.text(formatRate(resolveEarningRate(employee, row)), 340, tableY + 4, { width: 60, align: 'right' });
+        doc.text(parseFloat(row.amount).toFixed(2), 410, tableY + 4, { width: 70, align: 'right' });
+        doc.text(resolveEarningYtd(row, ytd).toFixed(2), 490, tableY + 4, { width: 72, align: 'right' });
+
+        tableY += 16;
+      });
       
       // Gross pay total row - highlighted
       doc.rect(40, tableY, 532, 18).fillAndStroke('#f0f0f0', '#000');

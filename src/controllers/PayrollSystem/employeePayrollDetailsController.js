@@ -453,42 +453,47 @@ exports.upsertEmployeePayrollDetails = async (req, res) => {
     });
 
     // Handle earning rates if provided
-    if (earningRates && Array.isArray(earningRates)) {
-      // Verify all earning types belong to this company and are custom_rate
-      const earningTypeIds = earningRates.map((er) => er.earningTypeId);
-      const validEarningTypes = await prisma.earningType.findMany({
-        where: {
-          id: { in: earningTypeIds },
-          companyId,
-          calculationType: "custom_rate",
-        },
-        select: { id: true },
-      });
+    if (earningRates && Array.isArray(earningRates) && earningRates.length > 0) {
+      // Prisma throws on `id: { in: [] }` — Employee Save always posts earningRates,
+      // often empty when the company has no custom_rate types.
+      const earningTypeIds = earningRates
+        .map((er) => er.earningTypeId)
+        .filter(Boolean);
 
-      const validIds = new Set(validEarningTypes.map((et) => et.id));
-
-      // Upsert each earning rate
-      for (const er of earningRates) {
-        if (!validIds.has(er.earningTypeId)) {
-          continue; // Skip invalid earning types
-        }
-
-        await prisma.employeeEarningRate.upsert({
+      if (earningTypeIds.length > 0) {
+        const validEarningTypes = await prisma.earningType.findMany({
           where: {
-            employeePayrollDetailsId_earningTypeId: {
+            id: { in: earningTypeIds },
+            companyId,
+            calculationType: "custom_rate",
+          },
+          select: { id: true },
+        });
+
+        const validIds = new Set(validEarningTypes.map((et) => et.id));
+
+        for (const er of earningRates) {
+          if (!validIds.has(er.earningTypeId)) {
+            continue;
+          }
+
+          await prisma.employeeEarningRate.upsert({
+            where: {
+              employeePayrollDetailsId_earningTypeId: {
+                employeePayrollDetailsId: payrollDetails.id,
+                earningTypeId: er.earningTypeId,
+              },
+            },
+            create: {
               employeePayrollDetailsId: payrollDetails.id,
               earningTypeId: er.earningTypeId,
+              rate: parseFloat(er.rate) || 0,
             },
-          },
-          create: {
-            employeePayrollDetailsId: payrollDetails.id,
-            earningTypeId: er.earningTypeId,
-            rate: parseFloat(er.rate) || 0,
-          },
-          update: {
-            rate: parseFloat(er.rate) || 0,
-          },
-        });
+            update: {
+              rate: parseFloat(er.rate) || 0,
+            },
+          });
+        }
       }
     }
 

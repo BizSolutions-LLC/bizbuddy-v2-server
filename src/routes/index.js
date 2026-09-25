@@ -44,6 +44,7 @@ const dashboardRoutes = require("@routes/Features/dashboardRoutes");
 const feedbackRoutes = require("@routes/Features/feedbackRoutes");
 const punchLogsBootstrapRoutes = require("@routes/Features/punchLogsBootstrapRoutes");
 const payrollExportRoutes = require("@routes/Payroll/payrollExportRoutes");
+const disbursementRoutes = require("@routes/Disbursement/disbursementRoutes");
 
 const testRoutes = require("@routes/testRoutes");
 
@@ -87,6 +88,7 @@ router.use("/dashboard", dashboardRoutes);
 router.use("/feedback", feedbackRoutes);
 router.use("/punch-logs", punchLogsBootstrapRoutes);
 router.use("/payroll-export", payrollExportRoutes);
+router.use("/disbursements", disbursementRoutes);
 
 router.use("/analytics", analyticsRoutes);
 router.use("/system-admin", systemAdminRoutes);
