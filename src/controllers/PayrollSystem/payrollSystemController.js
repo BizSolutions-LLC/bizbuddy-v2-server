@@ -172,7 +172,8 @@ exports.savePayrollRun = async (req, res) => {
     // Load this company's configured deduction rates (stored as percentages,
     // e.g. 12 for 12%) and convert to the decimal fractions taxRatesUsed
     // expects. Falls back to DEFAULT_TAX_RATES if no config row exists yet.
-    const [payrollConfig, federalTaxRates, stateTaxRates] = await Promise.all([
+    const employeeIds = employees.map((emp) => emp.id).filter(Boolean);
+    const [payrollConfig, federalTaxRates, stateTaxRates, addressUsers] = await Promise.all([
       prisma.payrollConfiguration.findUnique({
         where: { companyId },
         select: {
@@ -204,7 +205,33 @@ exports.savePayrollRun = async (req, res) => {
         },
         orderBy: [{ filingStatus: 'asc' }, { minAnnualIncome: 'asc' }],
       }),
+      prisma.user.findMany({
+        where: { id: { in: employeeIds }, companyId },
+        select: {
+          id: true,
+          profile: {
+            select: {
+              addressLine: true,
+              city: true,
+              state: true,
+              postalCode: true,
+            },
+          },
+        },
+      }),
     ]);
+
+    const addressByUserId = new Map(
+      addressUsers.map((user) => [
+        user.id,
+        {
+          address: user.profile?.addressLine || null,
+          city: user.profile?.city || null,
+          state: user.profile?.state || null,
+          postalCode: user.profile?.postalCode || null,
+        },
+      ])
+    );
 
     const taxRatesUsed = {
       federalBrackets: federalTaxRates.map((b) => ({
@@ -240,6 +267,10 @@ exports.savePayrollRun = async (req, res) => {
         employeeId: emp.id,
         employeeName: emp.name,
         position: emp.position,
+        address: addressByUserId.get(emp.id)?.address ?? null,
+        city: addressByUserId.get(emp.id)?.city ?? null,
+        state: addressByUserId.get(emp.id)?.state ?? null,
+        postalCode: addressByUserId.get(emp.id)?.postalCode ?? null,
         payType: emp.payrollDetails?.payType || 'hourly',
         driverPayRate: emp.payrollDetails?.driverPayRate ?? null,
         payrollDetails: emp.payrollDetails
@@ -838,6 +869,32 @@ exports.generateCheckPDF = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
 
+    let payee = employee;
+    if (!employee.address && !employee.city && !employee.state && !employee.postalCode) {
+      const user = await prisma.user.findFirst({
+        where: { id: employeeId, companyId },
+        select: {
+          profile: {
+            select: {
+              addressLine: true,
+              city: true,
+              state: true,
+              postalCode: true,
+            },
+          },
+        },
+      });
+      if (user?.profile) {
+        payee = {
+          ...employee,
+          address: user.profile.addressLine || '',
+          city: user.profile.city || '',
+          state: user.profile.state || '',
+          postalCode: user.profile.postalCode || '',
+        };
+      }
+    }
+
     // ✅ FETCH COMPANY WITH CHECK POSITIONS
     const company = await prisma.company.findUnique({
       where: { id: companyId },
@@ -861,7 +918,7 @@ exports.generateCheckPDF = async (req, res) => {
     const generateCheckPDF = require('@utils/generateCheckPDF');
     const pdfBuffer = await generateCheckPDF(
       payrollRun, 
-      employee, 
+      payee, 
       company, 
       earningTypes, 
       deductionTypes,
