@@ -197,13 +197,16 @@ function renderPayStub(doc, startY, copyType, payrollRun, employee, company, ear
   });
 
   // Employee Pay Info (Right Side)
-  doc.fontSize(8).font('Helvetica-Bold').text('PTO Balance', 300, currentY);
-  const ptoBalance = employee.hoursData?.ptoHoursBalance || 0;
-  doc.font('Helvetica').text(`${ptoBalance.toFixed(2)} Hours`, 380, currentY);
+  const ptoUsed = parseFloat(employee.hoursData?.ptoHours || 0);
+  const ptoBalance = parseFloat(employee.hoursData?.ptoHoursBalance || 0);
+  doc.fontSize(8).font('Helvetica-Bold').text('PTO Used', 300, currentY);
+  doc.font('Helvetica').text(`${ptoUsed.toFixed(2)} Hours`, 380, currentY);
+  doc.font('Helvetica-Bold').text('PTO Balance', 300, currentY + 10);
+  doc.font('Helvetica').text(`${ptoBalance.toFixed(2)} Hours`, 380, currentY + 10);
   
-  doc.font('Helvetica-Bold').text('Rate', 300, currentY + 10);
+  doc.font('Helvetica-Bold').text('Rate', 300, currentY + 20);
   const payRate = employee.payrollDetails?.payRate || employee.payRate || '0.00';
-  doc.font('Helvetica').text(employee.payType === 'salary' ? 'Salary' : `$${payRate} / HR`, 380, currentY + 10);
+  doc.font('Helvetica').text(employee.payType === 'salary' ? 'Salary' : `$${payRate} / HR`, 380, currentY + 20);
 
   // ================== EARNINGS & DEDUCTIONS TABLE ==================
   
