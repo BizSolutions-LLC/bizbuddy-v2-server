@@ -493,6 +493,8 @@ exports.generateTestCheckPDF = async (req, res) => {
         regularHours: 80,
         overtimeHours: 5,
         driverHours: 10,
+        ptoHours: 8,
+        ptoHoursBalance: 32,
       },
       
       // Earnings

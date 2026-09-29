@@ -17,6 +17,15 @@ const DEFAULT_TAX_RATES = {
   sdiRate: 0.011,
 };
 
+function snapshotHoursData(hours, payrollDetails) {
+  if (!hours && payrollDetails?.ptoHoursBalance == null) return null;
+  const snapshot = { ...(hours || {}) };
+  if (snapshot.ptoHoursBalance == null && payrollDetails?.ptoHoursBalance != null) {
+    snapshot.ptoHoursBalance = parseFloat(payrollDetails.ptoHoursBalance) || 0;
+  }
+  return snapshot;
+}
+
 exports.getEmployeeList = async (req, res) => {
   try {
     const { companyId } = req.user;
@@ -297,8 +306,9 @@ exports.savePayrollRun = async (req, res) => {
         // Net pay (after taxes and deductions)
         netPay: emp.netPayAfterTaxes,
         
-        // Hours data (if available)
-        hoursData: hoursData[emp.id] || null,
+        // Hours data (if available). PTO balance is frozen here so a later
+        // edit to the employee record does not change this check.
+        hoursData: snapshotHoursData(hoursData?.[emp.id], emp.payrollDetails),
       })),
       
       // Metadata
@@ -870,7 +880,9 @@ exports.generateCheckPDF = async (req, res) => {
     }
 
     let payee = employee;
-    if (!employee.address && !employee.city && !employee.state && !employee.postalCode) {
+    const needsAddress = !employee.address && !employee.city && !employee.state && !employee.postalCode;
+    const needsPtoBalance = employee.hoursData?.ptoHoursBalance == null;
+    if (needsAddress || needsPtoBalance) {
       const user = await prisma.user.findFirst({
         where: { id: employeeId, companyId },
         select: {
@@ -882,15 +894,30 @@ exports.generateCheckPDF = async (req, res) => {
               postalCode: true,
             },
           },
+          payrollDetails: {
+            select: { ptoHoursBalance: true },
+          },
         },
       });
-      if (user?.profile) {
+      if (user) {
         payee = {
           ...employee,
-          address: user.profile.addressLine || '',
-          city: user.profile.city || '',
-          state: user.profile.state || '',
-          postalCode: user.profile.postalCode || '',
+          ...(needsAddress && user.profile
+            ? {
+                address: user.profile.addressLine || '',
+                city: user.profile.city || '',
+                state: user.profile.state || '',
+                postalCode: user.profile.postalCode || '',
+              }
+            : {}),
+          ...(needsPtoBalance
+            ? {
+                hoursData: {
+                  ...(employee.hoursData || {}),
+                  ptoHoursBalance: parseFloat(user.payrollDetails?.ptoHoursBalance || 0),
+                },
+              }
+            : {}),
         };
       }
     }
