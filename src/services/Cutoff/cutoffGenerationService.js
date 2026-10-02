@@ -6,15 +6,34 @@ const prisma = new PrismaClient();
 
 /**
  * ✅ NEW: Generate periods between specific dates (for historical backfill)
+ *
+ * anchorStartDate is the department's configured DepartmentCutoffSettings.startDate.
+ * The requested startDate/endDate only bound the output range — the actual period
+ * boundaries are derived by walking forward from anchorStartDate, so historical
+ * generation stays on the same cadence as the normal forward-generation path
+ * instead of anchoring to whatever raw date the caller passed in.
  */
-function generatePeriodsBetweenDates(startDate, endDate, frequency, paymentOffset) {
+function generatePeriodsBetweenDates(startDate, endDate, frequency, paymentOffset, anchorStartDate) {
   const periods = [];
-  let currentStart = new Date(startDate);
+  const targetStart = new Date(startDate);
   const targetEnd = new Date(endDate);
-  
+
+  // Walk forward from the configured anchor to the first period that covers
+  // (or starts on/after) the requested range start.
+  let currentStart = new Date(anchorStartDate);
+  let alignIterationCount = 0;
+  const maxAlignIterations = 500;
+  while (alignIterationCount < maxAlignIterations) {
+    const periodEnd = calculatePeriodEnd(currentStart, frequency);
+    if (periodEnd >= targetStart) break;
+    currentStart = new Date(periodEnd);
+    currentStart.setDate(currentStart.getDate() + 1);
+    alignIterationCount++;
+  }
+
   let iterationCount = 0;
   const maxIterations = 200; // Increased for historical data
-  
+
   while (currentStart <= targetEnd && iterationCount < maxIterations) {
     const periodEnd = calculatePeriodEnd(currentStart, frequency);
     
@@ -164,7 +183,8 @@ const generateCutoffPeriods = async (req, res) => {
         new Date(fromDate),
         new Date(toDate),
         settings.frequency,
-        settings.paymentOffsetDays
+        settings.paymentOffsetDays,
+        settings.startDate
       );
     }
     // ✅ Option 2: Generate X months with historical option
@@ -317,7 +337,8 @@ const generateAllDepartmentCutoffs = async (req, res) => {
             new Date(fromDate),
             new Date(toDate),
             settings.frequency,
-            settings.paymentOffsetDays
+            settings.paymentOffsetDays,
+            settings.startDate
           );
         } else {
           periods = generatePeriodDates(

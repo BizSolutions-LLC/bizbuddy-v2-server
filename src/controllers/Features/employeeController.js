@@ -46,13 +46,17 @@ const getAllEmployees = async (req, res) => {
             lastName: true,
             phoneNumber: true,
             username: true,
+            addressLine: true,
+            city: true,
+            state: true,
+            postalCode: true,
           },
         },
         department: {
-          select: { 
-            id: true, 
+          select: {
+            id: true,
             name: true,
-            supervisor: {  
+            supervisor: {
               select: {
                 id: true,
                 email: true,
@@ -332,6 +336,7 @@ const updateEmployee = async (req, res) => {
       companyId, departmentId, hireDate, employeeId,
       jobTitle, employmentStatus, exemptStatus, employmentType,
       workLocation, probationEndDate, timeZone, isDriver, supervisorId,
+      addressLine, city, state, postalCode,
     } = req.body;
 
     const employee = await prisma.user.findFirst({
@@ -434,6 +439,10 @@ const updateEmployee = async (req, res) => {
     if (firstName) profileData.firstName = firstName.trim();
     if (lastName) profileData.lastName = lastName.trim();
     if (phone !== undefined) profileData.phoneNumber = phone ? phone.trim() : null;
+    if (addressLine !== undefined) profileData.addressLine = addressLine ? addressLine.trim() : null;
+    if (city !== undefined) profileData.city = city ? city.trim() : null;
+    if (state !== undefined) profileData.state = state ? state.trim() : null;
+    if (postalCode !== undefined) profileData.postalCode = postalCode ? postalCode.trim() : null;
 
     // Build employment detail data
     const employmentDetailData = {};
@@ -523,7 +532,12 @@ const updateEmployee = async (req, res) => {
         employeeId: true,
         createdAt: true,
         updatedAt: true,
-        profile: { select: { firstName: true, lastName: true, phoneNumber: true, username: true } },
+        profile: {
+          select: {
+            firstName: true, lastName: true, phoneNumber: true, username: true,
+            addressLine: true, city: true, state: true, postalCode: true,
+          },
+        },
         company: { select: { id: true, name: true } },
         department: { select: { id: true, name: true } },
         employmentDetail: {
