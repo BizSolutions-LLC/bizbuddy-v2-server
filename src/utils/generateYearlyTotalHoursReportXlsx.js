@@ -5,9 +5,9 @@
 // own Summary tab (Name / TOTAL Hrs / OT Hrs / per-period groups / Number of
 // Months). Periods are months or quarters depending on summary.groupBy; each
 // period group is always "Total Hrs", plus whichever optional columns
-// (driver / regular / ot / average) were requested. groupBy "year" is a
+// (driver / regular / leave / ot / average) were requested. groupBy "year" is a
 // compact layout: no per-period group (it would repeat TOTAL/OT Hrs), just
-// the requested driver / regular / average columns for the whole year.
+// the requested driver / regular / leave / average columns for the whole year.
 // Returns a Buffer, same convention as generatePayslipPDF.js / generateCheckPDF.js.
 
 const ExcelJS = require("exceljs");
@@ -15,6 +15,7 @@ const ExcelJS = require("exceljs");
 const OPTIONAL_COLUMN_DEFS = [
   { key: "driver",  label: "Driver Total Hrs",   field: "driverHours" },
   { key: "regular", label: "Regular Total Hrs",  field: "regularHours" },
+  { key: "leave",   label: "Leave Hrs",          field: "leaveHours" },
   { key: "ot",      label: "OT Hrs",             field: "otHours" },
   { key: "average", label: "Avg Hrs per Cutoff", field: "averageHours" },
 ];
@@ -22,7 +23,7 @@ const OPTIONAL_COLUMN_DEFS = [
 /**
  * @param {{ year: number, groupBy: string, periodKeys: string[], employees: Array }} summary
  * @param {{ name: string }} company
- * @param {string[]} [columns] - optional per-period columns: driver, regular, ot, average
+ * @param {string[]} [columns] - optional per-period columns: driver, regular, leave, ot, average
  * @returns {Promise<Buffer>}
  */
 async function generateYearlyTotalHoursReportXlsx(summary, company, columns = []) {

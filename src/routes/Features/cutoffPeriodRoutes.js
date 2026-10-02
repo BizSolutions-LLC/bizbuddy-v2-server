@@ -26,6 +26,7 @@ const {
   approveOtBlock,
   resetApproval,
   setPunchType,
+  updateFixedHoursRecord,
 } = require("@controllers/Features/cutoffPeriodController");
 
 // ============================================================================
@@ -117,6 +118,19 @@ router.patch(
   authenticate,
   authorizeRoles("admin", "supervisor", "superadmin"),
   approveOtBlock
+);
+
+/**
+ * @route   PATCH /api/cutoff-periods/:id/fixed-hours/:fixedHoursId
+ * @desc    BB-089 — override a fixed-hours employee's flat hours for this cutoff
+ * @body    { hours: number, notes?: string }
+ * @access  Admin, Supervisor, Superadmin
+ */
+router.patch(
+  "/:id/fixed-hours/:fixedHoursId",
+  authenticate,
+  authorizeRoles("admin", "supervisor", "superadmin"),
+  updateFixedHoursRecord
 );
 
 /**

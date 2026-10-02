@@ -23,7 +23,7 @@ const YEAR_KEYS = ["Year"];
 
 const GROUP_BY_KEYS = { month: MONTH_KEYS, quarter: QUARTER_KEYS, year: YEAR_KEYS };
 
-const OPTIONAL_COLUMNS = ["driver", "regular", "ot", "average"];
+const OPTIONAL_COLUMNS = ["driver", "regular", "leave", "ot", "average"];
 
 function n(v) {
   return v == null ? 0 : parseFloat(v.toString());
@@ -94,7 +94,7 @@ async function getYearlyTotalHoursSummary(companyId, year, options = {}) {
         periods: periodKeys.reduce((acc, key) => {
           // cutoffKeys — distinct cutoff periods in this bucket, for the average;
           // a user can have one row per department for the same cutoff.
-          acc[key] = { totalHours: 0, driverHours: 0, regularHours: 0, otHours: 0, cutoffKeys: new Set() };
+          acc[key] = { totalHours: 0, driverHours: 0, regularHours: 0, leaveHours: 0, otHours: 0, cutoffKeys: new Set() };
           return acc;
         }, {}),
       });
@@ -118,6 +118,9 @@ async function getYearlyTotalHoursSummary(companyId, year, options = {}) {
     p.totalHours += total;
     p.driverHours += n(row.driverHours);
     p.regularHours += n(row.regularHours);
+    // Paid leave (PayrollExport.ptoHours) is already inside totalHours — this
+    // only surfaces it as its own column.
+    p.leaveHours += n(row.ptoHours);
     p.otHours += ot;
     if (total > 0) bucket.activeMonths.add(new Date(row.periodEnd).getUTCMonth());
     p.cutoffKeys.add(`${new Date(row.periodStart).toISOString()}|${new Date(row.periodEnd).toISOString()}`);

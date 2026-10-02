@@ -17,6 +17,7 @@
 // (scripts/archive-and-export-payroll-2026-07-08-to-21.js).
 
 const { prisma } = require("@config/connection");
+const { splitFixedHours } = require("@services/Cutoff/fixedHoursService");
 
 const DRIVER_SEGMENT_TYPES = ["driver_am", "driver_pm"];
 const DRIVER_AIDE_PUNCH_TYPES = ["DRIVER_AIDE", "DRIVER_AIDE_AM", "DRIVER_AIDE_PM"];
@@ -70,7 +71,13 @@ async function generatePayrollExportForCutoffPeriod(cutoffPeriod) {
     include: { leave: { include: { User: { include: { profile: true } } } } },
   });
 
-  console.log(`[BB-066] source rows found — approvals=${approvals.length} otBlocks=${otBlocks.length} leaveDays=${leaveDays.length}`);
+  // ── 3b. BB-089 fixed-hours employees — paid their flat hours, not punches ──
+  const fixedHoursRows = await prisma.cutoffFixedHours.findMany({
+    where:   { cutoffPeriodId, status: "approved" },
+    include: { user: { include: { profile: true } } },
+  });
+
+  console.log(`[BB-066] source rows found — approvals=${approvals.length} otBlocks=${otBlocks.length} leaveDays=${leaveDays.length} fixedHours=${fixedHoursRows.length}`);
 
   // ── 4. Per-employee aggregation — same classification as the original
   // one-time archive script ──
@@ -115,6 +122,17 @@ async function generatePayrollExportForCutoffPeriod(cutoffPeriod) {
 
   for (const ld of leaveDays) {
     getBucket(ld.leave.User).pto += n(ld.hours);
+  }
+
+  // BB-089: fixed hours include paid leave — regular is whatever's left after
+  // leave; punches/OT/driver/training are ignored even if some were approved.
+  for (const fh of fixedHoursRows) {
+    const b = getBucket(fh.user);
+    const { regularHours } = splitFixedHours(fh.hours, b.pto);
+    b.regular  = regularHours;
+    b.ot       = 0;
+    b.driver   = 0;
+    b.training = 0;
   }
 
   // ── 5. Replace only this department's PayrollExport rows for the period —

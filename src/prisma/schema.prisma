@@ -496,10 +496,15 @@ model User {
   approvedTimeLogs         TimeLogApproval[]
   otBlocks                 CutoffOtBlock[]  @relation("OtBlockUser")
   approvedOtBlocks         CutoffOtBlock[]  @relation("OtBlockApprover")
+  fixedHours               CutoffFixedHours[] @relation("FixedHoursUser")
+  editedFixedHours         CutoffFixedHours[] @relation("FixedHoursEditor")
   requestLogs              RequestLog[]
   feedbacks                Feedback[]
   tokenVersion             Int      @default(0)
   liveUser                 LiveUser?
+  // BB-089: this employee is on fixed hours — only takes effect while their
+  // department's fixedHoursEnabled master switch is also on.
+  fixedHoursEnabled        Boolean  @default(false)
 
   @@unique([companyId, email])
   @@index([companyId, status])
@@ -725,6 +730,11 @@ model Department {
   autoBreakCoffeeMinutes   Int?
   autoBreakCoffeeCount     Int?
   autoBreakCoffeeDeductible Boolean                @default(false)
+  // BB-089: fixed-rate departments (e.g. SV) — every member gets a flat
+  // fixedHoursPerCutoff per cutoff regardless of clock-ins; their punches are
+  // auto-excluded from pay during cutoff review.
+  fixedHoursEnabled        Boolean                 @default(false)
+  fixedHoursPerCutoff      Decimal                 @default(80) @db.Decimal(6, 2)
 
   // Relations
   accountDeletionRequests AccountDeletionRequest[]
@@ -1045,6 +1055,7 @@ model CutoffPeriod {
   department      Department?        @relation(fields: [departmentId], references: [id], onDelete: SetNull) // ✅ ADD THIS
   approvals       TimeLogApproval[]
   otBlocks        CutoffOtBlock[]
+  fixedHours      CutoffFixedHours[]
   creator         User               @relation(fields: [createdBy], references: [id])
 
   // Indexes
@@ -1112,6 +1123,30 @@ model PayrollExportBatch {
 
   @@unique([companyId, periodStart, periodEnd], map: "PayrollExportBatch_company_period_unique")
   @@index([companyId, periodStart, periodEnd], map: "PayrollExportBatch_period_idx")
+}
+
+// BB-089: one flat-hours record per fixed-rate employee per cutoff — see
+// src/services/Cutoff/fixedHoursService.js. Created already "approved";
+// editedBy/editedAt are set only when an admin overrides hours.
+model CutoffFixedHours {
+  id             String    @id @default(cuid())
+  cutoffPeriodId String
+  userId         String
+  hours          Decimal   @db.Decimal(6, 2)
+  status         String    @default("approved")
+  editedBy       String?
+  editedAt       DateTime? @db.Timestamptz(6)
+  notes          String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  cutoffPeriod   CutoffPeriod @relation(fields: [cutoffPeriodId], references: [id], onDelete: Cascade)
+  user           User         @relation("FixedHoursUser",   fields: [userId],   references: [id], onDelete: Cascade)
+  editor         User?        @relation("FixedHoursEditor", fields: [editedBy], references: [id])
+
+  @@unique([cutoffPeriodId, userId])
+  @@index([cutoffPeriodId])
+  @@index([userId])
 }
 
 model DepartmentCutoffSettings {
