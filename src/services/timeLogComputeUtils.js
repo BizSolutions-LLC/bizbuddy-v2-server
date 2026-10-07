@@ -89,6 +89,18 @@ function computeSegmentHours(timeIn, timeOut, segStart, segEnd) {
   return +(Math.max(0, end - start) / 3600000).toFixed(2);
 }
 
+// BB-092 — Driver/Aide lunch is deducted from whichever segment window it falls
+// in. Returns the ms of a completed, deductible lunch that overlaps
+// [windowStart, windowEnd]. Auto-injected non-deductible lunches return 0
+// (paper trail only), same rule as sumCoffeeBreakMinutes.
+function lunchOverlapMs(lunchBreak, windowStart, windowEnd) {
+  if (!lunchBreak?.start || !lunchBreak?.end || !windowStart || !windowEnd) return 0;
+  if (lunchBreak.auto && lunchBreak.deductible === false) return 0;
+  const start = Math.max(new Date(lunchBreak.start).getTime(), new Date(windowStart).getTime());
+  const end   = Math.min(new Date(lunchBreak.end).getTime(),   new Date(windowEnd).getTime());
+  return Math.max(0, end - start);
+}
+
 function matchShiftToWindow(userShifts, timeIn, timeOut, tz) {
   if (userShifts.length === 0) return null;
   if (userShifts.length === 1) return userShifts[0];
@@ -143,5 +155,6 @@ module.exports = {
   sumCoffeeBreakMinutes,
   lunchBreakMinutes,
   computeSegmentHours,
+  lunchOverlapMs,
   matchShiftToWindow,
 };
