@@ -9,6 +9,7 @@
 const { prisma }                = require("@config/connection");
 const moment                    = require("moment-timezone");
 const { computeTimeLogSummary } = require("@services/timeLogComputeService");
+const { lunchOverlapMs }        = require("@services/timeLogComputeUtils");
 const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff } = require("./cutoffOtService");
 const { combineDateTime,
@@ -233,8 +234,10 @@ async function approveSingle(approvalId, {
     }
 
     // Recalculate hours from the credited approved window (raw in → segment end may differ).
+    // BB-092: lunch inside the credited window is unpaid in both Schedule and Raw mode.
+    // (The stored segHours fallback already has lunch subtracted by computeTimeLogSummary.)
     const rawSegHours = creditedIn && approvedOut
-      ? calculateHours(creditedIn, approvedOut)
+      ? Math.max(0, calculateHours(creditedIn, approvedOut) - lunchOverlapMs(timeLog.lunchBreak, creditedIn, approvedOut) / 3600000)
       : (segHours != null ? parseFloat(segHours.toString()) : null);
 
     // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
@@ -496,8 +499,9 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
           if (lateMs > 0 && lateMs <= graceMs) creditedIn = segStart;
         }
 
+        // BB-092: lunch inside the credited window is unpaid (same as approveSingle).
         const rawSegHours = creditedIn && approvedOut
-          ? calculateHours(creditedIn, approvedOut)
+          ? Math.max(0, calculateHours(creditedIn, approvedOut) - lunchOverlapMs(timeLog.lunchBreak, creditedIn, approvedOut) / 3600000)
           : (segHours != null ? parseFloat(segHours.toString()) : null);
 
         // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
