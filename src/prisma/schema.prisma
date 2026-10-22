@@ -380,6 +380,7 @@ model LeavePolicy {
   balances         LeaveBalance[]
   transactions     LeaveTransaction[]
   assignments      LeavePolicyAssignment[]
+  credits          LeaveCredit[]
   leaves           Leave[]
   company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -404,6 +405,8 @@ model LeaveBalance {
   policyId      String
   balanceHours  Decimal     @default(0) @db.Decimal(8, 2)
   lastAccrualAt DateTime?   @db.Timestamptz(6)
+  lastGrantPeriod         String?   // BB-098: idempotency key of the last automatic grant ("FY2026" / "2026-11")
+  regularizationGrantedAt DateTime? @db.Timestamptz(6)
   createdAt     DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime    @updatedAt @db.Timestamptz(6)
   policy        LeavePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
@@ -430,6 +433,45 @@ model LeaveTransaction {
 
   @@index([userId, policyId])
   @@index([leaveId])
+}
+
+// BB-098: one lot of leave credits per employee × leave type × fiscal year.
+// LeaveBalance.balanceHours stays the running total; once a company is
+// initialized (Company.leaveCreditsInitializedAt) the lots' remainingHours sum
+// to it, except for a negative (debt) balance, which has no lot.
+model LeaveCredit {
+  id             String             @id @default(cuid())
+  userId         String
+  policyId       String
+  fiscalYear     Int                // calendar year the fiscal year starts in
+  grantedHours   Decimal            @default(0) @db.Decimal(8, 2)
+  remainingHours Decimal            @default(0) @db.Decimal(8, 2)
+  expiredHours   Decimal            @default(0) @db.Decimal(8, 2) // hours removed by expiration (reports: used = granted − remaining − expired)
+  expiresOn      DateTime           @db.Date // last usable day
+  reminderSentAt DateTime?          @db.Timestamptz(6)
+  expiredAt      DateTime?          @db.Timestamptz(6)
+  createdAt      DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(6)
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policy         LeavePolicy        @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  usages         LeaveCreditUsage[]
+
+  @@unique([userId, policyId, fiscalYear])
+  @@index([policyId, expiresOn])
+}
+
+// BB-098: which lots an approved leave consumed, so cancelling it restores them.
+model LeaveCreditUsage {
+  id        String      @id @default(cuid())
+  leaveId   String
+  creditId  String
+  hours     Decimal     @db.Decimal(8, 2)
+  createdAt DateTime    @default(now()) @db.Timestamptz(6)
+  leave     Leave       @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+  credit    LeaveCredit @relation(fields: [creditId], references: [id], onDelete: Cascade)
+
+  @@index([leaveId])
+  @@index([creditId])
 }
 
 model User {
@@ -465,6 +507,7 @@ model User {
   LeavePolicyAssignment    LeavePolicyAssignment[]
   LeaveTransactions        LeaveTransaction[]
   LeaveTransactionsPerformed LeaveTransaction[] @relation("LeaveTransactionPerformer")
+  LeaveCredits             LeaveCredit[]
   LocationRestriction      LocationRestriction[]
   NotificationLog          NotificationLog[]
   otp                      Otp[]
@@ -639,9 +682,21 @@ model Company {
   feedbacks       Feedback[]
 
   // Leave accrual configuration
-  accrualEnabled       Boolean @default(false)
-  leaveYearStartMonth  Int     @default(1)   // 1 = January, 4 = April, etc.
-  newEmployeeCatchUp   Boolean @default(false)
+  accrualEnabled       Boolean @default(false) // legacy — retired accrual worker, no longer read
+  leaveYearStartMonth  Int     @default(1)   // fiscal year start month, 1 = January, 4 = April, etc.
+  newEmployeeCatchUp   Boolean @default(false) // legacy — retired accrual worker, no longer read
+
+  // BB-098: leave credits — fiscal-year grants, regularization, expiration
+  leaveGrantEnabled         Boolean                  @default(false)
+  leaveGrantMode            LeaveGrantMode           @default(yearly_lump)
+  leaveGrantHours           Decimal                  @default(40) @db.Decimal(6, 2) // per fiscal year
+  leaveYearStartDay         Int                      @default(1) // fiscal year start day (1–28), month is leaveYearStartMonth
+  leaveExpirationEnabled    Boolean                  @default(false)
+  leaveCreditLifetimeYears  Int                      @default(2) // fiscal years usable, counting the year granted
+  leaveExpiryReminderDays   Int                      @default(60)
+  leaveRegularizationMonths Int                      @default(0) // waiting period from User.hireDate, 0 = none
+  leaveRegularizationGrant  LeaveRegularizationGrant @default(none)
+  leaveCreditsInitializedAt DateTime?                @db.Timestamptz(6) // set by the apply step; balances tracked as LeaveCredit lots from then on
 
   // Multi/secondary leave approver
   multiApprovalEnabled Boolean @default(false)
@@ -1298,6 +1353,7 @@ model Leave {
   User             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   policy           LeavePolicy? @relation(fields: [policyId], references: [id])
   days             LeaveDay[]
+  creditUsages     LeaveCreditUsage[]
 
   @@index([userId, status])
   @@index([approverId, status])
@@ -1459,6 +1515,7 @@ enum NotificationCode {
   LEAVE_REQUEST_APPROVED
   LEAVE_REQUEST_REJECTED
   LEAVE_REQUEST_CANCELLED
+  LEAVE_CREDITS_EXPIRING
 
   // Overtime
   OVERTIME_REQUEST_SUBMITTED
@@ -1518,6 +1575,7 @@ enum LeaveTransactionType {
   approved
   rejected
   cancelled
+  expired
 }
 
 enum PresenceStatus {
@@ -1557,6 +1615,18 @@ enum AccrualFrequency {
   monthly
   yearly
   none
+}
+
+enum LeaveGrantMode {
+  yearly_lump
+  monthly_accrual
+}
+
+enum LeaveRegularizationGrant {
+  none     // nothing extra — yearly: wait for next FY grant; monthly: accrual starts next month
+  catch_up // monthly only: waiting period's worth granted at once
+  prorated // yearly only: grant × months left in the FY / 12
+  full     // yearly only: full grant
 }
 
 enum AccrualUnit {

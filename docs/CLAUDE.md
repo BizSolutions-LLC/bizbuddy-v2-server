@@ -115,7 +115,7 @@ bizbuddy-v2-server/
     │   └── Analytics/
     │       └── analyticsService.js
     ├── workers/
-    │   ├── leaveAccrualWorker.js   # Scheduled leave balance accrual
+    │   ├── leaveCreditWorker.js    # Hourly leave credit grants/expiration/reminders (BB-098)
     │   ├── clockInReminderWorker.js  # Proactive reminder 30 min before shift
     │   ├── clockOutReminderWorker.js # Proactive reminder 30 min before shift end
     │   └── breakHelpers.js
@@ -255,7 +255,7 @@ All initialized in `server.js` before `listen()`.
 
 | Type | File | Schedule |
 |---|---|---|
-| Worker | `leaveAccrualWorker.js` | Scheduled leave balance accrual |
+| Worker | `leaveCreditWorker.js` | Hourly: leave credit expiration, reminders, grants (BB-098) |
 | Worker | `clockInReminderWorker.js` | 30 min before shift starts |
 | Worker | `clockOutReminderWorker.js` | 30 min before shift ends |
 | Cron job | `checkMissedClockIns.js` | Every 5 min |

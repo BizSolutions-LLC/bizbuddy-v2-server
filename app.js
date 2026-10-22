@@ -53,6 +53,9 @@ app.use(requestLogger);
 app.use((req, res, next) => {
   if (req.originalUrl.startsWith("/api/payments/stripe-webhook")) {
     next();
+  } else if (req.originalUrl.startsWith("/api/schedule-import/confirm")) {
+    // BB-103: the confirm body carries every preview item back (up to a few MB).
+    express.json({ limit: "5mb" })(req, res, next);
   } else {
     express.json()(req, res, next);
   }

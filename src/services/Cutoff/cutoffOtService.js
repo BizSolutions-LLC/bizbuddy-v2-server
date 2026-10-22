@@ -13,11 +13,31 @@
 //
 // "weekly" remains a no-op.
 //
+// BB-089 fixed-hours employees (a CutoffFixedHours row in this cutoff): their
+// flat hours already pay scheduled duty, so OT = every approved hour on an
+// OFF day (no UserShift that date), with no threshold, on either basis.
+//
 // Upsert resets status to "pending" whenever otHours changes — the admin must
 // re-approve after any punch edit that alters the OT amount.
 
 const { prisma } = require("@config/connection");
 const moment     = require("moment-timezone");
+const { getOffDayTimeLogIds } = require("@services/Cutoff/fixedHoursService");
+
+// BB-089: null when the user isn't on fixed hours in this cutoff, otherwise
+// the Set of their off-day TimeLog ids.
+async function fixedHoursOffDays(cutoffPeriodId, userId) {
+  const row = await prisma.cutoffFixedHours.findUnique({
+    where:  { cutoffPeriodId_userId: { cutoffPeriodId, userId } },
+    select: { id: true },
+  });
+  if (!row) return null;
+  const cutoffPeriod = await prisma.cutoffPeriod.findUnique({
+    where:  { id: cutoffPeriodId },
+    select: { id: true, companyId: true, periodStart: true, periodEnd: true },
+  });
+  return getOffDayTimeLogIds(cutoffPeriod, [userId]);
+}
 
 /**
  * Recompute the OT block for one employee on one calendar day.
@@ -36,7 +56,8 @@ async function computeOtForEmployeeDay(cutoffPeriodId, userId, dateStr, companyI
   // Only daily OT is implemented — skip other bases silently.
   if (!company || company.otBasis !== "daily") return;
 
-  const threshold = parseFloat(company.dailyOtThresholdHours ?? 8);
+  const offDays   = await fixedHoursOffDays(cutoffPeriodId, userId);
+  const threshold = offDays ? 0 : parseFloat(company.dailyOtThresholdHours ?? 8);
   const tz        = company.timeZone || "America/Los_Angeles";
 
   // Build the UTC window that covers the company-timezone calendar day.
@@ -58,6 +79,7 @@ async function computeOtForEmployeeDay(cutoffPeriodId, userId, dateStr, companyI
       },
     },
     select: {
+      timeLogId:        true,
       actualHours:      true,
       approvedClockIn:  true,
       approvedClockOut: true,
@@ -65,7 +87,8 @@ async function computeOtForEmployeeDay(cutoffPeriodId, userId, dateStr, companyI
     },
   });
 
-  const totalHours = approved.reduce((sum, a) => {
+  const counted = offDays ? approved.filter((a) => offDays.has(a.timeLogId)) : approved;
+  const totalHours = counted.reduce((sum, a) => {
     if (a.actualHours != null) {
       return sum + parseFloat(a.actualHours.toString());
     }
@@ -122,7 +145,8 @@ async function computeOtForCutoffBasis(cutoffPeriodId, userId, companyId) {
   });
   if (!company || company.otBasis !== "cutoff") return;
 
-  const threshold = parseFloat(company.cutoffOtThresholdHours ?? 80);
+  const offDays   = await fixedHoursOffDays(cutoffPeriodId, userId);
+  const threshold = offDays ? 0 : parseFloat(company.cutoffOtThresholdHours ?? 80);
 
   const cutoffPeriod = await prisma.cutoffPeriod.findUnique({
     where:  { id: cutoffPeriodId },
@@ -144,6 +168,7 @@ async function computeOtForCutoffBasis(cutoffPeriodId, userId, companyId) {
       timeLog: { userId },
     },
     select: {
+      timeLogId:        true,
       actualHours:      true,
       approvedClockIn:  true,
       approvedClockOut: true,
@@ -152,7 +177,8 @@ async function computeOtForCutoffBasis(cutoffPeriodId, userId, companyId) {
   });
 
   let trainingHoursExcluded = 0;
-  const otBasisHours = approved.reduce((sum, a) => {
+  const counted = offDays ? approved.filter((a) => offDays.has(a.timeLogId)) : approved;
+  const otBasisHours = counted.reduce((sum, a) => {
     const hours = a.actualHours != null
       ? parseFloat(a.actualHours.toString())
       : a.approvedClockIn && a.approvedClockOut
