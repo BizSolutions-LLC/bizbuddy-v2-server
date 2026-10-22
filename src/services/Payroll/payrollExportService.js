@@ -125,12 +125,13 @@ async function generatePayrollExportForCutoffPeriod(cutoffPeriod) {
   }
 
   // BB-089: fixed hours include paid leave — regular is whatever's left after
-  // leave; punches/OT/driver/training are ignored even if some were approved.
+  // leave; punches/driver/training are ignored even if some were approved.
+  // OT is kept: for these users the approved OT block is off-day work only
+  // (cutoffOtService), paid on top of the flat hours.
   for (const fh of fixedHoursRows) {
     const b = getBucket(fh.user);
     const { regularHours } = splitFixedHours(fh.hours, b.pto);
     b.regular  = regularHours;
-    b.ot       = 0;
     b.driver   = 0;
     b.training = 0;
   }

@@ -3,6 +3,7 @@
 const { prisma } = require("@config/connection");
 const { calcDailyHours, calcRequestedHours, leaveVisibilityWhere } = require("@utils/leaveUtils");
 const { previewLeaveApproval, applyLeaveApproval } = require("@services/Leave/leaveApprovalService");
+const { isTracked, fyLabel, dateColStr } = require("@services/Leave/leaveCreditService");
 const { createNotification } = require("@services/notificationService");
 const { getEligibleApprovers, getDirectSupervisors } = require("@services/Approvers/approverResolutionService");
 const { getIO } = require("@config/socket");
@@ -1179,7 +1180,7 @@ const listBalances = async (req, res) => {
 
   const policyIds = policies.map((p) => p.id);
 
-  const [recentTxns, deductionTotals] = await Promise.all([
+  const [recentTxns, deductionTotals, expiredTotals, creditLots] = await Promise.all([
     prisma.leaveTransaction.findMany({
       where:   { userId: targetUserId, policyId: { in: policyIds } },
       orderBy: { createdAt: "desc" },
@@ -1201,11 +1202,29 @@ const listBalances = async (req, res) => {
       where: { userId: targetUserId, policyId: { in: policyIds }, type: "deduction" },
       _sum:  { hours: true },
     }),
+    prisma.leaveTransaction.groupBy({
+      by:    ["policyId"],
+      where: { userId: targetUserId, policyId: { in: policyIds }, type: "expired" },
+      _sum:  { hours: true },
+    }),
+    // BB-098: fiscal-year lots still holding hours, oldest first.
+    prisma.leaveCredit.findMany({
+      where:   { userId: targetUserId, policyId: { in: policyIds }, remainingHours: { gt: 0 } },
+      orderBy: { fiscalYear: "asc" },
+    }),
   ]);
 
   const usedMap = Object.fromEntries(
     deductionTotals.map((d) => [d.policyId, Math.abs(Number(d._sum.hours ?? 0))])
   );
+  const expiredMap = Object.fromEntries(
+    expiredTotals.map((d) => [d.policyId, Math.abs(Number(d._sum.hours ?? 0))])
+  );
+  const lotsByPolicy = {};
+  creditLots.forEach((l) => {
+    if (!lotsByPolicy[l.policyId]) lotsByPolicy[l.policyId] = [];
+    lotsByPolicy[l.policyId].push(l);
+  });
 
   const txnsByPolicy = {};
   recentTxns.forEach((t) => {
@@ -1226,10 +1245,25 @@ const listBalances = async (req, res) => {
     // can't drift from what was actually approved. "credits" is derived —
     // available + used — rather than independently summed, so the three
     // numbers can never fail to reconcile (Credits - Used = Available by
-    // construction). See docs/LEAVE_MODULE.md §4, §14e.
+    // construction). See docs/LEAVE_MODULE.md §4, §14e. BB-098: expired
+    // hours are part of credits too (Credits - Used - Expired = Available).
     const available = p.balances.reduce((s, b) => s + Number(b.balanceHours), 0);
     const used      = usedMap[p.id] ?? 0;
-    const credits   = +(available + used).toFixed(2);
+    const expired   = expiredMap[p.id] ?? 0;
+    const credits   = +(available + used + expired).toFixed(2);
+
+    // BB-098: per-fiscal-year breakdown, only once leave credits are set up.
+    const lots = isTracked(p.company)
+      ? (lotsByPolicy[p.id] ?? []).map((l) => ({
+          fiscalYear:     l.fiscalYear,
+          label:          fyLabel(p.company, l.fiscalYear),
+          remainingHours: Number(l.remainingHours),
+          expiresOn:      dateColStr(l.expiresOn),
+        }))
+      : [];
+    const nextExpiration = p.company.leaveExpirationEnabled && lots.length
+      ? { date: lots[0].expiresOn, hours: lots[0].remainingHours }
+      : null;
 
     map[p.leaveType] = {
       policyId:     p.id,
@@ -1238,7 +1272,10 @@ const listBalances = async (req, res) => {
       isNotPaid:    p.isNotPaid,
       credits,
       used,
+      expired,
       available,
+      creditLots:     lots,
+      nextExpiration,
       // Legacy field names — kept for existing clients, equal to available/used above.
       balanceHours: available,
       usedHours:    used,

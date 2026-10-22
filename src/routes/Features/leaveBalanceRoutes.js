@@ -8,6 +8,10 @@ const {
   listMatrix,
   getTransactions,
 } = require("@controllers/Features/leaveBalanceController");
+const {
+  previewSetup,
+  applySetup,
+} = require("@controllers/Features/leaveCreditSetupController");
 
 router.post(
   "/adjust",
@@ -28,6 +32,22 @@ router.get(
   authenticate,
   authorizeRoles("employee", "admin", "supervisor", "superadmin"),
   getTransactions
+);
+
+// BB-098: leave credit setup — preview is read-only, apply saves settings,
+// converts balances into fiscal-year lots (first time) and expires past ones.
+router.post(
+  "/credit-setup/preview",
+  authenticate,
+  authorizeRoles("admin", "superadmin"),
+  previewSetup
+);
+
+router.post(
+  "/credit-setup/apply",
+  authenticate,
+  authorizeRoles("admin", "superadmin"),
+  applySetup
 );
 
 module.exports = router;

@@ -1,6 +1,68 @@
 // src/controllers/Account/companySettingsController.js
 const { prisma }           = require("@config/connection");
 const { BNC_COMPANY_IDS }  = require("@config/companyTypes");
+const {
+  COMPANY_CREDIT_SELECT,
+  loadCreditCompany,
+  normalizeCreditSettings,
+} = require("@services/Leave/leaveCreditService");
+
+// BB-098: leave credit settings, returned by GET and PATCH alike.
+const _formatLeaveCredits = (c) => ({
+  leaveGrantEnabled:         c.leaveGrantEnabled,
+  leaveGrantMode:            c.leaveGrantMode,
+  leaveGrantHours:           c.leaveGrantHours != null ? Number(c.leaveGrantHours) : null,
+  leaveYearStartMonth:       c.leaveYearStartMonth,
+  leaveYearStartDay:         c.leaveYearStartDay,
+  leaveExpirationEnabled:    c.leaveExpirationEnabled,
+  leaveCreditLifetimeYears:  c.leaveCreditLifetimeYears,
+  leaveExpiryReminderDays:   c.leaveExpiryReminderDays,
+  leaveRegularizationMonths: c.leaveRegularizationMonths,
+  leaveRegularizationGrant:  c.leaveRegularizationGrant,
+  leaveCreditsInitializedAt: c.leaveCreditsInitializedAt,
+});
+
+const LEAVE_CREDIT_FIELDS = [
+  "leaveGrantMode",
+  "leaveGrantHours",
+  "leaveYearStartMonth",
+  "leaveYearStartDay",
+  "leaveCreditLifetimeYears",
+  "leaveExpiryReminderDays",
+  "leaveRegularizationMonths",
+  "leaveRegularizationGrant",
+];
+
+// Validates the leave credit part of a settings PATCH. Toggles can be turned
+// off any time, but turning one on before setup — or turning expiration on at
+// all — has to go through POST /leave-balances/credit-setup/apply, which previews
+// what would expire first.
+async function _leaveCreditUpdate(companyId, body) {
+  const touched = LEAVE_CREDIT_FIELDS.some((k) => body[k] !== undefined);
+  const grant = body.leaveGrantEnabled;
+  const expiration = body.leaveExpirationEnabled;
+  if (!touched && grant === undefined && expiration === undefined) return { data: {} };
+
+  const company = await loadCreditCompany(prisma, companyId);
+  const data = {};
+
+  if (touched) {
+    const { settings, errors } = normalizeCreditSettings(body, company);
+    if (errors.length) return { error: errors.join("; ") };
+    Object.assign(data, settings);
+  }
+  if (grant !== undefined) {
+    if (Boolean(grant) && !company.leaveCreditsInitializedAt)
+      return { error: "Run the leave credit setup (preview, then apply) before turning on leave grants" };
+    data.leaveGrantEnabled = Boolean(grant);
+  }
+  if (expiration !== undefined) {
+    if (Boolean(expiration) && !company.leaveExpirationEnabled)
+      return { error: "Turn on leave expiration through the leave credit setup (preview, then apply)" };
+    data.leaveExpirationEnabled = Boolean(expiration);
+  }
+  return { data };
+}
 
 exports.getSettings = async (req, res) => {
   try {
@@ -36,10 +98,12 @@ exports.getSettings = async (req, res) => {
         autoCoffeeEnabled:            true,
         ettEnabled:                   true,
         suiEnabled:                   true,
+        ...COMPANY_CREDIT_SELECT,
       },
     });
     const formatted = {
       ...company,
+      ..._formatLeaveCredits(company),
       timezone:                 company.timeZone,
       autoClockOutWarningHours: company.autoClockOutWarningHours != null
         ? parseFloat(company.autoClockOutWarningHours) : 0.5,
@@ -107,6 +171,9 @@ exports.updateSettings = async (req, res) => {
     } = req.body;
 
     const VALID_OT_BASES = ["daily", "weekly", "cutoff"];
+
+    const leaveCredits = await _leaveCreditUpdate(req.user.companyId, req.body);
+    if (leaveCredits.error) return res.status(400).json({ error: leaveCredits.error });
 
     const updated = await prisma.company.update({
       where: { id: req.user.companyId },
@@ -205,6 +272,8 @@ exports.updateSettings = async (req, res) => {
         // ── Employer ETT / SUI ───────────────────────────────────────────────
         ...(ettEnabled !== undefined && { ettEnabled: Boolean(ettEnabled) }),
         ...(suiEnabled !== undefined && { suiEnabled: Boolean(suiEnabled) }),
+        // ── BB-098 leave credits ─────────────────────────────────────────────
+        ...leaveCredits.data,
         // ─────────────────────────────────────────────────────────────────────
       },
       select: {
@@ -236,6 +305,7 @@ exports.updateSettings = async (req, res) => {
         autoCoffeeEnabled:             true,
         ettEnabled:                    true,
         suiEnabled:                    true,
+        ...COMPANY_CREDIT_SELECT,
       },
     });
 
@@ -268,6 +338,7 @@ exports.updateSettings = async (req, res) => {
     res.json({
       data: {
         ...updated,
+        ..._formatLeaveCredits(updated),
         cutoffSettings: cutoff
           ? {
               seedStartDate:     cutoff.seedStartDate.toISOString().slice(0, 10),

@@ -9,6 +9,7 @@
 
 const { prisma } = require("@config/connection");
 const { calcDailyHours } = require("@utils/leaveUtils");
+const { loadCreditCompanyForPolicy, isTracked, consumeFromLots } = require("@services/Leave/leaveCreditService");
 
 /**
  * Prorates a day-by-day hours breakdown against an available balance.
@@ -178,6 +179,17 @@ async function applyLeaveApproval(leave, policy, approverId, note) {
         where: { id: bal.id },
         data:  { balanceHours: balanceAfter },
       });
+      // BB-098: once leave credits are set up, paid hours come out of the
+      // oldest fiscal-year lots first, recorded per lot for cancellation.
+      const creditCompany = await loadCreditCompanyForPolicy(tx, policy.id);
+      if (isTracked(creditCompany)) {
+        await consumeFromLots(tx, {
+          userId:   leave.userId,
+          policyId: policy.id,
+          hours:    paidHours,
+          leaveId:  leave.id,
+        });
+      }
       await tx.leaveTransaction.create({
         data: {
           userId:        leave.userId,

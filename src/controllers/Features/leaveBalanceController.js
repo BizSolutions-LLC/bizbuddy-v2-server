@@ -1,6 +1,14 @@
 // src/controllers/Features/leaveBalanceController.js
 const { prisma } = require("@config/connection");
 const { leaveVisibilityWhere } = require("@utils/leaveUtils");
+const {
+  loadCreditCompany,
+  isTracked,
+  addToLots,
+  consumeFromLots,
+  fyLabel,
+  dateColStr,
+} = require("@services/Leave/leaveCreditService");
 
 const adjustBalance = async (req, res) => {
   const { targetUserId, leaveTypes, hours, note } = req.body;
@@ -36,39 +44,55 @@ const adjustBalance = async (req, res) => {
       .status(404)
       .json({ message: "One or more leave types not found" });
 
+  // BB-098: once leave credits are set up, a manual credit lands in the
+  // current fiscal year's lot and a manual debit drains the oldest lots first.
+  const creditCompany = await loadCreditCompany(prisma, req.user.companyId);
+  const tracked = isTracked(creditCompany);
+
   const out = [];
   for (const pol of policies) {
-    const existing = await prisma.leaveBalance.findUnique({
-      where: { userId_policyId: { userId: targetUserId, policyId: pol.id } },
-    });
-    const balanceBefore = existing ? Number(existing.balanceHours) : 0;
-    // Floor at 0 for negative adjustments — applied to the actual stored
-    // balance now, not just the ledger record, so the two can never disagree
-    // (previously the upsert used a raw `increment`, which could push the
-    // real balance negative while the ledger claimed it floored at 0).
-    const balanceAfter = hours > 0 ? balanceBefore + hours : Math.max(0, balanceBefore + hours);
+    const bal = await prisma.$transaction(async (tx) => {
+      const existing = await tx.leaveBalance.findUnique({
+        where: { userId_policyId: { userId: targetUserId, policyId: pol.id } },
+      });
+      const balanceBefore = existing ? Number(existing.balanceHours) : 0;
+      // Floor at 0 for negative adjustments — applied to the actual stored
+      // balance now, not just the ledger record, so the two can never disagree
+      // (previously the upsert used a raw `increment`, which could push the
+      // real balance negative while the ledger claimed it floored at 0).
+      const balanceAfter = hours > 0 ? balanceBefore + hours : Math.max(0, balanceBefore + hours);
 
-    const bal = await prisma.leaveBalance.upsert({
-      where: { userId_policyId: { userId: targetUserId, policyId: pol.id } },
-      update: { balanceHours: balanceAfter },
-      create: {
-        userId:       targetUserId,
-        policyId:     pol.id,
-        balanceHours: balanceAfter,
-      },
-    });
+      const updated = await tx.leaveBalance.upsert({
+        where: { userId_policyId: { userId: targetUserId, policyId: pol.id } },
+        update: { balanceHours: balanceAfter },
+        create: {
+          userId:       targetUserId,
+          policyId:     pol.id,
+          balanceHours: balanceAfter,
+        },
+      });
 
-    await prisma.leaveTransaction.create({
-      data: {
-        userId:        targetUserId,
-        policyId:      pol.id,
-        type:          "adjustment",
-        hours,
-        balanceBefore,
-        balanceAfter:  Number(bal.balanceHours),
-        performedById: req.user.id,
-        note:          note.trim(),
-      },
+      if (tracked) {
+        if (hours > 0) {
+          await addToLots(tx, creditCompany, { userId: targetUserId, policyId: pol.id, hours, balanceBefore });
+        } else if (balanceBefore > balanceAfter) {
+          await consumeFromLots(tx, { userId: targetUserId, policyId: pol.id, hours: balanceBefore - balanceAfter });
+        }
+      }
+
+      await tx.leaveTransaction.create({
+        data: {
+          userId:        targetUserId,
+          policyId:      pol.id,
+          type:          "adjustment",
+          hours,
+          balanceBefore,
+          balanceAfter:  Number(updated.balanceHours),
+          performedById: req.user.id,
+          note:          note.trim(),
+        },
+      });
+      return updated;
     });
 
     out.push({
@@ -99,7 +123,10 @@ const listMatrix = async (req, res) => {
   });
   const policyIds = policies.map((p) => p.id);
 
-  const [balances, deductionTotals] = await Promise.all([
+  const company = await loadCreditCompany(prisma, companyId);
+  const tracked = isTracked(company);
+
+  const [balances, deductionTotals, expiredTotals, creditLots] = await Promise.all([
     prisma.leaveBalance.findMany({
       where:  { policyId: { in: policyIds } },
       select: { userId: true, policyId: true, balanceHours: true },
@@ -109,7 +136,36 @@ const listMatrix = async (req, res) => {
       where: { policyId: { in: policyIds }, type: "deduction" },
       _sum:  { hours: true },
     }),
+    prisma.leaveTransaction.groupBy({
+      by:    ["userId", "policyId"],
+      where: { policyId: { in: policyIds }, type: "expired" },
+      _sum:  { hours: true },
+    }),
+    // BB-098: fiscal-year lots, oldest first. Fully used lots (0h) are kept so
+    // the year still shows; expired lots are dropped once they're back to 0 —
+    // one that a cancelled leave refilled stays until the worker re-expires it.
+    tracked
+      ? prisma.leaveCredit.findMany({
+          where: {
+            policyId: { in: policyIds },
+            OR: [{ remainingHours: { gt: 0 } }, { expiredAt: null }],
+          },
+          orderBy: { fiscalYear: "asc" },
+          select:  { userId: true, policyId: true, fiscalYear: true, remainingHours: true, expiresOn: true },
+        })
+      : [],
   ]);
+
+  const lotMap = {};
+  creditLots.forEach((l) => {
+    if (!lotMap[l.userId]) lotMap[l.userId] = {};
+    (lotMap[l.userId][l.policyId] ??= []).push({
+      fiscalYear:     l.fiscalYear,
+      label:          fyLabel(company, l.fiscalYear),
+      remainingHours: Number(l.remainingHours),
+      expiresOn:      dateColStr(l.expiresOn),
+    });
+  });
 
   const availableMap = {};
   balances.forEach((b) => {
@@ -123,8 +179,14 @@ const listMatrix = async (req, res) => {
     usedMap[d.userId][d.policyId] = Math.abs(Number(d._sum.hours ?? 0));
   });
 
-  // Same identity as listBalances: credits is derived (available + used),
-  // never independently summed, so it can't drift from the other two.
+  const expiredMap = {};
+  expiredTotals.forEach((d) => {
+    if (!expiredMap[d.userId]) expiredMap[d.userId] = {};
+    expiredMap[d.userId][d.policyId] = Math.abs(Number(d._sum.hours ?? 0));
+  });
+
+  // Same identity as listBalances: credits is derived (available + used +
+  // expired), never independently summed, so it can't drift from the others.
   const rows = users.map((u) => {
     const fullName =
       `${u.profile?.firstName || ""} ${u.profile?.lastName || ""}`.trim() ||
@@ -133,7 +195,14 @@ const listMatrix = async (req, res) => {
     policies.forEach((p) => {
       const available = availableMap[u.id]?.[p.id] ?? 0;
       const used       = usedMap[u.id]?.[p.id] ?? 0;
-      balObj[p.leaveType] = { credits: +(available + used).toFixed(2), used, available };
+      const expired    = expiredMap[u.id]?.[p.id] ?? 0;
+      balObj[p.leaveType] = {
+        credits:    +(available + used + expired).toFixed(2),
+        used,
+        expired,
+        available,
+        creditLots: lotMap[u.id]?.[p.id] ?? [],
+      };
     });
     return { userId: u.id, fullName, email: u.email, balances: balObj };
   });
