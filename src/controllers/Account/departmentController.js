@@ -169,6 +169,8 @@ const updateDepartment = async (req, res) => {
       autoBreakCoffeeMinutes,
       autoBreakCoffeeCount,
       autoBreakCoffeeDeductible,
+      fixedHoursEnabled,
+      fixedHoursPerCutoff,
     } = req.body;
     const companyId = req.user.companyId;
 
@@ -282,6 +284,19 @@ const updateDepartment = async (req, res) => {
 
     if (autoBreakCoffeeDeductible !== undefined) {
       updateData.autoBreakCoffeeDeductible = Boolean(autoBreakCoffeeDeductible);
+    }
+
+    // BB-089: fixed-hours department (e.g. SV = 80h per cutoff)
+    if (fixedHoursEnabled !== undefined) {
+      updateData.fixedHoursEnabled = Boolean(fixedHoursEnabled);
+    }
+
+    if (fixedHoursPerCutoff !== undefined && fixedHoursPerCutoff !== null) {
+      const val = Number(fixedHoursPerCutoff);
+      if (!Number.isFinite(val) || val <= 0 || val > 999) {
+        return res.status(400).json({ error: "fixedHoursPerCutoff must be a number greater than 0 and at most 999." });
+      }
+      updateData.fixedHoursPerCutoff = val.toFixed(2);
     }
 
     const updatedDepartment = await prisma.department.update({
@@ -447,7 +462,116 @@ const getUsersInDepartment = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/departments/:id/fixed-hours-members
+ * BB-089: the department's employees with their own fixed-hours switch. An
+ * employee is only paid fixed hours while the department's master switch
+ * (fixedHoursEnabled) is also on.
+ */
+const getFixedHoursMembers = async (req, res) => {
+  try {
+    const departmentId = req.params.id;
+    const companyId = req.user.companyId;
+
+    const department = await prisma.department.findFirst({
+      where: { id: departmentId, companyId },
+      select: { id: true, name: true, fixedHoursEnabled: true, fixedHoursPerCutoff: true },
+    });
+    if (!department) {
+      return res.status(404).json({ error: "Department not found." });
+    }
+
+    const users = await prisma.user.findMany({
+      where: { departmentId, companyId, status: { not: "deleted" } },
+      select: {
+        id: true,
+        email: true,
+        employeeId: true,
+        role: true,
+        status: true,
+        fixedHoursEnabled: true,
+        profile: { select: { firstName: true, lastName: true } },
+      },
+    });
+
+    const members = users
+      .map((u) => ({
+        userId:            u.id,
+        firstName:         u.profile?.firstName || "",
+        lastName:          u.profile?.lastName || "",
+        email:             u.email,
+        employeeId:        u.employeeId,
+        role:              u.role,
+        status:            u.status,
+        fixedHoursEnabled: u.fixedHoursEnabled,
+        // what actually applies right now — both switches on and user active
+        isOnFixedHours:    department.fixedHoursEnabled && u.fixedHoursEnabled && u.status === "active",
+      }))
+      .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
+
+    return res.status(200).json({
+      data: { department, members },
+      message: "Fixed-hours members retrieved successfully.",
+    });
+  } catch (error) {
+    console.error("Error in getFixedHoursMembers:", error);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+};
+
+/**
+ * PUT /api/departments/:id/fixed-hours-members
+ * BB-089: turn fixed hours on/off for one or more employees of this department.
+ * Body: { userIds: string[], enabled: boolean }
+ * Open cutoffs pick the change up on their next review load / lock / finalize.
+ */
+const updateFixedHoursMembers = async (req, res) => {
+  try {
+    const departmentId = req.params.id;
+    const companyId = req.user.companyId;
+    const { userIds, enabled } = req.body;
+
+    if (!Array.isArray(userIds) || userIds.length === 0 || !userIds.every((id) => typeof id === "string")) {
+      return res.status(400).json({ error: "userIds must be a non-empty array of user IDs." });
+    }
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be true or false." });
+    }
+
+    const department = await prisma.department.findFirst({ where: { id: departmentId, companyId } });
+    if (!department) {
+      return res.status(404).json({ error: "Department not found." });
+    }
+
+    const uniqueIds = [...new Set(userIds)];
+    const users = await prisma.user.findMany({
+      where: { id: { in: uniqueIds }, departmentId, companyId },
+      select: { id: true },
+    });
+    if (users.length !== uniqueIds.length) {
+      const found = new Set(users.map((u) => u.id));
+      const invalid = uniqueIds.filter((id) => !found.has(id));
+      return res.status(400).json({ error: `Users not in this department: ${invalid.join(", ")}.` });
+    }
+
+    const result = await prisma.user.updateMany({
+      where: { id: { in: uniqueIds } },
+      data: { fixedHoursEnabled: enabled },
+    });
+
+    return res.status(200).json({
+      data: { updatedCount: result.count, userIds: uniqueIds, fixedHoursEnabled: enabled },
+      message: `Fixed hours ${enabled ? "enabled" : "disabled"} for ${result.count} employee(s).`,
+    });
+  } catch (error) {
+    console.error("Error in updateFixedHoursMembers:", error);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+};
+
 module.exports = {
+  getFixedHoursMembers,
+  updateFixedHoursMembers,
   createDepartment,
   getAllDepartments,
   getDepartmentById,

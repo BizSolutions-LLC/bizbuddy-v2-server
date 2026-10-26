@@ -26,7 +26,7 @@ const logger = require("@config/logger");
 const http = require("http");
 
 // Defense-in-depth for async errors OUTSIDE the Express request cycle —
-// cron jobs and workers (leaveAccrualWorker, checkMissedClockIns, etc.)
+// cron jobs and workers (leaveCreditWorker, checkMissedClockIns, etc.)
 // aren't covered by express-async-errors since they never go through a
 // route. Log and keep the process alive instead of crashing on these too.
 process.on("unhandledRejection", (reason) => {
@@ -52,14 +52,14 @@ connect()
     // Services
     const { init: initSocket }          = require("@config/socket");
     const { initFirebase, isFirebaseReady } = require("@config/firebase");
-    const { scheduleLeaveAccrual }      = require("@workers/leaveAccrualWorker");
+    const { scheduleLeaveCredits }      = require("@workers/leaveCreditWorker");
     const { scheduleClockOutReminders } = require("@workers/clockOutReminderWorker");
     const { scheduleClockInReminders }  = require("@workers/clockInReminderWorker");
     const { initializeCronJobs }        = require("@utils/cronScheduler");
 
     initSocket(server);
     initFirebase();
-    scheduleLeaveAccrual();
+    scheduleLeaveCredits();
     scheduleClockOutReminders();
     scheduleClockInReminders();
     initializeCronJobs();

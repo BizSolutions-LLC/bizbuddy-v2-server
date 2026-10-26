@@ -23,7 +23,7 @@ function parseList(value) {
  *   ?year=YYYY
  *   &groupBy=month|quarter|year     (default month)
  *   &periods=Jan,Feb,... | Q1,Q2,... (default all for groupBy; ignored for year)
- *   &columns=driver,regular,ot,average (default none — Total only)
+ *   &columns=driver,regular,leave,ot,average (default none — Total only)
  */
 const getYearlyTotalHoursReport = async (req, res) => {
   try {

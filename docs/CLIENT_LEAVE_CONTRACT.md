@@ -367,6 +367,90 @@ An employee with 2+ shifts on the same day (e.g. Driver AM and Driver PM) can no
 
 ---
 
+## BB-098 — Leave credits: fiscal-year grants, regularization, expiration
+
+Company-wide. Two independent toggles, both **off** by default. Nothing changes for a company until an admin runs the setup.
+
+### 1. Company settings (`GET` / `PATCH /company-settings`)
+
+New fields, returned by both GET and PATCH:
+
+| Field | Type | Notes |
+|---|---|---|
+| `leaveGrantEnabled` | boolean | Toggle: automatic grants |
+| `leaveGrantMode` | `"yearly_lump"` \| `"monthly_accrual"` | Locked after setup |
+| `leaveGrantHours` | number | Hours per fiscal year (e.g. 40) |
+| `leaveYearStartMonth` | 1–12 | Fiscal year start month. Locked after setup |
+| `leaveYearStartDay` | 1–28 | Fiscal year start day. Locked after setup |
+| `leaveExpirationEnabled` | boolean | Toggle: expiration |
+| `leaveCreditLifetimeYears` | 1–10 | Fiscal years usable, counting the year granted |
+| `leaveExpiryReminderDays` | 0–365 | Days before expiration to notify the employee (0 = no reminder) |
+| `leaveRegularizationMonths` | 0–60 | Waiting period from hire date (0 = none) |
+| `leaveRegularizationGrant` | `"none"` \| `"catch_up"` \| `"prorated"` \| `"full"` | Yearly: `none`/`prorated`/`full`. Monthly: `none`/`catch_up` |
+| `leaveCreditsInitializedAt` | ISO string \| null | Read-only. Set once by setup/apply |
+
+PATCH rules (400 `{ error }` otherwise):
+- Either toggle can be turned **off** at any time.
+- `leaveGrantEnabled: true` is rejected until setup has been applied once.
+- `leaveExpirationEnabled: true` is rejected while it's off. Turning expiration on always goes through setup/apply, so the admin sees what expires first.
+- Fiscal year start and grant mode can't change after setup.
+
+### 2. Setup — preview, then apply (admin/superadmin)
+
+`POST /leave-balances/credit-setup/preview` (read-only) and `POST /leave-balances/credit-setup/apply` take the same body: any of the settings above plus `leaveGrantEnabled` / `leaveExpirationEnabled`. Missing fields fall back to the saved settings.
+
+Preview response `data`:
+```
+{
+  settings: { ...effective settings incl. both toggles },
+  initialized: boolean,
+  today: "YYYY-MM-DD",
+  currentFiscalYear: { fiscalYear, label, startsOn, endsOn },
+  rows: [{
+    userId, name, status, policyId, leaveType, isArchived,
+    balanceHours,
+    lots: [{ fiscalYear, label, hours, expiresOn, expiresImmediately }],  // newest first
+    expiringNowHours, balanceAfterHours
+  }],
+  totals: { activeEmployeesWithBalance, balanceHours, expiringNowHours, balanceAfterHours },   // active employees only
+  regularization: {
+    missingHireDate: [{ userId, name }],                       // skipped by grants until fixed
+    inWaitingPeriod: [{ userId, name, regularizationDate }]
+  }
+}
+```
+Before setup, `lots` uses the opening-balance rule: the balance is split into `leaveGrantHours` chunks, newest first (first chunk = current FY, next = previous FY, …). After setup, `lots` shows the real lots.
+
+Apply response `data`: `{ applied, settings }`. `applied` is `{ lotsCreatedFor, expiredHours }` the first time, or `{ expired: { lots, hours } }` on later applies with expiration on. 409 if two first-time applies race.
+
+### 3. Balance read-side
+
+`GET /leaves/balances` (per leave type), additive:
+- `expired`: total hours lost to expiration.
+- `credits` now = `available + used + expired`.
+- `creditLots`: `[{ fiscalYear, label, remainingHours, expiresOn }]`, oldest first. Empty before setup.
+- `nextExpiration`: `{ date, hours } | null`. Only when expiration is on.
+
+`GET /leave-balances/matrix`: each cell gains `expired`, and `credits` includes it. Each cell also gains `creditLots`, in the same shape as above, oldest first, and `[]` before setup. Unlike `/leaves/balances`, it includes fully used years at `remainingHours: 0` and leaves out expired years. The sum of `remainingHours` equals `available` whenever `available >= 0`. A negative (debt) balance has every year at 0.
+
+### 4. Ledger
+
+New `LeaveTransaction.type`: `"expired"`, with negative `hours` and `balanceBefore`/`balanceAfter` set. Automatic grants are `"accrual"` rows with notes such as "Annual grant — FY2026", "Monthly accrual — November 2026 (FY2026)" or "Regularization grant (prorated) — regularized 2026-11-03".
+
+### 5. Notification
+
+New `notificationCode`: `LEAVE_CREDITS_EXPIRING`. Sent to the employee once per fiscal-year lot when it enters the reminder window. Payload: `{ creditId, policyId, leaveType, fiscalYear, hours, expiresOn }`.
+
+### UI work
+
+- Company settings: Leave Credits section with both toggles and the fields above. Fiscal year start and grant mode become read-only once `leaveCreditsInitializedAt` is set. Only show the regularization options that are valid for the selected mode.
+- Turning a toggle on: call preview, show the per-employee table and the missing-hire-date list, then apply.
+- Balance views: fiscal-year breakdown (`creditLots`), an "X h expire on DATE" notice (`nextExpiration`), and the `expired` figure.
+- Ledger / matrix: label `expired` rows.
+- Notifications: handle `LEAVE_CREDITS_EXPIRING`.
+
+---
+
 ## Not yet changed (still on old behavior)
 
 - Cancelling/reversing an **already-approved** leave — still doesn't exist, remaining Phase 6 scope. Also Phase 6's job: the punch-vs-leave "Leave Always Wins" → "Punch Wins" auto-exclusion rule, which is the one remaining case where `available` can still (rarely) disagree with a pure ledger reconstruction — see `docs/LEAVE_MODULE.md` §14e. (Pre-approval requester self-cancel is now available — see the Cancel Leave section above.)

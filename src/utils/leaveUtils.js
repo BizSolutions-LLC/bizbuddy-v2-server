@@ -163,13 +163,6 @@ async function calcRequestedHours(userId, startISO, endISO, options = {}) {
   return +days.reduce((sum, d) => sum + d.hours, 0).toFixed(2);
 }
 
-function monthlyIncrement(policy, defaultShiftHours = 8) {
-  const alloc  = Number(policy.annualAllocation);
-  const perYear =
-    policy.accrualUnit === "days" ? alloc * defaultShiftHours : alloc;
-  return +(perYear / 12).toFixed(2);
-}
-
 /**
  * Prisma `where` fragment scoping which employees' Leave rows a management
  * user (admin/superadmin/supervisor) may view. Admins/superadmins see the
@@ -199,4 +192,4 @@ function leaveVisibilityWhere(companyId, role, actingUserId, departmentId, relat
   return { [relationField]: { companyId } };
 }
 
-module.exports = { calcDailyHours, calcRequestedHours, monthlyIncrement, leaveVisibilityWhere };
+module.exports = { calcDailyHours, calcRequestedHours, leaveVisibilityWhere };

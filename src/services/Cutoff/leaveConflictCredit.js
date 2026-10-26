@@ -5,6 +5,8 @@
 // Pulled out into one file so the two strategies can't drift the way the
 // old inline copies did (one flat-8h credit, no ledger entry, in both files).
 
+const { loadCreditCompanyForPolicy, isTracked, restoreToLots } = require("@services/Leave/leaveCreditService");
+
 // Cancels an approved leave and credits back the real deducted hours (read
 // off the original "deduction" LeaveTransaction, not a flat amount). Writes
 // a "cancelled" lifecycle ledger row (mirrors cancelLeave's shape exactly —
@@ -73,6 +75,19 @@ async function creditLeaveOnConflict(tx, { leave, userId }) {
       update: { balanceHours: balanceAfter },
       create: { userId: leave.userId, policyId, balanceHours: balanceAfter },
     });
+
+    // BB-098: put the hours back into the same fiscal-year lots the
+    // approval drew from.
+    const creditCompany = await loadCreditCompanyForPolicy(tx, policyId);
+    if (isTracked(creditCompany)) {
+      await restoreToLots(tx, creditCompany, {
+        userId:   leave.userId,
+        policyId,
+        hours:    creditHours,
+        balanceBefore,
+        leaveId:  leave.id,
+      });
+    }
 
     await tx.leaveTransaction.create({
       data: {

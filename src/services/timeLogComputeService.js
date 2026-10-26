@@ -39,6 +39,7 @@
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
+const { lunchOverlapMs } = require("./timeLogComputeUtils");
 
 // ── Timezone helpers ──────────────────────────────────────────────────────────
 
@@ -107,12 +108,15 @@ function lunchBreakMinutes(lunchBreak) {
  * Computes hours worked within a single shift segment window.
  * Clamps timeIn/timeOut to the segment boundary and returns hours (2dp).
  * Returns null if the segment boundary itself is null (missing shift data).
+ * BB-092: subtracts the part of lunchBreak that falls inside the clamped window.
  */
-function computeSegmentHours(timeIn, timeOut, segStart, segEnd) {
+function computeSegmentHours(timeIn, timeOut, segStart, segEnd, lunchBreak = null) {
   if (!segStart || !segEnd) return null;
   const start = Math.max(timeIn.getTime(),  segStart.getTime());
   const end   = Math.min(timeOut.getTime(), segEnd.getTime());
-  return +(Math.max(0, end - start) / 3600000).toFixed(2);
+  if (end <= start) return 0;
+  const lunchMs = lunchOverlapMs(lunchBreak, start, end);
+  return +(Math.max(0, end - start - lunchMs) / 3600000).toFixed(2);
 }
 
 /**
@@ -188,7 +192,8 @@ function matchShiftToWindow(userShifts, timeIn, timeOut, tz) {
  *
  * netWorkedHours semantics by punch type:
  *   REGULAR        → gross (timeOut − timeIn) minus all break deductions
- *   DRIVER_AIDE_*  → sum of computed segment hours (schedule-bounded, OT excluded)
+ *   DRIVER_AIDE_*  → sum of computed segment hours (schedule-bounded, OT excluded,
+ *                    punched lunch subtracted from the segment it falls in — BB-092)
  *
  * rawOtMinutes semantics by punch type:
  *   REGULAR        → minutes past assigned shift end (grace-adjusted).
@@ -563,6 +568,7 @@ async function computeTimeLogSummary(timeLogId) {
   //   Each segment clamps timeIn/timeOut to the window boundaries so that:
   //     - Pre-schedule time (e.g. 7:31 AM before 8:00 AM Regular start) is excluded
   //     - Early departure is captured correctly per segment
+  //     - Lunch inside the window is subtracted from that segment (BB-092)
   //   netWorkedHours = sum of segment hours (OT excluded — OT requires approval)
   //   rawOtMinutes   = minutes past Driver PM end, grace-adjusted
 
@@ -613,15 +619,28 @@ async function computeTimeLogSummary(timeLogId) {
     const driverAmSeg = isDriverAm ? resolveSegmentBoundary("Driver/Aide AM Shift") : null;
     const driverPmSeg = isDriverPm ? resolveSegmentBoundary("Driver/Aide PM Shift") : null;
 
-    regularSegmentHours  = computeSegmentHours(timeIn, timeOut, regularSeg?.start,  regularSeg?.end);
-    driverAmSegmentHours = computeSegmentHours(timeIn, timeOut, driverAmSeg?.start, driverAmSeg?.end);
-    driverPmSegmentHours = computeSegmentHours(timeIn, timeOut, driverPmSeg?.start, driverPmSeg?.end);
+    // BB-092: each segment loses the part of the lunch punch inside its window
+    // (lunch 08:17–08:46 → Regular; a lunch crossing a boundary is split).
+    regularSegmentHours  = computeSegmentHours(timeIn, timeOut, regularSeg?.start,  regularSeg?.end,  log.lunchBreak);
+    driverAmSegmentHours = computeSegmentHours(timeIn, timeOut, driverAmSeg?.start, driverAmSeg?.end, log.lunchBreak);
+    driverPmSegmentHours = computeSegmentHours(timeIn, timeOut, driverPmSeg?.start, driverPmSeg?.end, log.lunchBreak);
 
-    // netWorkedHours = sum of all resolved segments (pre-schedule time excluded)
+    // netWorkedHours = sum of all resolved segments (pre-schedule time and lunch excluded)
     const segTotal = [regularSegmentHours, driverAmSegmentHours, driverPmSegmentHours]
       .filter((h) => h !== null)
       .reduce((sum, h) => sum + h, 0);
     netWorkedHours = +segTotal.toFixed(2);
+
+    // Driver/Aide deducts only the punched (or deductible auto) lunch that falls
+    // inside a segment — the company minimumLunchMinutes floor does not apply.
+    // Store what was actually deducted so "Lunch Break" matches the hours.
+    lunchDeductionMins = [regularSeg, driverAmSeg, driverPmSeg]
+      .filter(Boolean)
+      .reduce((sum, seg) => sum + lunchOverlapMs(
+        log.lunchBreak,
+        Math.max(timeIn.getTime(),  seg.start.getTime()),
+        Math.min(timeOut.getTime(), seg.end.getTime()),
+      ), 0) / 60000;
 
     // rawOtMinutes = minutes past Driver PM shift end, grace-adjusted
     if (driverPmSeg) {

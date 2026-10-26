@@ -1,28 +1,85 @@
 // src/services/Features/scheduleImportService.js
-// Row-level business logic for the CSV schedule bulk-import feature (BB-081).
-// CSV shape/header validation and block-merging live in @utils/csvScheduleParser; this
-// file resolves employees, checks conflicts, and — unlike the punch-log importer
-// (BB-077), which commits in one shot — splits into two phases:
-//   1. previewScheduleImport() — parses + merges + resolves proposed Shift names +
-//      checks conflicts. Writes nothing. Client shows a review/confirm modal from this.
-//   2. commitScheduleImport() — takes the (possibly user-edited: renamed shifts,
-//      skipped rows) preview rows back and actually creates the Shift/UserShift records,
-//      re-validating scope and conflicts against current DB state first (the preview may
-//      be stale by the time the user confirms).
+// Row-level business logic for the CSV schedule bulk-import feature (BB-081, reworked
+// as "Upload Schedule" in BB-103). CSV shape/header validation and block-merging live
+// in @utils/csvScheduleParser; this file builds the pre-filled template, resolves
+// employees and shifts, detects conflicts, and commits. Two phases:
+//   1. previewSchedule() — parses the file into one item per proposed assignment
+//      (a marked shift column, or a contiguous run of time blocks), checks overlaps
+//      (overnight spill included) within the file and against existing assignments,
+//      and says per item what the admin may do (create / skip / replace). Writes nothing.
+//   2. confirmSchedule() — takes one decision per item back, re-validates everything
+//      against the current DB (the preview may be stale), and writes. A Replace deletes
+//      the conflicting assignments and creates the new one in one transaction per item.
+//
+// Overlaps are compared on an absolute minute timeline (day number × 1440 + minute of
+// day). A shift whose end is at or before its start crosses midnight and runs into the
+// next date, so 19:00–05:00 on Oct 26 overlaps 04:00–08:00 on Oct 27.
+//
+// The pre-BB-103 preview/confirm (previewScheduleImport / commitScheduleImport, the
+// `rows` contract) stay below until the new client ships.
 
 const { prisma } = require("@config/connection");
+const moment = require("moment-timezone");
 const { hasTimeOverlap } = require("@controllers/Features/shiftAssignmentController");
 const {
   notifyEmployeeShiftAssigned,
   notifyManagementShiftAssignment,
+  notifyEmployeeShiftReplaced,
 } = require("@services/shiftNotificationService");
 const {
   parseScheduleCsv,
+  buildTemplateCsv,
   mergeBlocksToTimeRanges,
+  shiftColumnHeaders,
+  normalizeDate,
   IDENTIFIER_COLUMNS,
 } = require("@utils/csvScheduleParser");
 
-const MAX_ROWS = 300;
+const MODES = ["time_blocks", "shifts"];
+const MAX_RANGE_DAYS = 14;
+const MAX_ROWS = 2000; // ~140 employees × 14 days
+const MAX_ITEMS = 4000; // several shifts per row are allowed
+const LEGACY_MAX_ROWS = 300;
+const DAY_MINUTES = 24 * 60;
+
+class ScheduleImportError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// ── Small helpers ───────────────────────────────────────────────────────────
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const dayNum = (ymd) => Date.parse(`${ymd}T00:00:00Z`) / 86400000;
+const ymdOf = (n) => new Date(n * 86400000).toISOString().slice(0, 10);
+const dateColStr = (d) => new Date(d).toISOString().slice(0, 10);
+const toMinutes = (hhmm) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+};
+const timeColToHHMM = (d) => {
+  const x = new Date(d);
+  return `${pad2(x.getUTCHours())}:${pad2(x.getUTCMinutes())}`;
+};
+const crossesMidnightOf = (startTime, endTime) => toMinutes(endTime) <= toMinutes(startTime);
+const splitIds = (v) =>
+  (Array.isArray(v) ? v.join(",") : v || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+// Absolute [start, end) in minutes for a shift on `ymd`; an overnight shift spills
+// into the next date.
+function intervalOf(ymd, startTime, endTime) {
+  const base = dayNum(ymd) * DAY_MINUTES;
+  const start = toMinutes(startTime);
+  let end = toMinutes(endTime);
+  if (end <= start) end += DAY_MINUTES;
+  return { start: base + start, end: base + end };
+}
+const overlaps = (a, b) => a.start < b.end && b.start < a.end;
 
 function hhmmToEpochDate(hhmm) {
   const [hour, minute] = hhmm.split(":").map(Number);
@@ -41,9 +98,792 @@ function defaultShiftName(startTime, endTime) {
   return `${formatDisplayTime(startTime)} – ${formatDisplayTime(endTime)}`;
 }
 
-// Same grouping key used at both preview and commit time to decide which rows share
-// one Shift record within this import batch. Pre-existing company Shift templates are
-// never reused/renamed by this import — every group always creates a new Shift.
+const USER_SELECT = {
+  id: true,
+  employeeId: true,
+  email: true,
+  status: true,
+  departmentId: true,
+  profile: { select: { firstName: true, lastName: true } },
+};
+
+// "Last, First", falling back to the email.
+function displayName(u) {
+  const first = u.profile?.firstName?.trim() || "";
+  const last = u.profile?.lastName?.trim() || "";
+  if (first && last) return `${last}, ${first}`;
+  return first || last || u.email;
+}
+
+const employeeOut = (u) => ({
+  userId: u.id,
+  email: u.email,
+  name: displayName(u),
+});
+
+// The uploader, with their department loaded from the DB — req.user only carries
+// id/email/role/companyId. Supervisors are limited to their own department.
+async function loadActor({ companyId, actingUserId, actingRole }) {
+  const u = await prisma.user.findUnique({ where: { id: actingUserId }, select: { departmentId: true } });
+  return {
+    id: actingUserId,
+    companyId,
+    role: actingRole,
+    departmentId: u?.departmentId ?? null,
+    scoped: actingRole === "supervisor",
+  };
+}
+
+async function loadCompanyTimezone(companyId) {
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timeZone: true } });
+  return company?.timeZone || "UTC";
+}
+
+function parseMode(raw) {
+  if (!MODES.includes(raw)) throw new ScheduleImportError(400, `mode must be one of: ${MODES.join(", ")}.`);
+  return raw;
+}
+
+// Inclusive date range, at most MAX_RANGE_DAYS days.
+function parseRange(startRaw, endRaw) {
+  const startDate = normalizeDate(startRaw);
+  const endDate = normalizeDate(endRaw);
+  if (!startDate || !endDate) throw new ScheduleImportError(400, "startDate and endDate are required (YYYY-MM-DD).");
+  const days = dayNum(endDate) - dayNum(startDate) + 1;
+  if (days < 1) throw new ScheduleImportError(400, "endDate must be on or after startDate.");
+  if (days > MAX_RANGE_DAYS)
+    throw new ScheduleImportError(400, `The date range can be at most ${MAX_RANGE_DAYS} days (got ${days}).`);
+  return {
+    startDate,
+    endDate,
+    dates: Array.from({ length: days }, (_, i) => ymdOf(dayNum(startDate) + i)),
+  };
+}
+
+// The picked shifts, in the order given. Company shifts only.
+async function loadShiftPool(companyId, shiftIds) {
+  if (shiftIds.length === 0) throw new ScheduleImportError(400, "Pick at least one shift (shiftIds) for shifts mode.");
+  if (new Set(shiftIds).size !== shiftIds.length) throw new ScheduleImportError(400, "shiftIds contains duplicates.");
+  const shifts = await prisma.shift.findMany({
+    where: { id: { in: shiftIds }, companyId },
+    select: { id: true, shiftName: true, startTime: true, endTime: true, crossesMidnight: true },
+  });
+  if (shifts.length !== shiftIds.length)
+    throw new ScheduleImportError(403, "One or more shifts don't belong to your company.");
+  const byId = new Map(shifts.map((s) => [s.id, s]));
+  return shiftIds.map((id) => byId.get(id));
+}
+
+function poolShiftOut(s) {
+  const startTime = timeColToHHMM(s.startTime);
+  const endTime = timeColToHHMM(s.endTime);
+  return {
+    shiftId: s.id,
+    shiftName: s.shiftName,
+    startTime,
+    endTime,
+    crossesMidnight: crossesMidnightOf(startTime, endTime),
+    isExisting: true,
+  };
+}
+
+// Template target: all employees in scope, one department, or specific people.
+// Active employees only.
+async function resolveTargetEmployees(actor, { userIds, departmentId }) {
+  if (actor.scoped) {
+    if (!actor.departmentId) throw new ScheduleImportError(403, "You aren't assigned to a department.");
+    if (departmentId && departmentId !== actor.departmentId)
+      throw new ScheduleImportError(403, "You can only upload schedules for your own department.");
+  } else if (departmentId) {
+    const dept = await prisma.department.findFirst({ where: { id: departmentId, companyId: actor.companyId }, select: { id: true } });
+    if (!dept) throw new ScheduleImportError(403, "Department not found in your company.");
+  }
+
+  const deptFilter = actor.scoped ? actor.departmentId : departmentId;
+  const users = await prisma.user.findMany({
+    where: {
+      companyId: actor.companyId,
+      status: "active",
+      ...(deptFilter ? { departmentId: deptFilter } : {}),
+      ...(userIds.length ? { id: { in: userIds } } : {}),
+    },
+    select: USER_SELECT,
+  });
+  if (userIds.length && users.length !== new Set(userIds).size)
+    throw new ScheduleImportError(403, "One or more employees are inactive or outside your scope.");
+
+  return users.sort((a, b) => displayName(a).localeCompare(displayName(b)));
+}
+
+// ── Replace rules ───────────────────────────────────────────────────────────
+
+// Punches and locked/processed cutoffs around the dates in play, loaded once.
+async function loadReplaceContext({ companyId, tz, userIds, minDate, maxDate }) {
+  const from = moment.tz(ymdOf(dayNum(minDate) - 1), tz).startOf("day").toDate();
+  const to = moment.tz(ymdOf(dayNum(maxDate) + 1), tz).endOf("day").toDate();
+  const [logs, cutoffs] = await Promise.all([
+    prisma.timeLog.findMany({
+      where: { userId: { in: userIds }, timeIn: { gte: from, lte: to } },
+      select: { userId: true, timeIn: true },
+    }),
+    prisma.cutoffPeriod.findMany({
+      where: { companyId, status: { in: ["locked", "processed"] }, periodStart: { lte: to }, periodEnd: { gte: from } },
+      select: { departmentId: true, periodStart: true, periodEnd: true, status: true },
+    }),
+  ]);
+  return {
+    tz,
+    cutoffs,
+    punchDays: new Set(logs.map((l) => `${l.userId}|${moment.tz(l.timeIn, tz).format("YYYY-MM-DD")}`)),
+  };
+}
+
+// Same matching rule as timeLogController.getLockedCutoffForDate: a department period
+// or a company-wide one covering the date in the company timezone.
+function lockedCutoffFor(ctx, departmentId, ymd) {
+  const dayStart = moment.tz(ymd, ctx.tz).startOf("day").toDate();
+  const dayEnd = moment.tz(ymd, ctx.tz).endOf("day").toDate();
+  return (
+    ctx.cutoffs.find(
+      (p) =>
+        (p.departmentId === null || p.departmentId === departmentId) &&
+        p.periodStart <= dayEnd &&
+        p.periodEnd >= dayStart
+    ) || null
+  );
+}
+
+// Why an existing assignment can't be replaced, or null when it can.
+function replaceBlocker(ctx, existing, departmentId) {
+  if (existing.status === "completed") return "This shift is already completed.";
+  if (ctx.punchDays.has(`${existing.userId}|${existing.date}`)) return "The employee already has punches on this date.";
+  const cutoff = lockedCutoffFor(ctx, departmentId, existing.date);
+  if (cutoff) return `This date is in a ${cutoff.status} cutoff.`;
+  return null;
+}
+
+// Existing (non-cancelled) assignments for these employees, one day either side of
+// the range so overnight spill in both directions is caught. Grouped by user.
+async function loadExistingAssignments(userIds, minDate, maxDate) {
+  const rows = await prisma.userShift.findMany({
+    where: {
+      userId: { in: userIds },
+      status: { not: "cancelled" },
+      assignedDate: { gte: new Date(ymdOf(dayNum(minDate) - 1)), lte: new Date(ymdOf(dayNum(maxDate) + 1)) },
+    },
+    select: {
+      id: true,
+      userId: true,
+      shiftId: true,
+      assignedDate: true,
+      status: true,
+      customStartTime: true,
+      customEndTime: true,
+      shift: { select: { shiftName: true, startTime: true, endTime: true } },
+    },
+  });
+  const byUser = new Map();
+  for (const us of rows) {
+    const startTime = timeColToHHMM(us.customStartTime || us.shift.startTime);
+    const endTime = timeColToHHMM(us.customEndTime || us.shift.endTime);
+    const date = dateColStr(us.assignedDate);
+    if (!byUser.has(us.userId)) byUser.set(us.userId, []);
+    byUser.get(us.userId).push({
+      userShiftId: us.id,
+      userId: us.userId,
+      shiftId: us.shiftId,
+      shiftName: us.shift.shiftName,
+      date,
+      startTime,
+      endTime,
+      crossesMidnight: crossesMidnightOf(startTime, endTime),
+      status: us.status,
+      interval: intervalOf(date, startTime, endTime),
+    });
+  }
+  return byUser;
+}
+
+const existingConflictOut = (e, replaceable, reason) => ({
+  userShiftId: e.userShiftId,
+  shiftId: e.shiftId,
+  shiftName: e.shiftName,
+  date: e.date,
+  startTime: e.startTime,
+  endTime: e.endTime,
+  crossesMidnight: e.crossesMidnight,
+  replaceable,
+  notReplaceableReason: reason,
+});
+
+// Company shifts by (start, end, name) — time_blocks mode reuses an existing Shift with
+// exactly the same times and name instead of creating a duplicate. Oldest wins.
+async function loadShiftReuseMap(companyId) {
+  const shifts = await prisma.shift.findMany({
+    where: { companyId },
+    select: { id: true, shiftName: true, startTime: true, endTime: true, crossesMidnight: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const map = new Map();
+  for (const s of shifts) {
+    const startTime = timeColToHHMM(s.startTime);
+    const endTime = timeColToHHMM(s.endTime);
+    if (s.crossesMidnight !== crossesMidnightOf(startTime, endTime)) continue;
+    const key = reuseKey(startTime, endTime, s.shiftName);
+    if (!map.has(key)) map.set(key, s);
+  }
+  return map;
+}
+const reuseKey = (startTime, endTime, name) => `${startTime}|${endTime}|${name.trim().toLowerCase()}`;
+
+// ── Template ────────────────────────────────────────────────────────────────
+
+/**
+ * GET /template — pre-filled CSV: one row per employee × date. Still accepts the
+ * pre-BB-103 `weekStart` (→ time_blocks, weekStart … weekStart + 6).
+ */
+async function buildScheduleTemplate({ companyId, actingUserId, actingRole, query }) {
+  const actor = await loadActor({ companyId, actingUserId, actingRole });
+
+  let { mode, startDate, endDate } = query;
+  if (!mode && query.weekStart) {
+    const weekStart = normalizeDate(query.weekStart);
+    if (!weekStart) throw new ScheduleImportError(400, "Invalid weekStart (YYYY-MM-DD).");
+    mode = "time_blocks";
+    startDate = weekStart;
+    endDate = ymdOf(dayNum(weekStart) + 6);
+  }
+  mode = parseMode(mode);
+  const range = parseRange(startDate, endDate);
+  const pool = mode === "shifts" ? await loadShiftPool(companyId, splitIds(query.shiftIds)) : [];
+  const employees = await resolveTargetEmployees(actor, {
+    userIds: splitIds(query.userIds),
+    departmentId: query.departmentId || null,
+  });
+
+  const rowCount = employees.length * range.dates.length;
+  if (rowCount > MAX_ROWS)
+    throw new ScheduleImportError(
+      400,
+      `That's ${rowCount} rows (${employees.length} employees × ${range.dates.length} days); the limit is ${MAX_ROWS}. Pick fewer employees or days.`
+    );
+
+  const csv = buildTemplateCsv({
+    mode,
+    dates: range.dates,
+    employees: employees.map((e) => ({ email: e.email, name: displayName(e) })),
+    shiftHeaders: shiftColumnHeaders(pool),
+  });
+  return { csv, filename: `schedule_${mode}_${range.startDate}_to_${range.endDate}.csv` };
+}
+
+// ── Preview ─────────────────────────────────────────────────────────────────
+
+/**
+ * POST /preview (multipart: file, mode, overnight, shiftIds, optional startDate/endDate).
+ * Returns { mode, range, summary, items }. Throws ScheduleImportError / CsvShapeError
+ * for whole-file problems (400/403); row problems become `error` items.
+ */
+async function previewSchedule({ buffer, companyId, actingUserId, actingRole, body }) {
+  const actor = await loadActor({ companyId, actingUserId, actingRole });
+  const mode = parseMode(body.mode);
+  const overnight = body.overnight === true || body.overnight === "true";
+  const pool = mode === "shifts" ? await loadShiftPool(companyId, splitIds(body.shiftIds)) : [];
+  const poolOut = pool.map(poolShiftOut);
+
+  const rows = parseScheduleCsv(buffer, { mode, shiftHeaders: shiftColumnHeaders(pool) });
+  if (rows.length > MAX_ROWS)
+    throw new ScheduleImportError(400, `CSV has ${rows.length} rows; the limit is ${MAX_ROWS} per upload.`);
+
+  // Range: the one sent, else the file's own dates (which must fit in 14 days).
+  let range = body.startDate || body.endDate ? parseRange(body.startDate, body.endDate) : null;
+  if (!range) {
+    const fileDays = rows.map((r) => normalizeDate(r.data.date)).filter(Boolean).map(dayNum);
+    if (fileDays.length) {
+      const min = Math.min(...fileDays);
+      const max = Math.max(...fileDays);
+      if (max - min + 1 > MAX_RANGE_DAYS)
+        throw new ScheduleImportError(
+          400,
+          `The file covers ${max - min + 1} days (${ymdOf(min)} to ${ymdOf(max)}); the limit is ${MAX_RANGE_DAYS}.`
+        );
+      range = { startDate: ymdOf(min), endDate: ymdOf(max) };
+    }
+  }
+
+  // Employees named in the file, company-wide (scope is checked per row so the
+  // reason can say "not in your department" / "inactive").
+  const identifiers = new Set();
+  for (const { data } of rows) {
+    for (const col of IDENTIFIER_COLUMNS) {
+      const v = data[col]?.trim();
+      if (v) {
+        identifiers.add(v);
+        identifiers.add(v.toLowerCase());
+      }
+    }
+  }
+  const users = await prisma.user.findMany({
+    where: {
+      companyId,
+      OR: [{ employeeId: { in: [...identifiers] } }, { email: { in: [...identifiers] } }],
+    },
+    select: USER_SELECT,
+  });
+  const byEmployeeId = new Map();
+  const byEmail = new Map();
+  for (const u of users) {
+    if (u.employeeId) byEmployeeId.set(u.employeeId.trim(), u);
+    if (u.email) byEmail.set(u.email.trim().toLowerCase(), u);
+  }
+  // Templates carry `email`; an `employeeId` column (older files) still matches.
+  const lookupUser = (data) => {
+    const email = data.email?.trim().toLowerCase();
+    const id = data.employeeId?.trim();
+    return (email && byEmail.get(email)) || (id && (byEmployeeId.get(id) || byEmail.get(id.toLowerCase()))) || null;
+  };
+
+  const reuse = mode === "time_blocks" ? await loadShiftReuseMap(companyId) : null;
+
+  const items = [];
+  let blankRows = 0;
+  for (const { rowNumber, data, marks } of rows) {
+    const rowError = (reason, employee = null, date = null) =>
+      items.push({
+        key: `r${rowNumber}`,
+        row: rowNumber,
+        employee,
+        date,
+        shift: null,
+        status: "error",
+        reason,
+        conflicts: [],
+        allowedActions: ["skip"],
+      });
+
+    let proposals;
+    if (mode === "shifts") {
+      const badIdx = marks.findIndex((m) => m === null);
+      if (badIdx >= 0) {
+        rowError(`Unrecognised value under "${pool[badIdx].shiftName}". Use 1 to assign, or leave it blank.`);
+        continue;
+      }
+      proposals = marks
+        .map((m, i) => (m ? { key: `r${rowNumber}:c${i + 1}`, shift: poolOut[i] } : null))
+        .filter(Boolean);
+    } else {
+      proposals = mergeBlocksToTimeRanges(data, overnight).map((r, k) => {
+        const match = reuse.get(reuseKey(r.startTime, r.endTime, defaultShiftName(r.startTime, r.endTime)));
+        return {
+          key: `r${rowNumber}:b${k + 1}`,
+          shift: {
+            shiftId: match?.id ?? null,
+            shiftName: match?.shiftName ?? defaultShiftName(r.startTime, r.endTime),
+            startTime: r.startTime,
+            endTime: r.endTime,
+            crossesMidnight: r.crossesMidnight,
+            isExisting: Boolean(match),
+          },
+        };
+      });
+    }
+
+    // Blank row = "no shift that day".
+    if (proposals.length === 0) {
+      blankRows += 1;
+      continue;
+    }
+
+    const identifier = data.email?.trim() || data.employeeId?.trim() || null;
+    if (!identifier) {
+      rowError("Missing email.");
+      continue;
+    }
+    const date = normalizeDate(data.date);
+    if (!date) {
+      rowError(data.date ? `Invalid date: "${data.date}".` : "Missing date.");
+      continue;
+    }
+    const user = lookupUser(data);
+    const fallbackEmployee = { userId: null, email: identifier, name: data.name || null };
+    if (!user || (actor.scoped && user.departmentId !== actor.departmentId)) {
+      rowError(actor.scoped ? "Employee not found in your department." : "Employee not found in this company.", fallbackEmployee, date);
+      continue;
+    }
+    if (user.status !== "active") {
+      rowError("Employee is inactive.", employeeOut(user), date);
+      continue;
+    }
+    if (range && (date < range.startDate || date > range.endDate)) {
+      rowError(`Date is outside ${range.startDate} to ${range.endDate}.`, employeeOut(user), date);
+      continue;
+    }
+
+    for (const p of proposals) {
+      items.push({
+        key: p.key,
+        row: rowNumber,
+        employee: employeeOut(user),
+        date,
+        shift: p.shift,
+        status: "ready",
+        reason: null,
+        conflicts: [],
+        allowedActions: ["create"],
+        _user: user,
+        _interval: intervalOf(date, p.shift.startTime, p.shift.endTime),
+      });
+    }
+  }
+
+  const live = items.filter((i) => i._interval);
+
+  // Within the file: any two items of one employee that overlap (spill included).
+  const byUser = new Map();
+  for (const it of live) {
+    if (!byUser.has(it._user.id)) byUser.set(it._user.id, []);
+    byUser.get(it._user.id).push(it);
+  }
+  for (const list of byUser.values()) {
+    list.sort((a, b) => a._interval.start - b._interval.start);
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length && list[j]._interval.start < list[i]._interval.end; j++) {
+        const a = list[i];
+        const b = list[j];
+        for (const [x, y] of [[a, b], [b, a]]) {
+          x.status = "conflict_file";
+          x.reason = "Overlaps another shift for this employee in this file.";
+          x.allowedActions = ["skip"];
+          x.conflicts.push({
+            key: y.key,
+            date: y.date,
+            shiftName: y.shift.shiftName,
+            startTime: y.shift.startTime,
+            endTime: y.shift.endTime,
+            crossesMidnight: y.shift.crossesMidnight,
+          });
+        }
+      }
+    }
+  }
+
+  // Against existing assignments.
+  if (live.length) {
+    const dates = live.map((i) => i.date).sort();
+    const userIds = [...byUser.keys()];
+    const tz = await loadCompanyTimezone(companyId);
+    const [existingByUser, ctx] = await Promise.all([
+      loadExistingAssignments(userIds, dates[0], dates[dates.length - 1]),
+      loadReplaceContext({ companyId, tz, userIds, minDate: dates[0], maxDate: dates[dates.length - 1] }),
+    ]);
+    for (const it of live) {
+      if (it.status === "conflict_file") continue;
+      const clashes = (existingByUser.get(it._user.id) || []).filter((e) => overlaps(e.interval, it._interval));
+      if (!clashes.length) continue;
+      it.status = "conflict_existing";
+      it.conflicts = clashes.map((e) => {
+        const blocker = replaceBlocker(ctx, e, it._user.departmentId);
+        return existingConflictOut(e, !blocker, blocker);
+      });
+      const first = clashes[0];
+      it.reason =
+        first.date === it.date
+          ? `Overlaps an existing shift ("${first.shiftName}") on this date.`
+          : `Overlaps an existing shift ("${first.shiftName}") on ${first.date}.`;
+      it.allowedActions = it.conflicts.every((c) => c.replaceable) ? ["skip", "replace"] : ["skip"];
+    }
+  }
+
+  const count = (s) => items.filter((i) => i.status === s).length;
+  return {
+    mode,
+    range,
+    summary: {
+      rows: rows.length,
+      blankRows,
+      ready: count("ready"),
+      conflictExisting: count("conflict_existing"),
+      conflictFile: count("conflict_file"),
+      error: count("error"),
+    },
+    items: items.map(({ _user, _interval, ...rest }) => rest),
+  };
+}
+
+// ── Confirm ─────────────────────────────────────────────────────────────────
+
+/**
+ * POST /confirm — { mode, decisions: [{ key, action }], items: [...preview items] }.
+ * Every create/replace is re-validated against the current DB. Returns
+ * { created, replaced, skipped, failed }.
+ */
+async function confirmSchedule({ companyId, actingUserId, actingRole, body }) {
+  const actor = await loadActor({ companyId, actingUserId, actingRole });
+  const mode = parseMode(body.mode);
+  const items = Array.isArray(body.items) ? body.items : [];
+  const decisions = Array.isArray(body.decisions) ? body.decisions : [];
+  if (decisions.length === 0) throw new ScheduleImportError(400, "No decisions to import.");
+  if (decisions.length > MAX_ITEMS || items.length > MAX_ITEMS)
+    throw new ScheduleImportError(400, `Too many items; the limit is ${MAX_ITEMS}.`);
+
+  const created = [];
+  const replaced = [];
+  const skipped = [];
+  const failed = [];
+
+  const itemByKey = new Map(items.filter((i) => i && i.key).map((i) => [i.key, i]));
+  const seenKeys = new Set();
+  const work = [];
+  for (const d of decisions) {
+    const key = d?.key;
+    if (!key || seenKeys.has(key)) {
+      failed.push({ key: key ?? null, reason: key ? "Duplicate decision for this item." : "Decision without a key." });
+      continue;
+    }
+    seenKeys.add(key);
+    const item = itemByKey.get(key);
+    if (!item) failed.push({ key, reason: "Item not found in the request." });
+    else if (d.action === "skip") skipped.push({ key });
+    else if (d.action === "create" || d.action === "replace") work.push({ item, action: d.action });
+    else failed.push({ key, reason: `Unknown action "${d.action}".` });
+  }
+  if (work.length === 0) return { created, replaced, skipped, failed };
+
+  const tz = await loadCompanyTimezone(companyId);
+  const userIds = [...new Set(work.map((w) => w.item.employee?.userId).filter(Boolean))];
+  const users = await prisma.user.findMany({ where: { id: { in: userIds }, companyId }, select: USER_SELECT });
+  const userById = new Map(users.map((u) => [u.id, u]));
+
+  const companyShifts =
+    mode === "shifts"
+      ? new Map(
+          (
+            await prisma.shift.findMany({
+              where: { companyId, id: { in: [...new Set(work.map((w) => w.item.shift?.shiftId).filter(Boolean))] } },
+              select: { id: true, shiftName: true, startTime: true, endTime: true },
+            })
+          ).map((s) => [s.id, s])
+        )
+      : null;
+  const reuse = mode === "time_blocks" ? await loadShiftReuseMap(companyId) : null;
+
+  const workDates = work.map((w) => normalizeDate(w.item.date)).filter(Boolean).sort();
+  const minDate = workDates[0];
+  const maxDate = workDates[workDates.length - 1];
+  const [existingByUser, ctx] = minDate
+    ? await Promise.all([
+        loadExistingAssignments(userIds, minDate, maxDate),
+        loadReplaceContext({ companyId, tz, userIds, minDate, maxDate }),
+      ])
+    : [new Map(), null];
+  const acceptedByUser = new Map(); // intervals created in this batch
+
+  for (const { item, action } of work) {
+    const fail = (reason) => failed.push({ key: item.key, reason });
+
+    const user = userById.get(item.employee?.userId);
+    if (!user || (actor.scoped && user.departmentId !== actor.departmentId)) {
+      fail(actor.scoped ? "Employee not found in your department." : "Employee not found in this company.");
+      continue;
+    }
+    if (user.status !== "active") {
+      fail("Employee is inactive.");
+      continue;
+    }
+    const date = normalizeDate(item.date);
+    if (!date) {
+      fail("Invalid date.");
+      continue;
+    }
+
+    // The shift to assign: an existing pool shift, or block times + (edited) name.
+    let target;
+    if (mode === "shifts") {
+      const s = companyShifts.get(item.shift?.shiftId);
+      if (!s) {
+        fail("Shift not found in this company.");
+        continue;
+      }
+      target = { shiftId: s.id, shiftName: s.shiftName, startTime: timeColToHHMM(s.startTime), endTime: timeColToHHMM(s.endTime) };
+    } else {
+      const { startTime, endTime } = item.shift || {};
+      const shiftName = String(item.shift?.shiftName || "").trim();
+      if (!/^\d{2}:\d{2}$/.test(startTime || "") || !/^\d{2}:\d{2}$/.test(endTime || "") || !shiftName) {
+        fail("Incomplete shift data.");
+        continue;
+      }
+      target = { shiftId: null, shiftName, startTime, endTime };
+    }
+    const interval = intervalOf(date, target.startTime, target.endTime);
+
+    if ((acceptedByUser.get(user.id) || []).some((a) => overlaps(a, interval))) {
+      fail("Overlaps another shift created in this import.");
+      continue;
+    }
+    const clashes = (existingByUser.get(user.id) || []).filter((e) => overlaps(e.interval, interval));
+    if (clashes.length && action === "create") {
+      fail(`Overlaps an existing shift ("${clashes[0].shiftName}") on ${clashes[0].date}.`);
+      continue;
+    }
+    if (clashes.length && action === "replace") {
+      const listed = new Set((item.conflicts || []).map((c) => c.userShiftId));
+      if (clashes.some((c) => !listed.has(c.userShiftId))) {
+        fail("The schedule changed since the preview. Upload the file again.");
+        continue;
+      }
+      const blocker = clashes.map((c) => replaceBlocker(ctx, c, user.departmentId)).find(Boolean);
+      if (blocker) {
+        fail(`Can't replace: ${blocker}`);
+        continue;
+      }
+    }
+
+    let result;
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        let shift = target.shiftId
+          ? { id: target.shiftId, shiftName: target.shiftName }
+          : reuse.get(reuseKey(target.startTime, target.endTime, target.shiftName));
+        let newShift = null;
+        if (!shift) {
+          newShift = await tx.shift.create({
+            data: {
+              companyId,
+              shiftName: target.shiftName,
+              startTime: hhmmToEpochDate(target.startTime).toISOString(),
+              endTime: hhmmToEpochDate(target.endTime).toISOString(),
+              crossesMidnight: crossesMidnightOf(target.startTime, target.endTime),
+              differentialMultiplier: 1.0,
+              timeZone: tz,
+            },
+          });
+          shift = newShift;
+        }
+        if (clashes.length) {
+          await tx.userShift.deleteMany({ where: { id: { in: clashes.map((c) => c.userShiftId) } } });
+        }
+        const userShift = await tx.userShift.create({
+          data: { userId: user.id, shiftId: shift.id, assignedDate: new Date(date), createdFrom: "bulk", status: "scheduled" },
+        });
+        return { shift, newShift, userShift };
+      });
+    } catch (err) {
+      console.error(`❌ Schedule import item ${item.key} failed:`, err);
+      fail("Could not save this item.");
+      continue;
+    }
+
+    if (result.newShift) reuse.set(reuseKey(target.startTime, target.endTime, target.shiftName), result.newShift);
+    if (clashes.length) {
+      const removedIds = new Set(clashes.map((c) => c.userShiftId));
+      existingByUser.set(user.id, existingByUser.get(user.id).filter((e) => !removedIds.has(e.userShiftId)));
+    }
+    if (!acceptedByUser.has(user.id)) acceptedByUser.set(user.id, []);
+    acceptedByUser.get(user.id).push(interval);
+
+    const entry = {
+      key: item.key,
+      userId: user.id,
+      date,
+      shiftId: result.shift.id,
+      shiftName: result.shift.shiftName,
+      startTime: target.startTime,
+      endTime: target.endTime,
+      userShiftId: result.userShift.id,
+      _user: user,
+    };
+    if (clashes.length) {
+      replaced.push({
+        ...entry,
+        removed: clashes.map((c) => ({
+          userShiftId: c.userShiftId,
+          shiftId: c.shiftId,
+          shiftName: c.shiftName,
+          date: c.date,
+          startTime: c.startTime,
+          endTime: c.endTime,
+        })),
+      });
+    } else {
+      created.push(entry);
+    }
+  }
+
+  await sendImportNotifications({ companyId, actingUserId, created, replaced });
+
+  const strip = ({ _user, ...rest }) => rest;
+  return { created: created.map(strip), replaced: replaced.map(strip), skipped, failed };
+}
+
+// New assignments → SCHEDULE_ASSIGNED per employee and shift; replacements →
+// SCHEDULE_REPLACED per removed assignment; management gets one summary per shift.
+async function sendImportNotifications({ companyId, actingUserId, created, replaced }) {
+  try {
+    const byShift = new Map();
+    for (const e of [...created, ...replaced]) {
+      if (!byShift.has(e.shiftId)) byShift.set(e.shiftId, { entries: [], created: [] });
+      byShift.get(e.shiftId).entries.push(e);
+    }
+    for (const e of created) byShift.get(e.shiftId).created.push(e);
+
+    for (const [shiftId, group] of byShift) {
+      const first = group.entries[0];
+      const shift = {
+        id: shiftId,
+        shiftName: first.shiftName,
+        startTime: hhmmToEpochDate(first.startTime),
+        endTime: hhmmToEpochDate(first.endTime),
+      };
+
+      const datesByUser = new Map();
+      for (const e of group.created) {
+        if (!datesByUser.has(e.userId)) datesByUser.set(e.userId, { user: e._user, dates: [] });
+        datesByUser.get(e.userId).dates.push(e.date);
+      }
+      await Promise.all(
+        [...datesByUser.values()].map(({ user, dates }) =>
+          notifyEmployeeShiftAssigned({
+            user: { id: user.id, departmentId: user.departmentId },
+            shift,
+            dates,
+            assignedBy: actingUserId,
+            companyId,
+          })
+        )
+      );
+
+      await notifyManagementShiftAssignment({
+        companyId,
+        shift,
+        assignedCount: group.entries.length,
+        dates: [...new Set(group.entries.map((e) => e.date))].sort(),
+        assignmentType: "bulk-import",
+        assignedBy: actingUserId,
+      });
+    }
+
+    await Promise.all(
+      replaced.flatMap((e) =>
+        e.removed.map((r) =>
+          notifyEmployeeShiftReplaced({
+            user: { id: e._user.id, departmentId: e._user.departmentId },
+            oldShift: { id: r.shiftId, shiftName: r.shiftName },
+            newShift: { id: e.shiftId, shiftName: e.shiftName },
+            date: r.date,
+            companyId,
+          })
+        )
+      )
+    );
+  } catch (notifError) {
+    console.error("❌ Failed to send schedule import notifications:", notifError);
+  }
+}
+
+// ── Legacy (pre-BB-103) preview / confirm — the `rows` contract ─────────────
+// Kept until the new client ships. Blank rows are now skipped instead of erroring,
+// since the template is pre-filled.
+
 function timeRangeKey(startTime, endTime, crossesMidnight) {
   return `${startTime}|${endTime}|${crossesMidnight}`;
 }
@@ -66,45 +906,21 @@ async function findOverlappingUserShift(userId, assignedDate, startTime, endTime
   return null;
 }
 
-/**
- * Resolves the row's identifier against a pre-built map of company (and, for a
- * supervisor uploader, department-scoped) users. Shared by preview and commit so both
- * phases apply the exact same scoping rule.
- */
-function buildIdentifierMaps(users) {
-  const byEmployeeId = new Map();
-  const byEmail = new Map();
-  for (const u of users) {
-    if (u.employeeId) byEmployeeId.set(u.employeeId.trim(), u);
-    if (u.email) byEmail.set(u.email.trim().toLowerCase(), u);
-  }
-  return { byEmployeeId, byEmail };
-}
-
 function rowIdentifier(data) {
   return (data.employeeId && data.employeeId.trim()) || (data.email && data.email.trim().toLowerCase()) || null;
 }
 
-/**
- * Parses + validates a schedule CSV and returns a preview of what would be created.
- * Never throws for row-level problems (collected as status: 'error'/'conflict' per
- * row); throws only for whole-file problems (bad CSV shape, or the row-count cap
- * flagged with isRowCapError: true), which the caller should respond to with 400.
- *
- * A `supervisor` uploader is restricted to employees in their own department,
- * mirroring the punch-log importer (BB-077) and BB-080's eligibility rule —
- * admin/superadmin stay company-wide.
- */
-async function previewScheduleImport({ buffer, companyId, actingUserId, actingRole, actingDepartmentId, overnight }) {
+async function previewScheduleImport({ buffer, companyId, actingUserId, actingRole, overnight }) {
   const rows = parseScheduleCsv(buffer);
 
-  if (rows.length > MAX_ROWS) {
-    const err = new Error(`CSV has ${rows.length} rows; the limit is ${MAX_ROWS} per upload.`);
+  if (rows.length > LEGACY_MAX_ROWS) {
+    const err = new Error(`CSV has ${rows.length} rows; the limit is ${LEGACY_MAX_ROWS} per upload.`);
     err.isRowCapError = true;
     throw err;
   }
 
-  const isScopedToDepartment = actingRole === "supervisor";
+  const actor = await loadActor({ companyId, actingUserId, actingRole });
+  const isScopedToDepartment = actor.scoped;
 
   const identifiers = new Set();
   for (const { data } of rows) {
@@ -115,23 +931,19 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
   const users = await prisma.user.findMany({
     where: {
       companyId,
-      ...(isScopedToDepartment ? { departmentId: actingDepartmentId } : {}),
+      ...(isScopedToDepartment ? { departmentId: actor.departmentId } : {}),
       OR: [{ employeeId: { in: [...identifiers] } }, { email: { in: [...identifiers] } }],
     },
-    select: {
-      id: true,
-      employeeId: true,
-      email: true,
-      departmentId: true,
-      profile: { select: { firstName: true, lastName: true } },
-    },
+    select: USER_SELECT,
   });
-  const { byEmployeeId, byEmail } = buildIdentifierMaps(users);
+  const byEmployeeId = new Map();
+  const byEmail = new Map();
+  for (const u of users) {
+    if (u.employeeId) byEmployeeId.set(u.employeeId.trim(), u);
+    if (u.email) byEmail.set(u.email.trim().toLowerCase(), u);
+  }
 
   const preview = [];
-  // Rows for the same employee/date are now allowed to coexist (multi-shift days,
-  // e.g. a split shift) as long as their derived time ranges don't overlap each
-  // other — mirrors the same hasTimeOverlap check already used against the DB.
   const seenRangesByKey = new Map();
 
   for (const { rowNumber, data } of rows) {
@@ -139,6 +951,9 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
     const base = { row: rowNumber, employeeId: identifier, date: data.date || null };
 
     try {
+      const ranges = mergeBlocksToTimeRanges(data, !!overnight);
+      if (ranges.length === 0) continue; // blank row — no shift that day
+
       if (!identifier) throw new Error(`Missing ${IDENTIFIER_COLUMNS.join(" or ")}.`);
       if (!data.date) throw new Error("Missing date.");
       if (isNaN(new Date(data.date).getTime())) throw new Error(`Invalid date: "${data.date}".`);
@@ -151,11 +966,7 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
           isScopedToDepartment ? "Employee not found in your department." : "Employee not found in this company."
         );
       }
-
-      // A row's marked blocks can form multiple disjoint runs (e.g. a lunch-break
-      // split shift) — each becomes its own proposed shift, so one CSV row can now
-      // yield more than one preview entry.
-      const ranges = mergeBlocksToTimeRanges(data, !!overnight);
+      if (user.status !== "active") throw new Error("Employee is inactive.");
 
       const dupeKey = `${identifier}|${data.date}`;
       const seenRanges = seenRangesByKey.get(dupeKey) || [];
@@ -195,28 +1006,19 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
   return preview;
 }
 
-/**
- * Commits a (possibly user-edited) preview batch: rows may have a renamed `shiftName`
- * or `skip: true`. Re-validates department scope and conflicts against current DB
- * state — the preview may be stale by the time the user confirms — then creates one
- * new Shift per unique (startTime, endTime, crossesMidnight, shiftName) group in this
- * batch and bulk-inserts the corresponding UserShift rows inside a transaction.
- *
- * Returns { created, skipped, failed } — created entries include the new shiftId/
- * userShiftId; failed entries carry a reason (re-validation problems); skipped entries
- * are rows the user explicitly excluded via the review modal.
- */
-async function commitScheduleImport({ companyId, actingUserId, actingRole, actingDepartmentId, rows }) {
+async function commitScheduleImport({ companyId, actingUserId, actingRole, rows }) {
   if (!Array.isArray(rows) || rows.length === 0) {
     const err = new Error("No rows to import.");
     err.isRowCapError = true;
     throw err;
   }
-  if (rows.length > MAX_ROWS) {
-    const err = new Error(`Import has ${rows.length} rows; the limit is ${MAX_ROWS}.`);
+  if (rows.length > LEGACY_MAX_ROWS) {
+    const err = new Error(`Import has ${rows.length} rows; the limit is ${LEGACY_MAX_ROWS}.`);
     err.isRowCapError = true;
     throw err;
   }
+
+  const actor = await loadActor({ companyId, actingUserId, actingRole });
 
   const skipped = [];
   const failed = [];
@@ -234,7 +1036,6 @@ async function commitScheduleImport({ companyId, actingUserId, actingRole, actin
     candidates.push(row);
   }
 
-  const isScopedToDepartment = actingRole === "supervisor";
   const userIds = [...new Set(candidates.map((r) => r.userId))];
   const users = await prisma.user.findMany({
     where: { id: { in: userIds }, companyId, status: "active" },
@@ -249,7 +1050,7 @@ async function commitScheduleImport({ companyId, actingUserId, actingRole, actin
       failed.push({ row: row.row, employeeId: row.employeeId, date: row.date, reason: "Employee not found in this company." });
       continue;
     }
-    if (isScopedToDepartment && user.departmentId !== actingDepartmentId) {
+    if (actor.scoped && user.departmentId !== actor.departmentId) {
       failed.push({ row: row.row, employeeId: row.employeeId, date: row.date, reason: "Employee not found in your department." });
       continue;
     }
@@ -272,7 +1073,6 @@ async function commitScheduleImport({ companyId, actingUserId, actingRole, actin
     return { created: [], skipped, failed };
   }
 
-  // Group validated rows into the Shift records this batch will create.
   const groups = new Map();
   for (const row of validated) {
     const key = `${timeRangeKey(row.startTime, row.endTime, row.crossesMidnight)}|${row.shiftName}`;
@@ -280,8 +1080,7 @@ async function commitScheduleImport({ companyId, actingUserId, actingRole, actin
     groups.get(key).rows.push(row);
   }
 
-  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timeZone: true } });
-  const companyTimezone = company?.timeZone || "UTC";
+  const companyTimezone = await loadCompanyTimezone(companyId);
 
   const created = [];
   await prisma.$transaction(async (tx) => {
@@ -358,4 +1157,13 @@ async function commitScheduleImport({ companyId, actingUserId, actingRole, actin
   return { created, skipped, failed };
 }
 
-module.exports = { previewScheduleImport, commitScheduleImport, MAX_ROWS };
+module.exports = {
+  buildScheduleTemplate,
+  previewSchedule,
+  confirmSchedule,
+  previewScheduleImport,
+  commitScheduleImport,
+  ScheduleImportError,
+  MAX_ROWS,
+  MAX_RANGE_DAYS,
+};

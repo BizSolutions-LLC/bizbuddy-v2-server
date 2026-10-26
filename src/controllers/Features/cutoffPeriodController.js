@@ -31,6 +31,7 @@ const { combineDateTime } = require("@services/Cutoff/shiftLookupUtils");
 const { calcDailyHours } = require("@utils/leaveUtils");
 const { DRIVER_SEGMENT_MAP, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
 const { generatePayrollExportForCutoffPeriod } = require("@services/Payroll/payrollExportService");
+const { applyFixedHoursForCutoff, getFixedHoursForCutoff, updateFixedHours, getOffDayTimeLogIds } = require("@services/Cutoff/fixedHoursService");
 
 function getApprovalStrategy(companyId) {
   return BNC_COMPANY_IDS.has(companyId) ? bncCutoffStrategy : daycareCutoffStrategy;
@@ -590,6 +591,9 @@ const updateCutoffStatus = async (req, res) => {
 
     // ✅ FIX: Only truly pending records block locking
     if (status === "locked") {
+      // BB-089: auto-exclude fixed-hours scheduled-day punches first so they never
+      // block the lock. Their off-day punches stay pending and must be decided.
+      await applyFixedHoursForCutoff(cutoffPeriod);
       const pendingCount = await prisma.timeLogApproval.count({
         where: {
           cutoffPeriodId: id,
@@ -718,6 +722,10 @@ const finalizeCutoffPeriod = async (req, res) => {
         message: `Cutoff period is already ${cutoffPeriod.status}.`,
       });
     }
+
+    // BB-089: auto-exclude fixed-hours scheduled-day punches first so they never
+    // block finalize. Their off-day punches stay pending and must be decided.
+    await applyFixedHoursForCutoff(cutoffPeriod);
 
     // ✅ Check: no pending records remain
     const pendingCount = await prisma.timeLogApproval.count({
@@ -1116,6 +1124,12 @@ const getCutoffApprovals = async (req, res) => {
       }
     }
 
+    // BB-089: fixed-hours departments — create/refresh the flat-hours rows and
+    // auto-exclude those employees' pending punches (open cutoffs only).
+    const fixedHoursUserIds = await applyFixedHoursForCutoff(cutoffPeriod);
+    // Off-day punches of those employees — approvable, paid as OT.
+    const offDayTimeLogIds = await getOffDayTimeLogIds(cutoffPeriod, [...fixedHoursUserIds]);
+
     // ✅ When filtering by 'excluded', also include legacy 'rejected'
     let statusFilter;
     if (status === "excluded") {
@@ -1275,6 +1289,8 @@ const getCutoffApprovals = async (req, res) => {
       return {
         ...approval,
         hasLeaveConflict,
+        isFixedHoursEmployee: fixedHoursUserIds.has(userId),
+        isOffDay:         offDayTimeLogIds.has(approval.timeLogId),
         leaveRecord:      approvedLeave
           ? {
               id:                approvedLeave.id,
@@ -1498,6 +1514,7 @@ const getCutoffApprovals = async (req, res) => {
             timeLog:        { userId: { in: otUserIds } },
           },
           select: {
+            timeLogId:        true,
             actualHours:      true,
             approvedClockIn:  true,
             approvedClockOut: true,
@@ -1513,6 +1530,8 @@ const getCutoffApprovals = async (req, res) => {
         const byUser = {};
         for (const r of breakdownRecords) {
           if (!r.timeLog) continue;
+          // BB-089: fixed-hours employees' OT is off-day work only — mirrors cutoffOtService.
+          if (fixedHoursUserIds.has(r.timeLog.userId) && !offDayTimeLogIds.has(r.timeLogId)) continue;
           const uid        = r.timeLog.userId;
           const date       = moment.tz(r.timeLog.timeIn, companyTimezone).format("YYYY-MM-DD");
           const isTraining = r.timeLog.punchType === "TRAINING";
@@ -1564,22 +1583,27 @@ const getCutoffApprovals = async (req, res) => {
 
           return {
             ...block,
+            isFixedHoursEmployee: fixedHoursUserIds.has(block.userId),
             breakdown: {
               days,
               totalHours,
-              threshold: otThreshold,
-              otHours:   parseFloat(Math.max(0, totalHours - otThreshold).toFixed(2)),
+              threshold: fixedHoursUserIds.has(block.userId) ? 0 : otThreshold,
+              otHours:   parseFloat(Math.max(0, totalHours - (fixedHoursUserIds.has(block.userId) ? 0 : otThreshold)).toFixed(2)),
             },
           };
         });
       }
     }
 
+    // BB-089: flat-hours rows (already approved, editable) for fixed-hours employees.
+    const fixedHours = await getFixedHoursForCutoff(cutoffPeriod);
+
     return res.status(200).json({
       message:               "Approvals retrieved successfully.",
       data:                  withLeaveContext,
       leaves:                standaloneLeaves,
       otBlocks,
+      fixedHours,
       gracePeriodMinutes,
       companyTimezone,
       otBasis,
@@ -1813,6 +1837,32 @@ const getCutoffSummary = async (req, res) => {
       employeeSummary[userId].approvedLogs  += 1;
     });
 
+    // BB-089: fixed-hours employees are paid their flat hours (paid leave
+    // included), not their punches — override or add them here.
+    // Their OT is the approved off-day OT block (cutoffOtService), on top.
+    const fixedHours = await getFixedHoursForCutoff(cutoffPeriod);
+    const fixedOtBlocks = fixedHours.length
+      ? await prisma.cutoffOtBlock.groupBy({
+          by:    ["userId"],
+          where: { cutoffPeriodId: id, status: "approved", userId: { in: fixedHours.map((fh) => fh.userId) } },
+          _sum:  { otHours: true },
+        })
+      : [];
+    const fixedOtByUser = new Map(fixedOtBlocks.map((b) => [b.userId, parseFloat(b._sum.otHours ?? 0)]));
+    for (const fh of fixedHours) {
+      const otHours = fixedOtByUser.get(fh.userId) ?? 0;
+      employeeSummary[fh.userId] = {
+        userId:        fh.userId,
+        employee:      { id: fh.user.id, email: fh.user.email, username: fh.user.username, profile: fh.user.profile },
+        regularHours:  fh.regularHours,
+        overtimeHours: otHours,
+        totalHours:    fh.hours + otHours,
+        approvedLogs:  employeeSummary[fh.userId]?.approvedLogs ?? 0,
+        isFixedHours:  true,
+        leaveHours:    fh.leaveHours,
+      };
+    }
+
     const summary = Object.values(employeeSummary).map((emp) => ({
       ...emp,
       regularHours:  parseFloat(emp.regularHours.toFixed(2)),
@@ -1987,6 +2037,36 @@ const approveOtBlock = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * PATCH /api/cutoff-periods/:id/fixed-hours/:fixedHoursId
+ *
+ * BB-089. Overrides one fixed-hours employee's flat hours for this cutoff
+ * (e.g. hired partway through). Open cutoffs only.
+ *
+ * Body: { hours: number, notes?: string }
+ */
+const updateFixedHoursRecord = async (req, res) => {
+  try {
+    const { id, fixedHoursId } = req.params;
+    const { hours, notes } = req.body;
+    const companyId = req.user.companyId;
+    const userId    = req.user.id;
+
+    const cutoffPeriod = await findCutoffForCompany(id, companyId);
+    if (!cutoffPeriod) {
+      return res.status(404).json({ message: "Cutoff period not found." });
+    }
+
+    const result = await updateFixedHours(cutoffPeriod, fixedHoursId, { hours, notes, userId });
+    return res.status(result.status).json({ message: result.message, ...(result.data && { data: result.data }) });
+  } catch (error) {
+    console.error("❌ updateFixedHoursRecord:", error);
+    return res.status(500).json({ message: "Internal server error.", error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
  * PATCH /api/cutoff-periods/:id/approvals/:approvalId/set-punch-type
  *
  * DayCare only. Changes a pending punch's type between REGULAR and TRAINING
@@ -2114,6 +2194,7 @@ module.exports = {
   approveOtBlock,
   resetApproval,
   setPunchType,
+  updateFixedHoursRecord,
   // Exposed for reuse by the backtrack punch-log importer (BB-086), which
   // needs to look up a target CutoffPeriod and trigger the same
   // TimeLogApproval sync this file's own /:id/sync route uses.

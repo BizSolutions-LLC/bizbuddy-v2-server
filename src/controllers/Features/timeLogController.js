@@ -1339,6 +1339,164 @@ const clearAutoBreaks = async (req, res) => {
   }
 };
 
+// ── BB-102: admin add / edit / delete lunch ───────────────────────────────────
+const LUNCH_EDIT_ROLES = new Set(["admin", "superadmin", "supervisor"]);
+
+// Loads the log and checks it can take a lunch edit: same company, completed
+// (has timeOut), not in a locked/processed cutoff, and no approval past
+// "pending" — approved hours are stored on the approval and wouldn't follow
+// a recompute, so those need a Reset on the Cutoff page first.
+// Sends the error response and returns null when the edit isn't allowed.
+async function loadLogForLunchEdit(req, res) {
+  if (!LUNCH_EDIT_ROLES.has(req.user.role)) {
+    res.status(403).json({ message: "Admin access required." });
+    return null;
+  }
+
+  const log = await prisma.timeLog.findUnique({
+    where:  { id: req.params.id },
+    select: {
+      id:                        true,
+      userId:                    true,
+      timeIn:                    true,
+      timeOut:                   true,
+      lunchBreak:                true,
+      autoLunchApplied:          true,
+      autoLunchDeductionMinutes: true,
+      user: { select: { companyId: true } },
+    },
+  });
+  if (!log) {
+    res.status(404).json({ message: "Time log not found." });
+    return null;
+  }
+  if (log.user.companyId !== req.user.companyId) {
+    res.status(403).json({ message: "Access denied: different company." });
+    return null;
+  }
+  if (!log.timeOut) {
+    res.status(400).json({ message: "Lunch can only be edited on a completed punch (clocked out)." });
+    return null;
+  }
+
+  const lockedCutoff = await getLockedCutoffForLog(log.id);
+  if (lockedCutoff) {
+    res.status(409).json({ message: "Cannot edit lunch on a log that is part of a locked or processed cutoff period." });
+    return null;
+  }
+
+  const decided = await prisma.timeLogApproval.findFirst({
+    where:  { timeLogId: log.id, status: { not: "pending" } },
+    select: { status: true },
+  });
+  if (decided) {
+    res.status(409).json({
+      message: `This punch is already ${decided.status} in its cutoff. Reset the approval on the Cutoff page before editing lunch.`,
+    });
+    return null;
+  }
+
+  return log;
+}
+
+// Recomputes derived hours (incl. BB-092 Driver/Aide segment deduction) and
+// notifies the employee. Pending cutoff rows read these TimeLog fields live.
+async function finishLunchEdit(log, updated, type) {
+  try {
+    const derived = await computeTimeLogSummary(log.id);
+    if (derived) Object.assign(updated, derived);
+  } catch (computeErr) {
+    console.error(`[${type}] computeTimeLogSummary failed for ${log.id}:`, computeErr.message);
+  }
+  getIO().to(log.userId).emit("timeLogUpdated", { type, data: updated });
+  return updated;
+}
+
+/**
+ * PUT /api/timelogs/:id/lunch-break
+ * Admin/superadmin/supervisor. Adds or replaces the lunch on a completed punch.
+ * Body: { start, end } — ISO timestamps, start < end, both within timeIn..timeOut.
+ * The previous lunch and the editor are kept on the lunchBreak JSON (TimeLog
+ * has no audit trail of its own).
+ */
+const upsertLunchBreak = async (req, res) => {
+  try {
+    const { start, end } = req.body;
+    const startAt = start ? new Date(start) : null;
+    const endAt   = end   ? new Date(end)   : null;
+    if (!startAt || !endAt || isNaN(startAt) || isNaN(endAt))
+      return res.status(400).json({ message: "start and end are required ISO timestamps." });
+    if (startAt >= endAt)
+      return res.status(400).json({ message: "Lunch start must be before lunch end." });
+
+    const log = await loadLogForLunchEdit(req, res);
+    if (!log) return;
+
+    if (startAt < log.timeIn || endAt > log.timeOut)
+      return res.status(400).json({ message: "Lunch must be within the punch's clock-in and clock-out." });
+
+    const previous = log.lunchBreak?.start
+      ? { start: log.lunchBreak.start, end: log.lunchBreak.end ?? null, auto: log.lunchBreak.auto ?? false }
+      : null;
+
+    const updated = await prisma.timeLog.update({
+      where: { id: log.id },
+      data: {
+        lunchBreak: {
+          start:    startAt.toISOString(),
+          end:      endAt.toISOString(),
+          editedBy: req.user.id,
+          editedAt: new Date().toISOString(),
+          previous,
+        },
+        // A real lunch replaces any auto-injected one, and the explicit
+        // autoLunchDeductionMinutes override (also used as the "no lunch"
+        // marker by data fixes) would otherwise ignore it.
+        autoLunchApplied:          false,
+        autoLunchDeductionMinutes: null,
+      },
+    });
+
+    await finishLunchEdit(log, updated, "lunchBreakEdited");
+    return res.status(200).json({ message: previous ? "Lunch updated." : "Lunch added.", data: updated });
+  } catch (err) {
+    console.error("upsertLunchBreak error:", err);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+/**
+ * DELETE /api/timelogs/:id/lunch-break
+ * Admin/superadmin/supervisor. Removes the lunch (punched, admin-added or
+ * auto-injected) from a completed punch. With no lunch the company's
+ * minimumLunchMinutes rule applies again, same as a punch that never had one.
+ */
+const deleteLunchBreak = async (req, res) => {
+  try {
+    const log = await loadLogForLunchEdit(req, res);
+    if (!log) return;
+
+    if (!log.lunchBreak && !log.autoLunchApplied && log.autoLunchDeductionMinutes == null)
+      return res.status(200).json({ message: "No lunch on this punch — nothing to delete." });
+
+    const updated = await prisma.timeLog.update({
+      where: { id: log.id },
+      data: {
+        lunchBreak:                Prisma.DbNull,
+        autoLunchApplied:          false,
+        autoLunchDeductionMinutes: null,
+      },
+    });
+    console.log(`[deleteLunchBreak] ${log.id} by ${req.user.id} — removed ${JSON.stringify(log.lunchBreak)}`);
+
+    await finishLunchEdit(log, updated, "lunchBreakDeleted");
+    return res.status(200).json({ message: "Lunch deleted.", data: updated });
+  } catch (err) {
+    console.error("deleteLunchBreak error:", err);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
 module.exports = {
   timeIn,
   timeOut,
@@ -1352,6 +1510,8 @@ module.exports = {
   getCompanyTimeLogs,
   updateTimeLogDateTime,
   clearAutoBreaks,
+  upsertLunchBreak,
+  deleteLunchBreak,
   updatePunchType,
   adminDeleteTimeLog,
   getLockedCutoffForDate,

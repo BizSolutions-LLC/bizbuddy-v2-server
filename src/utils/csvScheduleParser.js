@@ -1,18 +1,23 @@
 // src/utils/csvScheduleParser.js
 // Pure CSV parsing/shape validation + block-merge logic for the schedule bulk-import
-// feature (BB-081). No Prisma calls here — row-level business validation (employee
-// resolution, conflict checks) happens in scheduleImportService.js.
+// feature (BB-081, reworked in BB-103). No Prisma calls here — row-level business
+// validation (employee resolution, conflict checks) happens in scheduleImportService.js.
 //
-// Each data row is one employee for one date. Instead of explicit startTime/endTime
-// columns, the row carries one column per 30-minute block of the day (01:00 through
-// 23:30 — 46 columns) that the uploader marks for every block the employee is
-// scheduled. mergeBlocksToTimeRanges() collapses the marked blocks into one or more
-// startTime/endTime spans — a row with gapped marks (e.g. a split shift) yields
-// multiple spans.
+// Each data row is one employee for one date. Two marking modes (BB-103):
+//   - time_blocks: one column per 30-minute block of the day (01:00 through 23:30 —
+//     46 columns). mergeBlocksToTimeRanges() collapses the marked blocks into one or
+//     more startTime/endTime spans — a row with gapped marks (e.g. a split shift)
+//     yields multiple spans.
+//   - shifts: one column per existing company Shift the admin picked (the "pool").
+//     A mark under a column assigns that Shift on the row's date. Headers are built
+//     by shiftColumnHeaders() and must come back unchanged.
 
 const { parse } = require("csv-parse/sync");
+const moment = require("moment-timezone");
 
-const IDENTIFIER_COLUMNS = ["employeeId", "email"];
+const IDENTIFIER_COLUMNS = ["employeeId", "email"]; // either is accepted on upload
+const TEMPLATE_IDENTIFIER = "email"; // BB-103 templates identify employees by email
+const NAME_COLUMN = "name";
 const DATE_COLUMN = "date";
 
 // Block index 0 = "01:00"-"01:30", ... index 45 = "23:30"-"24:00". The grid starts at
@@ -29,25 +34,71 @@ function blockLabel(index) {
 
 const BLOCK_COLUMNS = Array.from({ length: BLOCK_COUNT }, (_, i) => blockLabel(i));
 
+// Legacy (pre-BB-103) template columns.
 const KNOWN_COLUMNS = [...IDENTIFIER_COLUMNS, DATE_COLUMN, ...BLOCK_COLUMNS];
 
 const TRUTHY_MARKS = new Set(["1", "x", "yes", "true"]);
+const FALSY_MARKS = new Set(["", "0", "no", "false"]);
 
 function isBlockMarked(raw) {
   if (raw === undefined || raw === null) return false;
   return TRUTHY_MARKS.has(String(raw).trim().toLowerCase());
 }
 
+// Strict mark reading for shift columns: true / false, or null for a value we don't
+// recognise (a row error, so a typo isn't silently read as "not scheduled").
+function readMark(raw) {
+  const v = raw === undefined || raw === null ? "" : String(raw).trim().toLowerCase();
+  if (TRUTHY_MARKS.has(v)) return true;
+  if (FALSY_MARKS.has(v)) return false;
+  return null;
+}
+
 class CsvShapeError extends Error {}
+
+// Dates in a pre-filled template are often re-saved by Excel as M/D/YYYY, so both
+// forms are accepted. Returns "YYYY-MM-DD" or null.
+function normalizeDate(raw) {
+  if (!raw) return null;
+  const m = moment.utc(String(raw).trim(), ["YYYY-MM-DD", "M/D/YYYY", "MM/DD/YYYY"], true);
+  return m.isValid() ? m.format("YYYY-MM-DD") : null;
+}
+
+// "10:00 AM" style label of a Time column (stored as 1970-01-01Thh:mm UTC).
+function timeLabel(date) {
+  const d = new Date(date);
+  const h = d.getUTCHours();
+  const m = d.getUTCMinutes();
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+// One header per pool shift, in pool order: "Morning (10:00 AM - 5:00 PM)". Names can
+// repeat (older imports created duplicates), so a repeated header gets " #2", " #3".
+// Plain ASCII on purpose — Excel mangles an en dash in a CSV opened without a BOM.
+function shiftColumnHeaders(shifts) {
+  const seen = new Map();
+  return shifts.map((s) => {
+    const base = `${s.shiftName.trim()} (${timeLabel(s.startTime)} - ${timeLabel(s.endTime)})`;
+    const n = (seen.get(base.toLowerCase()) || 0) + 1;
+    seen.set(base.toLowerCase(), n);
+    return n === 1 ? base : `${base} #${n}`;
+  });
+}
+
+const normalizeHeader = (h) => String(h).replace(/\s+/g, " ").trim().toLowerCase();
 
 /**
  * Parses a schedule CSV buffer into row objects and validates the header shape.
  * Throws CsvShapeError (caller should respond 400, nothing processed) if the header
- * is missing the date column, has no employee-identifier column, or is missing any of
- * the 46 time-block columns — the merge logic needs every column present to tell
- * "unmarked" apart from "column doesn't exist in this file".
+ * is missing the date column or an employee-identifier column, or doesn't carry the
+ * marking columns for `mode`:
+ *   - time_blocks: all 46 block columns — the merge logic needs every column present
+ *     to tell "unmarked" apart from "column doesn't exist in this file".
+ *   - shifts: exactly the `shiftHeaders` columns; a missing, renamed or extra column
+ *     means the template is out of date.
+ * For shifts mode each row also gets `marks`: one true/false/null per shift header.
  */
-function parseScheduleCsv(buffer) {
+function parseScheduleCsv(buffer, { mode = "time_blocks", shiftHeaders = [] } = {}) {
   let records;
   try {
     records = parse(buffer, {
@@ -71,6 +122,29 @@ function parseScheduleCsv(buffer) {
   if (!IDENTIFIER_COLUMNS.some((c) => columns.includes(c))) {
     throw new CsvShapeError(`CSV must include at least one of: ${IDENTIFIER_COLUMNS.join(", ")}`);
   }
+
+  if (mode === "shifts") {
+    const fixed = new Set([...IDENTIFIER_COLUMNS, NAME_COLUMN, DATE_COLUMN]);
+    const byNormalized = new Map(columns.filter((c) => !fixed.has(c)).map((c) => [normalizeHeader(c), c]));
+    const missing = shiftHeaders.filter((h) => !byNormalized.has(normalizeHeader(h)));
+    const expected = new Set(shiftHeaders.map(normalizeHeader));
+    const unknown = [...byNormalized.keys()].filter((h) => !expected.has(h)).map((h) => byNormalized.get(h));
+    if (missing.length || unknown.length) {
+      const parts = [];
+      if (missing.length) parts.push(`missing shift column(s): ${missing.join(", ")}`);
+      if (unknown.length) parts.push(`unknown column(s): ${unknown.join(", ")}`);
+      throw new CsvShapeError(
+        `The shift columns don't match the shifts you picked (${parts.join("; ")}). The template is out of date — download it again.`
+      );
+    }
+    const sourceColumns = shiftHeaders.map((h) => byNormalized.get(normalizeHeader(h)));
+    return records.map((data, i) => ({
+      rowNumber: i + 2,
+      data,
+      marks: sourceColumns.map((c) => readMark(data[c])),
+    }));
+  }
+
   const missingBlocks = BLOCK_COLUMNS.filter((c) => !columns.includes(c));
   if (missingBlocks.length > 0) {
     throw new CsvShapeError(
@@ -109,7 +183,7 @@ function runToRange(startIdx, endIdx) {
  * touching the very first block (01:00) are merged into one wrapped overnight span
  * first — the untracked 00:00-01:00 hour between them is assumed to be part of the
  * shift — before the remaining runs are converted individually.
- * Throws a plain Error (row-level, caught by the caller) when no blocks are marked.
+ * Returns [] when no blocks are marked (a blank row — "no shift that day").
  */
 function mergeBlocksToTimeRanges(row, overnight) {
   const markedIndices = [];
@@ -117,9 +191,7 @@ function mergeBlocksToTimeRanges(row, overnight) {
     if (isBlockMarked(row[BLOCK_COLUMNS[i]])) markedIndices.push(i);
   }
 
-  if (markedIndices.length === 0) {
-    throw new Error("No time blocks marked.");
-  }
+  if (markedIndices.length === 0) return [];
 
   const runs = [];
   let runStart = markedIndices[0];
@@ -147,45 +219,39 @@ function mergeBlocksToTimeRanges(row, overnight) {
   return runs.map(([startIdx, endIdx]) => runToRange(startIdx, endIdx)).sort((a, b) => (a.startTime < b.startTime ? -1 : 1));
 }
 
+function csvCell(value) {
+  const s = value === undefined || value === null ? "" : String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 /**
- * Builds the downloadable CSV template for a given week. `overnight` only affects the
- * explanatory example row's shape (which blocks are pre-filled to illustrate wrapping);
- * the column set itself (identifier + date + all 46 blocks) is always the same.
+ * Builds the pre-filled CSV template (BB-103): one row per employee × date, sorted by
+ * employee (the caller passes them sorted) then date, with every marking cell blank.
+ *   employees: [{ email, name }] — rows match on email; name is for reading only
+ *   dates:     ["YYYY-MM-DD", ...]
+ *   mode:      "time_blocks" → the 46 block columns; "shifts" → `shiftHeaders`
+ * Starts with a UTF-8 BOM so Excel keeps non-ASCII names intact.
  */
-function buildTemplateCsv({ weekStart, overnight = false } = {}) {
-  const header = KNOWN_COLUMNS.join(",");
-  const start = weekStart ? new Date(`${weekStart}T00:00:00Z`) : new Date();
+function buildTemplateCsv({ mode, employees, dates, shiftHeaders = [] }) {
+  const markColumns = mode === "shifts" ? shiftHeaders : BLOCK_COLUMNS;
+  const header = [TEMPLATE_IDENTIFIER, NAME_COLUMN, DATE_COLUMN, ...markColumns].map(csvCell).join(",");
+  const blanks = markColumns.map(() => "");
 
-  const rows = [header];
-  for (let d = 0; d < 7; d++) {
-    const date = new Date(start.getTime() + d * 24 * 60 * 60 * 1000);
-    const dateStr = date.toISOString().slice(0, 10);
-    const isExampleRow = d === 0;
-
-    const cells = KNOWN_COLUMNS.map((col) => {
-      if (col === "employeeId") return isExampleRow ? "EMP-001" : "";
-      if (col === "email") return isExampleRow ? "jane.doe@example.com" : "";
-      if (col === DATE_COLUMN) return dateStr;
-      // Example row: mark a plain 08:00-17:00 day (or an overnight-style
-      // 22:00-24:00 + 01:00-02:00 wrap when the overnight param is set) to
-      // illustrate the expected marking convention.
-      if (!isExampleRow) return "";
-      if (overnight) {
-        return ["22:00", "22:30", "23:00", "23:30", "01:00", "01:30"].includes(col) ? "1" : "";
-      }
-      const [h] = col.split(":").map(Number);
-      return h >= 8 && h < 17 ? "1" : "";
-    });
-    rows.push(cells.join(","));
+  const lines = [header];
+  for (const e of employees) {
+    for (const date of dates) {
+      lines.push([csvCell(e.email), csvCell(e.name), date, ...blanks].join(","));
+    }
   }
-
-  return rows.join("\n") + "\n";
+  return "﻿" + lines.join("\n") + "\n";
 }
 
 module.exports = {
   parseScheduleCsv,
   buildTemplateCsv,
   mergeBlocksToTimeRanges,
+  shiftColumnHeaders,
+  normalizeDate,
   CsvShapeError,
   KNOWN_COLUMNS,
   BLOCK_COLUMNS,

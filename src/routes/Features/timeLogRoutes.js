@@ -17,6 +17,8 @@ const {
   updateTimeLogDateTime,
   getTodayShift,
   clearAutoBreaks,
+  upsertLunchBreak,
+  deleteLunchBreak,
   updatePunchType,
   adminDeleteTimeLog,
 } = require("@controllers/Features/timeLogController");
@@ -24,6 +26,8 @@ const {
 router.patch("/:id/datetime", authenticate, updateTimeLogDateTime);
 router.patch("/:id/punch-type", authenticate, updatePunchType);
 router.delete("/:id/auto-breaks", authenticate, clearAutoBreaks);
+router.put("/:id/lunch-break", authenticate, upsertLunchBreak);
+router.delete("/:id/lunch-break", authenticate, deleteLunchBreak);
 router.delete("/:id", authenticate, adminDeleteTimeLog);
 router.post("/time-in", authenticate, timeIn);
 router.post("/time-out", authenticate, timeOut);
