@@ -18,6 +18,18 @@ const {
   getPaymentProof,
   getRecipientPaymentProof,
 } = require("@controllers/Disbursement/disbursementController");
+const {
+  getPayoutProvider,
+  getCompanyPayoutAccount,
+  saveCompanyPayoutAccount,
+  verifyCompanyBank,
+  updateCompanyTaxService,
+  getEmployeePayoutAccount,
+  saveEmployeePayoutAccount,
+  getMyPayoutAccount,
+  saveMyPayoutAccount,
+  updateEmployeePayoutDelivery,
+} = require("@controllers/Disbursement/disbursementPayoutController");
 
 const canView = [authenticate, authorizeRoles("admin", "supervisor", "superadmin")];
 const canCreate = [authenticate, authorizeRoles("admin", "superadmin")];
@@ -29,6 +41,16 @@ const proofUpload = multer({
 });
 
 router.get("/summary", ...canView, getSummary);
+router.get("/payout-provider", ...canView, getPayoutProvider);
+router.get("/payout-accounts/company", ...canView, getCompanyPayoutAccount);
+router.post("/payout-accounts/company", ...canCreate, saveCompanyPayoutAccount);
+router.post("/payout-accounts/company/bank-verification", ...canCreate, verifyCompanyBank);
+router.put("/payout-accounts/company/tax-service", ...canCreate, updateCompanyTaxService);
+router.get("/payout-accounts/me", authenticate, getMyPayoutAccount);
+router.post("/payout-accounts/me", authenticate, saveMyPayoutAccount);
+router.get("/payout-accounts/employees/:employeeId", ...canView, getEmployeePayoutAccount);
+router.post("/payout-accounts/employees/:employeeId", ...canCreate, saveEmployeePayoutAccount);
+router.put("/employees/:employeeId/delivery", ...canCreate, updateEmployeePayoutDelivery);
 router.get("/", ...canView, listBatches);
 router.get("/:id/payment-proof", ...canView, getPaymentProof);
 router.get("/:id/recipients/:recipientId/payment-proof", ...canView, getRecipientPaymentProof);

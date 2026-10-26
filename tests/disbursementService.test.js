@@ -75,6 +75,18 @@ function matchesWhere(row, where = {}) {
   });
 }
 
+function employeeNeedsPayoutSetup(row, clause) {
+  if (clause.payrollDetails === null) return !row.payrollDetails;
+  if (!clause.AND) return false;
+  const details = row.payrollDetails;
+  if (!details) return false;
+  const linked = Boolean(
+    details.payoutAccountLinked ||
+    (details.payoutProvider && details.payoutProviderAccountId)
+  );
+  return details.payoutDelivery !== "manual" && !linked;
+}
+
 function createFakePrisma(seed = {}) {
   const db = {
     payrollRuns: seed.payrollRuns || [],
@@ -140,13 +152,7 @@ function createFakePrisma(seed = {}) {
           if (where.companyId && row.companyId !== where.companyId) return false;
           if (where.status && row.status !== where.status) return false;
           if (where.OR) {
-            return where.OR.some((clause) => {
-              if (clause.payrollDetails === null) return !row.payrollDetails;
-              if (clause.payrollDetails?.payoutProviderAccountId === null) {
-                return !row.payrollDetails?.payoutProviderAccountId;
-              }
-              return false;
-            });
+            return where.OR.some((clause) => employeeNeedsPayoutSetup(row, clause));
           }
           return true;
         }).length;
@@ -646,8 +652,8 @@ describe("disbursementService", () => {
 
   it("marks payment sent with proof without inventing Stripe IDs", async () => {
     const seed = defaultSeed();
-    seed.users[0].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_ada" };
-    seed.users[1].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_alan" };
+    seed.users[0].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_ada", payoutDelivery: "manual" };
+    seed.users[1].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_alan", payoutDelivery: "manual" };
     const { service, prisma } = createService(seed);
     const created = await service.createFromPayrollRun({ ...actor, payrollRunId: "run-1" });
     await service.approveBatch({ ...secondAdmin, batchId: created.id });
@@ -710,8 +716,8 @@ describe("disbursementService", () => {
 
   it("rejects marking the same employee paid twice, and keeps per-employee proof when marking remaining", async () => {
     const seed = defaultSeed();
-    seed.users[0].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_ada" };
-    seed.users[1].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_alan" };
+    seed.users[0].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_ada", payoutDelivery: "manual" };
+    seed.users[1].payrollDetails = { payoutProvider: "stripe", payoutProviderAccountId: "acct_alan", payoutDelivery: "manual" };
     const { service, prisma } = createService(seed);
     const created = await service.createFromPayrollRun({ ...actor, payrollRunId: "run-1" });
     await service.approveBatch({ ...secondAdmin, batchId: created.id });

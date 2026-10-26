@@ -317,6 +317,8 @@ model EmployeePayrollDetails {
   withCalSavers            Boolean       @default(false)
   payoutProvider           String?
   payoutProviderAccountId  String?
+  payoutDelivery           PayoutDelivery @default(automatic)
+  payoutAccountLinked      Boolean        @default(false)
   createdAt                DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
 
@@ -1743,6 +1745,11 @@ enum DisbursementAuditAction {
   BATCH_COMPLETED
   BATCH_FAILED
   RECIPIENT_STATUS_CHANGED
+}
+
+enum PayoutDelivery {
+  automatic
+  manual
 }
 
 enum DisbursementPaymentMethod {
