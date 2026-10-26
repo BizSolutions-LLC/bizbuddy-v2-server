@@ -59,6 +59,12 @@ class UnconfiguredDisbursementProvider extends DisbursementProvider {
 }
 
 function getDisbursementProvider() {
+  const baseUrl = process.env.DISBURSEMENT_API_URL;
+  const apiKey = process.env.DISBURSEMENT_API_KEY;
+  if (baseUrl && apiKey) {
+    const DisbursementApiProvider = require("./DisbursementApiProvider");
+    return new DisbursementApiProvider();
+  }
   return new UnconfiguredDisbursementProvider();
 }
 

@@ -83,15 +83,26 @@ function generateCheckPDF(payrollRun, employee, company, earningTypes, deduction
                { width: 85, align: 'right' });
 
       // 5. PAYEE NAME
-      // The PropMent cheque has no address slot under this line.
-      // The employee address is printed on the pay stubs below.
+      const payeeNameY = positions.payeeName?.y || 145;
       doc.fontSize(positions.payeeName?.fontSize || 11)
          .font('Helvetica-Bold')
          .text(employeeName.toUpperCase(), 
                positions.payeeName?.x || 90, 
-               positions.payeeName?.y || 145);
+               payeeNameY);
 
-      // 6. MEMO LINE (Optional)
+      // 6. PAYEE ADDRESS — directly under the name on the cheque face
+      const addressLines = payeeAddressLines(employee);
+      if (addressLines.length) {
+        const addressX = positions.payeeAddress?.x ?? positions.payeeName?.x ?? 90;
+        const addressY = positions.payeeAddress?.y ?? (payeeNameY + 14);
+        doc.fontSize(positions.payeeAddress?.fontSize || 9)
+           .font('Helvetica');
+        addressLines.forEach((line, index) => {
+          doc.text(line, addressX, addressY + (index * 12), { width: 300 });
+        });
+      }
+
+      // 7. MEMO LINE (Optional)
       if (positions.memo && employee.memo) {
         doc.fontSize(positions.memo?.fontSize || 9)
            .font('Helvetica')
@@ -186,15 +197,16 @@ function renderPayStub(doc, startY, copyType, payrollRun, employee, company, ear
   doc.font('Helvetica-Bold').text('Period Ending', 300, currentY + 20);
   doc.font('Helvetica').text(new Date(payrollRun.periodEnd).toLocaleDateString(), 380, currentY + 20);
 
-  // Employee Details
+  // Employee Details — address sits directly under the name
   currentY += 40;
   doc.fontSize(9).font('Helvetica-Bold').text(employee.employeeName || 'Employee', 50, currentY);
-  let detailOffset = 12;
-  doc.fontSize(8).font('Helvetica').text(employee.position || 'No position', 50, currentY + detailOffset);
+  let detailOffset = 0;
   payeeAddressLines(employee).forEach((line) => {
-    detailOffset += 10;
+    detailOffset += 12;
     doc.fontSize(8).font('Helvetica').text(line, 50, currentY + detailOffset, { width: 230 });
   });
+  detailOffset += 12;
+  doc.fontSize(8).font('Helvetica').text(employee.position || 'No position', 50, currentY + detailOffset);
 
   // Employee Pay Info (Right Side)
   const ptoUsed = parseFloat(employee.hoursData?.ptoHours || 0);
