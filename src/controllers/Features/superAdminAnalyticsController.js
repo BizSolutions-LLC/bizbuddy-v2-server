@@ -1,6 +1,7 @@
 // src/controllers/Features/superAdminAnalyticsController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 const ym = (d) => new Date(d).toISOString().slice(0, 7);
 
@@ -19,7 +20,7 @@ module.exports.getSuperAdminAnalytics = async (req, res) => {
           },
         },
       }),
-      prisma.user.findMany({ select: { id: true, companyId: true, createdAt: true } }),
+      prisma.user.findMany({ where: HUMAN_ONLY, select: { id: true, companyId: true, createdAt: true } }),
       prisma.timeLog.findMany({
         select: {
           userId: true,
@@ -220,7 +221,7 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
       activeSubscriptions,
     ] = await Promise.all([
       prisma.company.count(),
-      prisma.user.count({ where: { status: 'active', role: { not: 'superadmin' } } }),
+      prisma.user.count({ where: { ...HUMAN_ONLY, status: 'active', role: { not: 'superadmin' } } }),
       prisma.subscriptionPlan.count(),
       prisma.subscription.findMany({
         where: { active: true },
@@ -255,6 +256,7 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
       // New employees in period
       prisma.user.findMany({
         where: {
+          ...HUMAN_ONLY,
           createdAt: { gte: rangeStart, lte: rangeEnd },
           role: { not: 'superadmin' },
         },
@@ -269,6 +271,7 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
       // Active users (logged time) in period
       prisma.user.findMany({
         where: {
+          ...HUMAN_ONLY,
           role: { not: 'superadmin' },
           TimeLog: {
             some: {

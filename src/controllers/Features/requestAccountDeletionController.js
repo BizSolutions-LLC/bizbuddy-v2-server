@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const { createNotification } = require("@services/notificationService");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
@@ -103,7 +104,7 @@ const checkEmailGenerateCode = async (req, res) => {
 
     // Find user first
     const user = await prisma.user.findFirst({
-      where: { email: normalizedEmail },
+      where: { email: normalizedEmail, ...HUMAN_ONLY },
       include: { profile: true },
     });
 
@@ -191,7 +192,7 @@ const verifyCode = async (req, res) => {
 
     // Find user
     const user = await prisma.user.findFirst({
-      where: { email: normalizedEmail },
+      where: { email: normalizedEmail, ...HUMAN_ONLY },
       include: { profile: true },
     });
 
@@ -278,7 +279,7 @@ const confirmDeleteAccountRequest = async (req, res) => {
 
     // Find user
     const user = await prisma.user.findFirst({
-      where: { email: normalizedEmail },
+      where: { email: normalizedEmail, ...HUMAN_ONLY },
       include: { 
         profile: true,
         company: true,
@@ -347,6 +348,7 @@ const confirmDeleteAccountRequest = async (req, res) => {
         where: {
           companyId: user.companyId,
           role: { in: ['admin', 'superadmin'] },
+          ...HUMAN_ONLY,
           status: 'active',
         },
         select: { id: true, departmentId: true },

@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 // ---------------------------------------------------------------------------
 // Mailer
@@ -261,6 +262,10 @@ const requestPasswordReset = async (req, res) => {
       where: {
         id: userId,
         email: normalizedEmail,
+        // BB-110: B. Buddy credentials are rotated centrally, never via reset link
+        ...HUMAN_ONLY,
+        // BB-107: inactive accounts get no reset email (same safe response)
+        status: "active",
       },
       include: {
         profile: true,

@@ -550,12 +550,16 @@ model User {
   // BB-089: this employee is on fixed hours — only takes effect while their
   // department's fixedHoursEnabled master switch is also on.
   fixedHoursEnabled        Boolean  @default(false)
+  // BB-110: B. Buddy support account — company-panel-only admin, hidden from
+  // lists/counts/reports/notifications. Never an employee.
+  isSystemAgent            Boolean  @default(false)
 
   @@unique([companyId, email])
   @@index([companyId, status])
   @@index([companyId, role])
   @@index([companyId, role, status])
   @@index([lastLoginAt])
+  @@index([companyId, isSystemAgent])
 }
 
 model UserProfile {
@@ -726,6 +730,8 @@ model Company {
   LiveUser LiveUser[]
 
   companyCutoffSettings CompanyCutoffSettings?
+
+  supportAgents SupportAgent[] // BB-110: support staff assigned to this company
 
 }
 
@@ -1469,6 +1475,12 @@ model RequestLog {
   // Metadata
   environment     String?   // "production", "staging", "development"
   serverInstance  String?   // For load-balanced servers
+
+  // BB-110: B. Buddy audit trail — which support staff member was behind the shared login
+  isSystemAgent   Boolean   @default(false)
+  agentId         String?
+  // BB-110: the system admin behind a /api/system-admin request
+  systemAdminId   String?
   
   createdAt       DateTime  @default(now()) @db.Timestamptz(6)
   
@@ -1476,6 +1488,8 @@ model RequestLog {
   user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   company         Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
   department      Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  agent           SupportAgent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  systemAdmin     SystemAdmin?  @relation(fields: [systemAdminId], references: [id], onDelete: SetNull)
   
   // Indexes for fast analytics queries
   @@index([createdAt]) // Time-based queries
@@ -1486,6 +1500,61 @@ model RequestLog {
   @@index([isSlowRequest, createdAt]) // Performance issues
   @@index([isFailed, createdAt]) // Error tracking
   @@index([method, endpoint]) // Endpoint-specific queries
+  @@index([isSystemAgent, createdAt])
+  @@index([agentId, createdAt])
+  @@index([companyId, isSystemAgent, createdAt])
+  @@index([systemAdminId, createdAt])
+}
+
+// BB-110: individual system-admin accounts (replaces the single env login).
+// Every account must enroll an authenticator app (TOTP) on first sign-in.
+model SystemAdmin {
+  id                String    @id @default(cuid())
+  username          String    @unique
+  name              String
+  passwordHash      String
+  isOwner           Boolean   @default(false) // owners manage the other admins
+  active            Boolean   @default(true)
+  // TOTP 2FA: totpSecret is set once enrollment is confirmed; pending until then
+  totpSecret        String?
+  totpPendingSecret String?
+  totpEnabledAt     DateTime? @db.Timestamptz(6)
+  lastTotpStep      Int?      // last accepted 30s step — blocks code replay
+  recoveryCodes     Json      @default("[]") // sha256 hashes of unused one-time codes
+  // Lockout: 5 wrong passwords/codes in a row → locked 15 minutes
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime? @db.Timestamptz(6)
+  // Bumped on logout, password change, 2FA reset or deactivation — ends all sessions
+  tokenVersion      Int       @default(0)
+  lastLoginAt       DateTime? @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  requestLogs       RequestLog[]
+}
+
+// BB-110: a BizBuddy support staff member who signs in through the shared
+// B. Buddy account. Managed only from the system-admin tier; never hard-deleted
+// so the RequestLog trail stays readable.
+model SupportAgent {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  name       String
+  pinHash    String
+  active     Boolean   @default(true)
+  // The one company this staff member may enter as B. Buddy (null = none yet)
+  companyId  String?
+  // "Removed" from the dashboard — can never sign in again; kept for the audit trail
+  archivedAt DateTime? @db.Timestamptz(6)
+  // PIN lockout: 5 wrong PINs in a row locks the code for 15 minutes
+  failedPinAttempts Int       @default(0)
+  pinLockedUntil    DateTime? @db.Timestamptz(6)
+  lastUsedAt DateTime? @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  requestLogs RequestLog[]
+  company     Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
 }
 
 
@@ -1845,4 +1914,30 @@ model DisbursementAuditEvent {
 
   @@index([batchId, createdAt])
   @@index([actorUserId, createdAt])
+}
+// BB-112: capacity history for the system-admin Performance page. One row per
+// server instance every 5 minutes; rows older than 30 days are removed by the sampler.
+// No relations — nothing else depends on it.
+model ServerMetricSample {
+  id                String   @id @default(cuid())
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  instanceId        String?
+  uptimeSeconds     Int
+  cpuPercent        Float?   // share of the CPU limit in use (100 = all of it)
+  rssMb             Float
+  heapUsedMb        Float
+  memoryLimitMb     Float?   // container limit, when it can be read
+  eventLoopP99Ms    Float?
+  eventLoopMaxMs    Float?
+  inFlightPeak      Int      // most requests in progress at once during the 5 minutes
+  requests          Int
+  serverErrors      Int
+  avgMs             Int?
+  p95Ms             Int?
+  dbLatencyMs       Int?
+  dbConnections     Int?
+  dbMaxConnections  Int?
+  poolTimeouts      Int      @default(0) // Prisma "timed out fetching a connection" (P2024)
+
+  @@index([createdAt])
 }

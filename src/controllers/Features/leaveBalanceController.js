@@ -1,5 +1,6 @@
 // src/controllers/Features/leaveBalanceController.js
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { leaveVisibilityWhere } = require("@utils/leaveUtils");
 const {
   loadCreditCompany,
@@ -107,7 +108,7 @@ const listMatrix = async (req, res) => {
   const companyId = req.user.companyId;
 
   const users = await prisma.user.findMany({
-    where: { companyId, status: "active" },
+    where: { ...HUMAN_ONLY, companyId, status: "active" },
     select: {
       id: true,
       email: true,

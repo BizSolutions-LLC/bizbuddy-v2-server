@@ -22,7 +22,8 @@ async function processClockOutReminders() {
 
   // Fetch all active time logs (users currently clocked in)
   const activeLogs = await prisma.timeLog.findMany({
-    where: { status: true },
+    // BB-107: no reminders for inactive accounts
+    where: { status: true, user: { status: "active" } },
     include: { user: { select: { deviceToken: true } } },
   });
   if (!activeLogs.length) return;

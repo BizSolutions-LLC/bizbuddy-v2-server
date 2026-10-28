@@ -188,6 +188,11 @@ bizbuddy-v2-server/
 | `/notifications` | `notificationRoutes.js` | In-app notification inbox |
 | `/cutoff` | `Cutoff/cutoffRoutes.js` | Consolidated cutoff management |
 | `/system-admin` | `Analytics/systemAdminRoutes.js` | System-admin dashboard |
+| `/system-admin/bbuddy` | `Analytics/bbuddyMonitorRoutes.js` | B. Buddy activity monitor + support staff (BB-110) |
+| `/system-admin/database` | `Analytics/databaseOverviewRoutes.js` | Read-only DB overview: storage, business numbers, growth, cleanup candidates (BB-110) |
+| `/system-admin/activity/*`, `/system-admin/security/signals` | `Analytics/systemAdminRoutes.js` → `insightsController` | User Activity Analytics + Security Monitor, read-only (BB-112) |
+| `/system-admin/server/logs`, `/system-admin/server/health` | `Analytics/systemAdminRoutes.js` → `insightsController` | Live Server: in-memory redacted log tail + health snapshot, watch-only (BB-112, `utils/serverMonitor.js`) |
+| `/system-admin/capacity`, `/system-admin/capacity/history`, `/system-admin/performance` | `Analytics/systemAdminRoutes.js` → `insightsController` / `analyticsController` | Capacity gauges (server / database / API hotspots, verdicts ok/watch/upgrade) from `ServerMetricSample` (5-min samples, 30 days) + RequestLog; read-only (BB-112, `services/Analytics/capacityService.js`) |
 | `/test` | `testRoutes.js` | Dev/test endpoints |
 
 ---
@@ -200,7 +205,21 @@ Three-tier auth system:
 
 2. **Role-based access** (`roleMiddleware.js`) — `authorizeRoles('admin', 'supervisor', ...)` middleware factory. Re-fetches user from DB to confirm current role.
 
-3. **System admin** (`systemAdminAuth.js`) — Completely separate JWT (`SYSTEM_ADMIN_JWT_SECRET`) stored in a `system-admin-token` cookie. Privileged tier above regular admins.
+3. **System admin** (`systemAdminAuth.js`) — Individual accounts in the `SystemAdmin` table (BB-110), each with mandatory authenticator-app 2FA (TOTP, `src/utils/totp.js`). Two-step sign-in: `POST /api/system-admin/auth/login` (password) → `/auth/2fa/setup` (first time) or `/auth/2fa/verify`. Separate JWT (`SYSTEM_ADMIN_JWT_SECRET`, no fallback) in a `system-admin-token` cookie; `tokenVersion` revokes sessions. Owners manage admins at `/api/system-admin/admins`. Every system-admin request is logged with `RequestLog.systemAdminId`. First owner: `scripts/bb110-create-system-admin.js --owner`.
+
+---
+
+## B. Buddy system agent (BB-110)
+
+Every company has one hidden admin, **B. Buddy** (`User.isSystemAgent = true`, `role = admin`), used by BizBuddy support staff. All companies share one email (`BBUDDY_EMAIL` / `BBUDDY_PASSWORD_HASH`); each staff member also signs in with their own `SupportAgent` code + PIN, which goes into the JWT as `agentId`.
+
+- **Hidden:** any `prisma.user` query that lists, counts or iterates people (employee lists, headcounts, reports, payroll, cutoffs, shift generation, leave grants, notification recipients) must spread `HUMAN_ONLY` from `@utils/systemAgent`.
+- **Company panel only:** self-service routes use `blockSystemAgent`. Admin writes that target another user use `protectSystemAgentTarget()`.
+- **Audited:** `requestLogger` tags every B. Buddy request with `RequestLog.isSystemAgent` + `agentId`. View it at `/api/system-admin/bbuddy/*`.
+- **Created** automatically on self-signup (`services/systemAgentService.js`; skipped with a `[BB-110]` warning if `BBUDDY_EMAIL` / `BBUDDY_PASSWORD_HASH` are missing). From the system-admin dashboard it's a deliberate choice: "Add company" (`setupBBuddy`, default on; refuses if the env is missing) or "Set up B. Buddy" on an existing company (`POST /api/system-admin/bbuddy/accounts/:companyId`). `scripts/bb110-create-bbuddy-accounts.js` still works for bulk runs. Never delete a B. Buddy — records it approved point to it; deactivate instead.
+- **Company setup split (BB-107):** the dashboard creates only the shell (company + owner, optional B. Buddy and staff assignment — `services/Analytics/companyProvisionService.js`). Everything inside the company is done through B. Buddy in the Company panel, so it's audited.
+- **Access model — companies don't trigger it.** B. Buddy always exists but sits idle; there is no company-side switch, request or consent. A staff member can sign in to a company only if a system admin has assigned them to it (`SupportAgent.companyId`, one company per staff). `checkAgentAccess` enforces this at sign-in and on every request, so un-assigning or archiving takes effect immediately. Companies ask for help through normal support channels; their only visible trace is "by B. Buddy" on records. Covered by the terms of service (support may access accounts to help).
+- **Possible follow-ups (not built):** a company setting "Allow BizBuddy Support access" (column + check in `checkAgentAccess`), or time-limited access grants issued by the company admin. Add only if customers ask for control.
 
 ---
 
@@ -227,7 +246,7 @@ Three-tier auth system:
 | `Overtime` | OT requests and approvals |
 | `PaySchedule` / `PayrollRun` / `PayrollEntry` / `PayrollLine` | Full payroll run system |
 | `EmployeePayrollDetails` / `EarningType` / `DeductionType` | Per-employee payroll config |
-| `AttendanceSummary` | Pre-aggregated daily attendance for fast payroll calculation |
+| `AttendanceSummary` | Legacy — no code reads or writes it (see BB-110 database overview) |
 | `CutoffPeriod` | Pay period cutoff management |
 | `WithholdingTaxBracket` / `ContributionBracket` | PH statutory tables (multi-country enum) |
 | `NotificationLog` | In-app notification inbox |

@@ -28,6 +28,7 @@
 
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const {
   COMPANY_CREDIT_SELECT,
   fyLabel,
@@ -141,6 +142,7 @@ async function resolveScope(actor, f) {
 
   const users = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId: actor.companyId,
       ...(departmentId && { departmentId }),
       ...(f.userIds.length && { id: { in: f.userIds } }),

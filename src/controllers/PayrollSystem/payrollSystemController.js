@@ -1,6 +1,7 @@
 // src/controllers/PayrollSystem/payrollSystemController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const generatePayslipPDF = require('@utils/generatePayslipPDF');
 const calculateYTD = require('@utils/calculateYTD');
 const { createNotification } = require('@services/notificationService');
@@ -40,6 +41,7 @@ exports.getEmployeeList = async (req, res) => {
     // Fetch all employees with related data
     const users = await prisma.user.findMany({
       where: {
+        ...HUMAN_ONLY,
         companyId: companyId,
         // role: {
         //   in: ['employee', 'supervisor', 'admin'] // Exclude superadmin

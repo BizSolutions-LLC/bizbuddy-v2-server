@@ -1,6 +1,7 @@
 // src/controllers/Features/userShiftController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 // Existing: Get current user's shifts
 const getUserShifts = async (req, res) => {
@@ -40,6 +41,7 @@ const getCompanyEmployees = async (req, res) => {
     const { companyId, role } = req.user;
     
     const whereClause = { 
+      ...HUMAN_ONLY,
       companyId,
       status: 'active' // Only active employees
     };
@@ -180,6 +182,7 @@ const getBulkEmployeeShifts = async (req, res) => {
     // Verify all employees belong to same company
     const employees = await prisma.user.findMany({
       where: {
+        ...HUMAN_ONLY,
         id: { in: employeeIds }, // ✅ No parseInt - employeeIds are already strings
         companyId,
       },
@@ -277,6 +280,7 @@ const getCompanyScheduleStats = async (req, res) => {
     // Get all active employees in the company
     const totalEmployees = await prisma.user.count({
       where: { 
+        ...HUMAN_ONLY,
         companyId,
         status: 'active' // Only count active employees
       }

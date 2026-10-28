@@ -10,6 +10,11 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
+// Render runs the API behind one proxy hop. Trust exactly that hop so req.ip is
+// the real client (rate limiters key on it) and X-Forwarded-For can't be
+// spoofed by clients. Without this every user shares the proxy's IP.
+app.set("trust proxy", 1);
+
 // Security headers
 app.use(helmet());
 
@@ -30,10 +35,23 @@ const authLimiter = rateLimit({
   message: { message: "Too many login attempts, please try again in 15 minutes." },
 });
 
+// /login only counts failed attempts, so staff sharing one office IP aren't
+// blocked by each other's successful sign-ins (BB-110: also caps B. Buddy PIN guessing).
+const loginFailureLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many failed sign-in attempts, please try again in 15 minutes." },
+});
+
 app.use("/api", globalLimiter);
 app.use("/api/account/sign-in", authLimiter);
+app.use("/api/account/login", loginFailureLimiter);
 app.use("/api/account/sign-up", authLimiter);
 app.use("/api/system-admin/auth/login", authLimiter);
+app.use("/api/system-admin/auth/2fa", authLimiter);
 
 app.use(
   cors({

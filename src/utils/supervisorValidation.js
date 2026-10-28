@@ -1,5 +1,6 @@
 // src/utils/supervisorValidation.js
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 // BB-055: a direct supervisor must be an active supervisor/admin/superadmin
 // in the same company, and an employee can't be assigned as their own supervisor.
@@ -14,6 +15,7 @@ async function validateSupervisorId({ supervisorId, companyId, targetUserId }) {
 
   const candidate = await prisma.user.findFirst({
     where: {
+      ...HUMAN_ONLY,
       id: supervisorId,
       companyId,
       status: "active",

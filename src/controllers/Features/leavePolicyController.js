@@ -1,5 +1,6 @@
 // src/controllers/Features/leavePolicyController.js
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const ERROR_CODES = require("@constants/errorCodes");
 
 const _serializePolicy = (p) => ({
@@ -25,7 +26,7 @@ const _serializePolicy = (p) => ({
 const _assertEmployeesInCompany = async (companyId, employeeIds) => {
   if (!Array.isArray(employeeIds) || employeeIds.length === 0) return [];
   const found = await prisma.user.findMany({
-    where: { id: { in: employeeIds }, companyId },
+    where: { ...HUMAN_ONLY, id: { in: employeeIds }, companyId },
     select: { id: true },
   });
   if (found.length !== employeeIds.length) {

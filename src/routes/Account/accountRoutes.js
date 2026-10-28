@@ -3,6 +3,7 @@
 const express = require("express");
 const router = express.Router();
 const authenticate = require("@middlewares/authMiddleware");
+const { blockSystemAgent } = require("@utils/systemAgent");
 const {
   getUserEmail,
   getUserProfile,
@@ -32,8 +33,8 @@ router.get("/user-export-data", getUserExportData);
 router.get("/get-user-email", getUserEmail);
 router.get("/profile", getUserProfile);
 router.get("/approver", authenticate, getApprover);
-router.put("/profile", authenticate, updateProfile);
-router.put("/change-password", authenticate, changePassword);
+router.put("/profile", authenticate, blockSystemAgent, updateProfile);
+router.put("/change-password", authenticate, blockSystemAgent, changePassword);
 router.get("/device-token", getDeviceToken);
 router.post("/device-token", updateDeviceToken);
 router.get("/sign-in", signIn);   // legacy — kept for backwards compatibility
@@ -44,7 +45,7 @@ router.get("/plans", getAllSubscriptionPlans);
 router.get("/check-company-name", checkCompanyName);
 router.get("/check-username", checkUsername);
 router.post("/sign-up", signUp);
-router.delete("/delete", authenticate, deleteAccountController);
+router.delete("/delete", authenticate, blockSystemAgent, deleteAccountController);
 
 router.post("/reset-password", requestPasswordReset);
 router.get("/reset-password/verify", verifyResetToken);

@@ -16,6 +16,7 @@
 //  - Old records without companyId fall back to creator.companyId lookup
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { Prisma } = require("@prisma/client");
 const moment = require("moment-timezone");
 const { randomUUID } = require("crypto");
@@ -647,7 +648,7 @@ const updateCutoffStatus = async (req, res) => {
       if (status === 'locked') {
         // Notify management
         const managementUsers = await prisma.user.findMany({
-          where: { companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
+          where: { ...HUMAN_ONLY, companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
           select: { id: true, departmentId: true },
         });
         await Promise.all(managementUsers.map(manager =>
@@ -668,7 +669,7 @@ const updateCutoffStatus = async (req, res) => {
         // payroll headcount details stay out of it. The enriched wording only
         // goes in the API response below, seen only by the admin who acted.
         const employees = await prisma.user.findMany({
-          where: { companyId, status: 'active' },
+          where: { ...HUMAN_ONLY, companyId, status: 'active' },
           select: { id: true, departmentId: true },
         });
         await Promise.all(employees.map(emp =>
@@ -768,7 +769,7 @@ const finalizeCutoffPeriod = async (req, res) => {
       const periodLabel = startStr && endStr ? `${startStr} - ${endStr}` : `Cutoff #${id.slice(-6)}`;
 
       const managementUsers = await prisma.user.findMany({
-        where: { companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
+        where: { ...HUMAN_ONLY, companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
         select: { id: true, departmentId: true },
       });
       await Promise.all(managementUsers.map(manager =>

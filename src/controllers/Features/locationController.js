@@ -1,6 +1,7 @@
 // src/controllers/Features/locationController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { getAssignedLocations } = require("@services/Locations/assignedLocationsService");
 
 exports.createLocation = async (req, res) => {
@@ -210,6 +211,7 @@ exports.assignUsersToLocation = async (req, res) => {
 
     const validUsers = await prisma.user.findMany({
       where: {
+        ...HUMAN_ONLY,
         id: { in: userIds },
         companyId,
         role: { not: "superadmin" },
