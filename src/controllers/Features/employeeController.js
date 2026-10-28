@@ -2,6 +2,7 @@
 
 const bcrypt = require("bcryptjs");
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { sendMail } = require("@utils/mailer");
 const { renderWelcome } = require("@emails/renderTemplate");
 const { validateSupervisorId } = require("@utils/supervisorValidation");
@@ -29,7 +30,7 @@ const getAllEmployees = async (req, res) => {
     }
     
     const employees = await prisma.user.findMany({
-      where: { companyId },
+      where: { ...HUMAN_ONLY, companyId },
       select: {
         id: true,
         email: true,
@@ -120,8 +121,9 @@ const getMyTeam = async (req, res) => {
     }
 
     const where = ["admin", "superadmin"].includes(role)
-      ? { companyId }
+      ? { ...HUMAN_ONLY, companyId }
       : {
+          ...HUMAN_ONLY,
           companyId,
           OR: [
             { employmentDetail: { supervisorId: actingUserId } },
@@ -396,6 +398,13 @@ const updateEmployee = async (req, res) => {
       employeeId: cleanedEmployeeId,
       updatedAt: new Date(),
     };
+
+    // BB-107: deactivating signs the employee out everywhere (web and mobile) and
+    // stops push notifications to their phone.
+    if (employee.status === "active" && userData.status !== "active") {
+      userData.tokenVersion = { increment: 1 };
+      userData.deviceToken = null;
+    }
 
     if (password) {
       userData.password = bcrypt.hashSync(password, 10);

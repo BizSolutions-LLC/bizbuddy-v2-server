@@ -4,6 +4,7 @@ const express = require("express");
 const router = express.Router();
 const { authorizeRoles } = require("@middlewares/roleMiddleware");
 const authenticate = require("@middlewares/authMiddleware");
+const { blockSystemAgent } = require("@utils/systemAgent");
 const { 
     submitContestPolicy,
     viewContestTimeLogs,
@@ -13,8 +14,8 @@ const {
     approveContestRequest
 } = require("@controllers/Features/contestPolicyController");
 
-router.post("/submit", authenticate, authorizeRoles("employee", "admin", "supervisor", "superadmin"), submitContestPolicy);
-router.get("/view-contestTimeLogs", authenticate, authorizeRoles("employee", "admin", "supervisor", "superadmin"), viewContestTimeLogs);
+router.post("/submit", authenticate, blockSystemAgent, authorizeRoles("employee", "admin", "supervisor", "superadmin"), submitContestPolicy);
+router.get("/view-contestTimeLogs", authenticate, blockSystemAgent, authorizeRoles("employee", "admin", "supervisor", "superadmin"), viewContestTimeLogs);
 router.get("/view-allContestTimeLogs", authenticate, authorizeRoles("admin", "supervisor", "superadmin"), viewAllContestTimeLogs);
 router.delete("/delete/:id", authenticate, authorizeRoles("admin", "superadmin", "manager"), deleteContestRequest);
 router.patch("/reject/:id", authenticate, authorizeRoles("admin", "supervisor", "superadmin"), rejectContestRequest);

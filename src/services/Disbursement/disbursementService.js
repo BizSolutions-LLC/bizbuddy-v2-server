@@ -427,6 +427,7 @@ function createDisbursementService({ prisma, provider } = {}) {
         where: {
           companyId,
           status: "active",
+          isSystemAgent: false, // BB-110: B. Buddy is never paid
           OR: [
             { payrollDetails: null },
             { payrollDetails: { payoutProviderAccountId: null } },

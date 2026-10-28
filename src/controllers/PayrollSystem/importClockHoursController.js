@@ -7,6 +7,7 @@
 //
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { RRule } = require("rrule");
 
 // ============================================================
@@ -601,6 +602,7 @@ const importClockHours = async (req, res) => {
     // ─────────────────────────────────────────────────────────
     const employees = await prisma.user.findMany({
       where: {
+        ...HUMAN_ONLY,
         companyId,
         status: "active",
         role: { in: ["employee", "supervisor"] },

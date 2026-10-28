@@ -19,7 +19,8 @@ function authorizeRoles(...allowedRoles) {
         return res.status(403).json({ message: "Access denied: insufficient permissions." });
       }
 
-      req.user = user;
+      // Keep the token-derived B. Buddy staff id (BB-110) — not on the DB row.
+      req.user = { ...user, agentId: req.user.agentId ?? null };
       console.log("User authorized. Continuing to next middleware/route handler.");
       next();
     } catch (error) {

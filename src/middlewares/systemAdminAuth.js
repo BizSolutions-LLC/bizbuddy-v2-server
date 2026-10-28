@@ -1,19 +1,28 @@
 // src/middlewares/systemAdminAuth.js
+//
+// BB-110: verifies an individual system-admin session (cookie or Bearer).
+// The admin must still exist, be active, have 2FA enabled, and the token's
+// version must match (logout / password change / 2FA reset / deactivation
+// end every session immediately).
 
-const jwt = require("jsonwebtoken");
+const { adminFromSession } = require("@services/Analytics/systemAdminAccountService");
 
-const JWT_SECRET = process.env.SYSTEM_ADMIN_JWT_SECRET || "fallback-secret-key-change-this";
+function readToken(req) {
+  return (req.cookies && req.cookies["system-admin-token"]) || req.headers.authorization?.replace("Bearer ", "");
+}
 
-/**
- * Middleware to verify system admin authentication
- */
-const verifySystemAdmin = (req, res, next) => {
+const verifySystemAdmin = async (req, res, next) => {
   try {
-    // Get token from cookie or Authorization header
-    const token =
-      req.cookies["system-admin-token"] ||
-      req.headers.authorization?.replace("Bearer ", "");
+    // No fallback secret: without one anyone could sign their own token.
+    if (!process.env.SYSTEM_ADMIN_JWT_SECRET) {
+      console.error("System admin auth: SYSTEM_ADMIN_JWT_SECRET is not set — rejecting.");
+      return res.status(503).json({
+        success: false,
+        message: "System admin access is not configured.",
+      });
+    }
 
+    const token = readToken(req);
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -21,21 +30,23 @@ const verifySystemAdmin = (req, res, next) => {
       });
     }
 
-    // Verify token
-    const decoded = jwt.verify(token, JWT_SECRET);
-
-    if (decoded.role !== "system-admin") {
-      return res.status(403).json({
+    const admin = await adminFromSession(token);
+    if (!admin) {
+      return res.status(401).json({
         success: false,
-        message: "Access denied. System admin privileges required.",
+        message: "Session ended. Please sign in again.",
       });
     }
 
-    // Attach user info to request
     req.systemAdmin = {
-      username: decoded.username,
-      role: decoded.role,
+      id: admin.id,
+      username: admin.username,
+      name: admin.name,
+      isOwner: admin.isOwner,
+      role: "system-admin",
     };
+    // Stamp the request log with who did it (same object requestLogger saves from)
+    if (req.userContext) req.userContext.systemAdminId = admin.id;
 
     next();
   } catch (error) {
@@ -47,4 +58,17 @@ const verifySystemAdmin = (req, res, next) => {
   }
 };
 
+// Owner-only routes (managing the other system admins). Runs after verifySystemAdmin.
+const requireOwner = (req, res, next) => {
+  if (!req.systemAdmin || !req.systemAdmin.isOwner) {
+    return res.status(403).json({
+      success: false,
+      message: "Only an owner can manage system admins.",
+    });
+  }
+  next();
+};
+
 module.exports = verifySystemAdmin;
+module.exports.requireOwner = requireOwner;
+module.exports.readToken = readToken;

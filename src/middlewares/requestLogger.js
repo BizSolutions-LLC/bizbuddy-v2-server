@@ -3,6 +3,7 @@
 const { PrismaClient } = require("@prisma/client");
 const jwt = require("jsonwebtoken");
 const logger = require("@config/logger");
+const serverMonitor = require("@utils/serverMonitor");
 
 const prisma = new PrismaClient();
 
@@ -18,6 +19,8 @@ const SENSITIVE_FIELDS = [
   "accessToken",
   "refreshToken",
   "authorization",
+  "agentpin", // BB-110 staff PIN (keys are matched lowercased)
+  "recoverycode", // BB-110 system-admin 2FA recovery code
 ];
 
 /**
@@ -46,7 +49,7 @@ function extractUserContext(req) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return { userId: null, companyId: null, departmentId: null, userRole: null };
+      return { userId: null, companyId: null, departmentId: null, userRole: null, isSystemAgent: false, agentId: null };
     }
 
     const token = authHeader.split(" ")[1];
@@ -57,10 +60,13 @@ function extractUserContext(req) {
       companyId: decoded.companyId || null,
       departmentId: decoded.departmentId || null,
       userRole: decoded.role || null,
+      // BB-110: set by signIn only for B. Buddy tokens
+      isSystemAgent: decoded.isSystemAgent === true,
+      agentId: decoded.agentId || null,
     };
   } catch (error) {
     // Token invalid or expired - not an error, just anonymous request
-    return { userId: null, companyId: null, departmentId: null, userRole: null };
+    return { userId: null, companyId: null, departmentId: null, userRole: null, isSystemAgent: false, agentId: null };
   }
 }
 
@@ -85,13 +91,8 @@ function normalizeEndpoint(url) {
  * Get client IP address (supports proxies)
  */
 function getClientIp(req) {
-  return (
-    req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
-    req.headers["x-real-ip"] ||
-    req.connection.remoteAddress ||
-    req.socket.remoteAddress ||
-    null
-  );
+  // req.ip honours app's "trust proxy" setting; raw X-Forwarded-For is client-controlled.
+  return req.ip || req.socket?.remoteAddress || null;
 }
 
 /**
@@ -100,6 +101,19 @@ function getClientIp(req) {
  */
 function requestLogger(req, res, next) {
   const startTime = Date.now();
+
+  // BB-112: requests in progress at once (capacity page). "close" also fires for
+  // aborted requests, so the counter can't leak.
+  serverMonitor.requestStarted();
+  let counted = true;
+  const uncount = () => {
+    if (counted) {
+      counted = false;
+      serverMonitor.requestFinished();
+    }
+  };
+  res.on("finish", uncount);
+  res.on("close", uncount);
 
   // Extract user context from JWT
   const userContext = extractUserContext(req);
@@ -118,6 +132,12 @@ function requestLogger(req, res, next) {
 
     // Calculate response time
     const responseTime = Date.now() - startTime;
+
+    // BB-112: Live Server page. Its own polling isn't counted in the health
+    // stats, and refreshes (?poll=1) aren't stored — only opening the page is.
+    const isLiveServer = (req.originalUrl || "").startsWith("/api/system-admin/server/");
+    if (!isLiveServer) serverMonitor.recordRequest(res.statusCode, responseTime);
+    if (isLiveServer && req.query?.poll === "1") return;
 
     // Log to database asynchronously (non-blocking)
     setImmediate(() => {
@@ -153,9 +173,12 @@ async function saveRequestLog({ req, res, responseTime, userContext }) {
       companyId: userContext.companyId,
       departmentId: userContext.departmentId,
       userRole: userContext.userRole,
+      isSystemAgent: userContext.isSystemAgent,
+      agentId: userContext.agentId,
+      systemAdminId: userContext.systemAdminId || null,
       ipAddress: getClientIp(req),
       userAgent: req.headers["user-agent"] || null,
-      queryParams: Object.keys(req.query || {}).length > 0 ? req.query : null,
+      queryParams: Object.keys(req.query || {}).length > 0 ? sanitizeObject(req.query) : null,
       requestBody:
         req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
           ? sanitizeObject(req.body)
@@ -242,9 +265,12 @@ async function saveRequestLog({ req, res, responseTime, userContext }) {
       companyId: userContext.companyId,
       departmentId: userContext.departmentId,
       userRole: userContext.userRole,
+      isSystemAgent: userContext.isSystemAgent,
+      agentId: userContext.agentId,
+      systemAdminId: userContext.systemAdminId || null,
       ipAddress: getClientIp(req),
       userAgent: req.headers["user-agent"] || null,
-      queryParams: Object.keys(req.query || {}).length > 0 ? req.query : null,
+      queryParams: Object.keys(req.query || {}).length > 0 ? sanitizeObject(req.query) : null,
       requestBody:
         req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
           ? sanitizeObject(req.body)

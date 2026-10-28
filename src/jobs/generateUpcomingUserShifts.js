@@ -2,6 +2,7 @@
 
 const cron = require("node-cron");
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 function normalizeDate(date) {
   const d = new Date(date);
@@ -65,11 +66,12 @@ async function generateUpcomingUserShifts() {
       let users = [];
       if (schedule.assignedToAll) {
         users = await prisma.user.findMany({
-          where: { companyId: schedule.companyId },
+          // BB-107: inactive accounts get no new shifts (and so no reminders)
+          where: { ...HUMAN_ONLY, companyId: schedule.companyId, status: "active" },
         });
       } else if (schedule.assignedUserId) {
         const user = await prisma.user.findUnique({ where: { id: schedule.assignedUserId } });
-        if (user) users.push(user);
+        if (user && user.status === "active") users.push(user);
       }
 
       const userShiftData = [];

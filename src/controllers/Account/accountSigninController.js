@@ -12,6 +12,36 @@ const {
   buildSignInUpdateData,
   shouldBumpTokenVersionOnSignOut,
 } = require("@utils/mobileDeviceLogin");
+const ERROR_CODES = require("@constants/errorCodes");
+const { checkAgentAccess } = require("@utils/systemAgent");
+
+// BB-110: sign-in has no Bearer token yet, so requestLogger would record it as
+// anonymous. Tag its context (same object it logs from) so B. Buddy sign-ins
+// and failed PIN attempts show up in the monitoring trail.
+function tagSystemAgentRequest(req, user, agentId) {
+  if (!req.userContext) return;
+  Object.assign(req.userContext, {
+    userId: user.id,
+    companyId: user.companyId,
+    isSystemAgent: true,
+    agentId: agentId || null,
+  });
+}
+
+// BB-110: 5 wrong PINs in a row locks the staff code for 15 minutes.
+const PIN_MAX_ATTEMPTS = 5;
+const PIN_LOCK_MS = 15 * 60 * 1000;
+
+async function recordWrongPin(agent) {
+  const attempts = (agent.failedPinAttempts || 0) + 1;
+  await prisma.supportAgent.update({
+    where: { id: agent.id },
+    data:
+      attempts >= PIN_MAX_ATTEMPTS
+        ? { failedPinAttempts: 0, pinLockedUntil: new Date(Date.now() + PIN_LOCK_MS) }
+        : { failedPinAttempts: attempts },
+  });
+}
 
 const getUserEmail = async (req, res) => {
   console.log("## Check User Email and Retrieved Company");
@@ -39,6 +69,8 @@ const getUserEmail = async (req, res) => {
       companyName: user.company ? user.company.name : null,
       role: user.role,
       status: user.status,
+      // BB-110: B. Buddy keeps role=admin for access; the picker shows it as "Internal"
+      isSystemAgent: user.isSystemAgent,
     }));
 
     console.log("## Success");
@@ -148,7 +180,7 @@ const signIn = async (req, res) => {
   console.log("## Signin Start");
   try {
     // Support both legacy GET (query params) and new POST (request body)
-    const { email, password, companyId, deviceId, replaceDevice } = {
+    const { email, password, companyId, deviceId, replaceDevice, agentCode, agentPin } = {
       ...req.query,
       ...req.body,
     };
@@ -178,11 +210,60 @@ const signIn = async (req, res) => {
 
     const passwordValid = await bcrypt.compare(password, user.password);
     if (!passwordValid) {
+      if (user.isSystemAgent) tagSystemAgentRequest(req, user, null);
       return res.status(401).json({ message: "Invalid credentials." });
     }
 
+    // BB-110: B. Buddy is shared by support staff — each must identify with
+    // their own code + PIN so the audit trail knows who was behind the login.
+    let supportAgent = null;
+    if (user.isSystemAgent) {
+      tagSystemAgentRequest(req, user, null);
+      if (!agentCode || !agentPin) {
+        return res.status(401).json({
+          message: "Enter your staff code and PIN to continue as B. Buddy.",
+          code: ERROR_CODES.AGENT_IDENTITY_REQUIRED,
+        });
+      }
+      supportAgent = await prisma.supportAgent.findUnique({
+        where: { code: String(agentCode).trim().toUpperCase() },
+      });
+      if (supportAgent && supportAgent.pinLockedUntil && supportAgent.pinLockedUntil > new Date()) {
+        tagSystemAgentRequest(req, user, supportAgent.id);
+        return res.status(429).json({
+          message: "Too many wrong PINs. This staff code is locked for 15 minutes — or ask a system admin to reset your PIN.",
+          code: ERROR_CODES.AGENT_LOCKED,
+          lockedUntil: supportAgent.pinLockedUntil,
+        });
+      }
+      const pinValid =
+        supportAgent && supportAgent.active && !supportAgent.archivedAt
+          ? await bcrypt.compare(String(agentPin), supportAgent.pinHash)
+          : false;
+      if (!pinValid) {
+        if (supportAgent) {
+          tagSystemAgentRequest(req, user, supportAgent.id);
+          await recordWrongPin(supportAgent);
+        }
+        return res.status(401).json({
+          message: "Invalid staff code or PIN.",
+          code: ERROR_CODES.AGENT_IDENTITY_INVALID,
+        });
+      }
+      const access = await checkAgentAccess(supportAgent.id, user.companyId);
+      if (!access.ok) {
+        tagSystemAgentRequest(req, user, supportAgent.id);
+        return res.status(403).json({
+          message: "You're not assigned to this company. Ask a BizBuddy system admin for access.",
+          code: ERROR_CODES.AGENT_NOT_ASSIGNED,
+        });
+      }
+    }
+
     // Mobile sends deviceId; web omits it and keeps existing behavior.
-    const normalizedDeviceId = getNormalizedDeviceId(deviceId);
+    // B. Buddy skips the single-device lock entirely: several staff share the
+    // account, so registering one phone would lock out (or sign out) the rest.
+    const normalizedDeviceId = user.isSystemAgent ? "" : getNormalizedDeviceId(deviceId);
     const replaceRegisteredDevice = parseReplaceDevice(replaceDevice);
     const deviceConflict = getRegisteredDeviceConflict(
       user,
@@ -232,6 +313,15 @@ const signIn = async (req, res) => {
       companyId: user.companyId,
       tokenVersion: updatedUser.tokenVersion,
     };
+    if (supportAgent) {
+      tagSystemAgentRequest(req, user, supportAgent.id);
+      tokenPayload.isSystemAgent = true;
+      tokenPayload.agentId = supportAgent.id;
+      await prisma.supportAgent.update({
+        where: { id: supportAgent.id },
+        data: { lastUsedAt: new Date(), failedPinAttempts: 0, pinLockedUntil: null },
+      });
+    }
     const token = jwt.sign(tokenPayload, JWT_SECRET);
 
     console.log("## Success");
@@ -488,6 +578,13 @@ const updateDeviceToken = async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.status(404).json({ message: "User not found." });
+    }
+    // BB-110: B. Buddy gets no push notifications — don't store a (shared) FCM token.
+    if (user.isSystemAgent) {
+      return res.status(200).json({
+        message: "Device token not stored for the B. Buddy account.",
+        data: { deviceToken: null },
+      });
     }
     const updatedUser = await prisma.user.update({
       where: { id: userId },

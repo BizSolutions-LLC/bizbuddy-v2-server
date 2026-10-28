@@ -1,6 +1,6 @@
 // src/services/Analytics/analyticsService.js
 
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient, Prisma } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 class AnalyticsService {
@@ -62,152 +62,86 @@ class AnalyticsService {
   }
 
   /**
-   * Get performance metrics per endpoint
+   * Per-endpoint performance. BB-112: aggregated in the database (percentiles via
+   * percentile_disc) instead of loading every log row into memory. Same output shape.
    */
   async getPerformanceMetrics(limit = 20, timeRange = "24h") {
     const { startDate, endDate } = this.getTimeRange(timeRange);
+    const rows = await this.endpointStats(startDate, endDate);
 
-    // Use Prisma queries instead of raw SQL to avoid column name issues
-    const allRequests = await prisma.requestLog.findMany({
-      where: {
-        createdAt: { gte: startDate, lte: endDate }
-      },
-      select: {
-        endpoint: true,
-        method: true,
-        responseTime: true,
-        isFailed: true,
-        isSlowRequest: true,
-      }
-    });
-
-    // Group by endpoint and method
-    const grouped = {};
-    
-    allRequests.forEach(req => {
-      const key = `${req.endpoint}|${req.method}`;
-      
-      if (!grouped[key]) {
-        grouped[key] = {
-          endpoint: req.endpoint,
-          method: req.method,
-          requestCount: 0,
-          totalResponseTime: 0,
-          minResponseTime: Infinity,
-          maxResponseTime: 0,
-          responseTimes: [],
-          errorCount: 0,
-          slowCount: 0,
-        };
-      }
-      
-      grouped[key].requestCount++;
-      grouped[key].totalResponseTime += req.responseTime;
-      grouped[key].minResponseTime = Math.min(grouped[key].minResponseTime, req.responseTime);
-      grouped[key].maxResponseTime = Math.max(grouped[key].maxResponseTime, req.responseTime);
-      grouped[key].responseTimes.push(req.responseTime);
-      
-      if (req.isFailed) grouped[key].errorCount++;
-      if (req.isSlowRequest) grouped[key].slowCount++;
-    });
-
-    // Calculate percentiles and format
-    const endpoints = Object.values(grouped)
-      .map(group => {
-        const sorted = group.responseTimes.sort((a, b) => a - b);
-        const p50Index = Math.floor(sorted.length * 0.5);
-        const p95Index = Math.floor(sorted.length * 0.95);
-        const p99Index = Math.floor(sorted.length * 0.99);
-
-        return {
-          endpoint: group.endpoint,
-          method: group.method,
-          requestCount: group.requestCount,
-          avgResponseTime: Math.round(group.totalResponseTime / group.requestCount),
-          minResponseTime: group.minResponseTime,
-          maxResponseTime: group.maxResponseTime,
-          p50ResponseTime: sorted[p50Index] || 0,
-          p95ResponseTime: sorted[p95Index] || 0,
-          p99ResponseTime: sorted[p99Index] || 0,
-          errorCount: group.errorCount,
-          slowCount: group.slowCount,
-          errorRate: group.requestCount > 0
-            ? ((group.errorCount / group.requestCount) * 100).toFixed(2)
-            : "0.00",
-        };
-      })
+    const endpoints = [...rows]
       .sort((a, b) => b.requestCount - a.requestCount)
-      .slice(0, limit);
+      .slice(0, limit)
+      .map((r) => ({
+        endpoint: r.endpoint,
+        method: r.method,
+        requestCount: r.requestCount,
+        avgResponseTime: r.avgResponseTime,
+        minResponseTime: r.minResponseTime,
+        maxResponseTime: r.maxResponseTime,
+        p50ResponseTime: r.p50ResponseTime,
+        p95ResponseTime: r.p95ResponseTime,
+        p99ResponseTime: r.p99ResponseTime,
+        errorCount: r.errorCount,
+        slowCount: r.slowCount,
+        errorRate: r.requestCount > 0 ? ((r.errorCount / r.requestCount) * 100).toFixed(2) : "0.00",
+      }));
 
-    // Get slowest endpoints
-    const slowestEndpoints = Object.values(grouped)
-      .filter(group => group.requestCount >= 5)
-      .map(group => ({
-        endpoint: group.endpoint,
-        method: group.method,
-        request_count: group.requestCount,
-        avg_response_time: Math.round(group.totalResponseTime / group.requestCount),
-        max_response_time: group.maxResponseTime,
-      }))
-      .sort((a, b) => b.avg_response_time - a.avg_response_time)
-      .slice(0, 10);
-
-    return {
-      endpoints,
-      slowestEndpoints,
-    };
+    return { endpoints, slowestEndpoints: this.slowestOf(rows, 10) };
   }
 
   /**
-   * Get slowest endpoints
+   * Get slowest endpoints (at least 5 calls), by average response time.
    */
   async getSlowestEndpoints(limit = 10, timeRange = "24h") {
     const { startDate, endDate } = this.getTimeRange(timeRange);
+    return this.slowestOf(await this.endpointStats(startDate, endDate), limit);
+  }
 
-    const allRequests = await prisma.requestLog.findMany({
-      where: {
-        createdAt: { gte: startDate, lte: endDate }
-      },
-      select: {
-        endpoint: true,
-        method: true,
-        responseTime: true,
-      }
-    });
+  slowestOf(rows, limit) {
+    return rows
+      .filter((r) => r.requestCount >= 5)
+      .sort((a, b) => b.avgResponseTime - a.avgResponseTime)
+      .slice(0, limit)
+      .map((r) => ({
+        endpoint: r.endpoint,
+        method: r.method,
+        request_count: r.requestCount,
+        avg_response_time: r.avgResponseTime,
+        max_response_time: r.maxResponseTime,
+      }));
+  }
 
-    const grouped = {};
-    
-    allRequests.forEach(req => {
-      const key = `${req.endpoint}|${req.method}`;
-      
-      if (!grouped[key]) {
-        grouped[key] = {
-          endpoint: req.endpoint,
-          method: req.method,
-          count: 0,
-          totalResponseTime: 0,
-          maxResponseTime: 0,
-        };
-      }
-      
-      grouped[key].count++;
-      grouped[key].totalResponseTime += req.responseTime;
-      grouped[key].maxResponseTime = Math.max(grouped[key].maxResponseTime, req.responseTime);
-    });
-
-    const slowest = Object.values(grouped)
-      .filter(group => group.count >= 5)
-      .map(group => ({
-        endpoint: group.endpoint,
-        method: group.method,
-        request_count: group.count,
-        avg_response_time: Math.round(group.totalResponseTime / group.count),
-        max_response_time: group.maxResponseTime,
-      }))
-      .sort((a, b) => b.avg_response_time - a.avg_response_time)
-      .slice(0, limit);
-
-    return slowest;
+  async endpointStats(startDate, endDate) {
+    const rows = await prisma.$queryRaw`
+      SELECT
+        endpoint, method,
+        COUNT(*)                                                         AS "requestCount",
+        ROUND(AVG("responseTime"))                                       AS "avgResponseTime",
+        MIN("responseTime")                                              AS "minResponseTime",
+        MAX("responseTime")                                              AS "maxResponseTime",
+        percentile_disc(0.5)  WITHIN GROUP (ORDER BY "responseTime")     AS "p50ResponseTime",
+        percentile_disc(0.95) WITHIN GROUP (ORDER BY "responseTime")     AS "p95ResponseTime",
+        percentile_disc(0.99) WITHIN GROUP (ORDER BY "responseTime")     AS "p99ResponseTime",
+        COUNT(*) FILTER (WHERE "isFailed")                               AS "errorCount",
+        COUNT(*) FILTER (WHERE "isSlowRequest")                          AS "slowCount"
+      FROM "RequestLog"
+      WHERE "createdAt" >= ${startDate} AND "createdAt" <= ${endDate}
+      GROUP BY endpoint, method`;
+    const n = (v) => (v == null ? 0 : Number(v));
+    return rows.map((r) => ({
+      endpoint: r.endpoint,
+      method: r.method,
+      requestCount: n(r.requestCount),
+      avgResponseTime: n(r.avgResponseTime),
+      minResponseTime: n(r.minResponseTime),
+      maxResponseTime: n(r.maxResponseTime),
+      p50ResponseTime: n(r.p50ResponseTime),
+      p95ResponseTime: n(r.p95ResponseTime),
+      p99ResponseTime: n(r.p99ResponseTime),
+      errorCount: n(r.errorCount),
+      slowCount: n(r.slowCount),
+    }));
   }
 
   /**
@@ -286,52 +220,36 @@ class AnalyticsService {
    * Get user activity statistics
    */
   async getUserActivity(limit = 20, timeRange = "24h") {
+    // BB-112: aggregated in the database (was loading every row in the range into memory)
     const { startDate, endDate } = this.getTimeRange(timeRange);
+    const take = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 500);
 
-    const requests = await prisma.requestLog.findMany({
-      where: {
-        createdAt: { gte: startDate, lte: endDate },
-        userId: { not: null },
-      },
-      include: {
-        user: {
-          select: { username: true, email: true, role: true }
-        },
-        company: {
-          select: { name: true }
-        }
-      }
-    });
+    const rows = await prisma.$queryRaw`
+      SELECT
+        r."userId"                                   AS user_id,
+        u.username                                   AS username,
+        u.email                                      AS email,
+        u.role::text                                 AS role,
+        u."isSystemAgent"                            AS is_system_agent,
+        MAX(c.name)                                  AS company_name,
+        COUNT(*)                                     AS request_count,
+        COUNT(*) FILTER (WHERE r."isFailed")         AS failed_count,
+        ROUND(AVG(r."responseTime"))                 AS avg_response_time,
+        MAX(r."createdAt")                           AS last_seen
+      FROM "RequestLog" r
+      LEFT JOIN "User" u    ON u.id = r."userId"
+      LEFT JOIN "Company" c ON c.id = r."companyId"
+      WHERE r."createdAt" >= ${startDate} AND r."createdAt" <= ${endDate} AND r."userId" IS NOT NULL
+      GROUP BY r."userId", u.username, u.email, u.role, u."isSystemAgent"
+      ORDER BY request_count DESC
+      LIMIT ${take}`;
 
-    const grouped = {};
-    requests.forEach(req => {
-      if (!grouped[req.userId]) {
-        grouped[req.userId] = {
-          user_id: req.userId,
-          username: req.user?.username,
-          email: req.user?.email,
-          role: req.user?.role,
-          company_name: req.company?.name,
-          request_count: 0,
-          failed_count: 0,
-          totalResponseTime: 0,
-        };
-      }
-      
-      grouped[req.userId].request_count++;
-      grouped[req.userId].totalResponseTime += req.responseTime;
-      if (req.isFailed) grouped[req.userId].failed_count++;
-    });
-
-    const userActivity = Object.values(grouped)
-      .map(user => ({
-        ...user,
-        avg_response_time: Math.round(user.totalResponseTime / user.request_count),
-      }))
-      .sort((a, b) => b.request_count - a.request_count)
-      .slice(0, limit);
-
-    return userActivity;
+    return rows.map((r) => ({
+      ...r,
+      request_count: Number(r.request_count),
+      failed_count: Number(r.failed_count),
+      avg_response_time: r.avg_response_time == null ? null : Number(r.avg_response_time),
+    }));
   }
 
   /**
@@ -454,95 +372,53 @@ class AnalyticsService {
    * Get security alerts
    */
   async getSecurityAlerts(timeRange = "24h") {
+    // BB-112: aggregated in the database. Failed logins now cover every sign-in
+    // failure status (401/403/404/429) on the user and system-admin sign-in
+    // endpoints; B. Buddy's expected 403s are left out of "unauthorized access".
+    // Richer graded signals: GET /api/system-admin/security/signals.
     const { startDate, endDate } = this.getTimeRange(timeRange);
+    const signInEndpoints = [
+      "/api/account/login",
+      "/api/account/sign-in",
+      "/api/system-admin/auth/login",
+      "/api/system-admin/auth/2fa/verify",
+      "/api/system-admin/auth/2fa/setup",
+    ];
 
-    const allRequests = await prisma.requestLog.findMany({
-      where: {
-        createdAt: { gte: startDate, lte: endDate }
-      },
-      select: {
-        ipAddress: true,
-        statusCode: true,
-        endpoint: true,
-        method: true,
-        userId: true,
-        createdAt: true,
-      }
-    });
+    const [failedLogins, highRequestRates, unauthorizedAccess] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT r."ipAddress" AS ip_address, COUNT(*) AS failed_attempts, MAX(r."createdAt") AS last_attempt
+        FROM "RequestLog" r
+        WHERE r."createdAt" >= ${startDate} AND r."createdAt" <= ${endDate}
+          AND r.endpoint IN (${Prisma.join(signInEndpoints)})
+          AND r."statusCode" IN (401, 403, 404, 429)
+        GROUP BY r."ipAddress"
+        HAVING COUNT(*) > 5
+        ORDER BY failed_attempts DESC
+        LIMIT 20`,
+      prisma.$queryRaw`
+        SELECT r."ipAddress" AS ip_address, COUNT(*) AS request_count, COUNT(DISTINCT r.endpoint) AS unique_endpoints
+        FROM "RequestLog" r
+        WHERE r."createdAt" >= ${startDate} AND r."createdAt" <= ${endDate}
+        GROUP BY r."ipAddress"
+        HAVING COUNT(*) > 1000
+        ORDER BY request_count DESC
+        LIMIT 20`,
+      prisma.$queryRaw`
+        SELECT r.endpoint, r.method, r."ipAddress" AS ip_address, r."userId" AS user_id, COUNT(*) AS attempt_count
+        FROM "RequestLog" r
+        WHERE r."createdAt" >= ${startDate} AND r."createdAt" <= ${endDate}
+          AND r."statusCode" = 403 AND r."isSystemAgent" = false
+        GROUP BY r.endpoint, r.method, r."ipAddress", r."userId"
+        ORDER BY attempt_count DESC
+        LIMIT 20`,
+    ]);
 
-    // Failed logins (401 on login/auth endpoints)
-    const loginAttempts = {};
-    allRequests
-      .filter(req => req.statusCode === 401 && (req.endpoint.includes('login') || req.endpoint.includes('auth')))
-      .forEach(req => {
-        if (!loginAttempts[req.ipAddress]) {
-          loginAttempts[req.ipAddress] = {
-            ip_address: req.ipAddress,
-            failed_attempts: 0,
-            last_attempt: req.createdAt,
-          };
-        }
-        loginAttempts[req.ipAddress].failed_attempts++;
-        if (req.createdAt > loginAttempts[req.ipAddress].last_attempt) {
-          loginAttempts[req.ipAddress].last_attempt = req.createdAt;
-        }
-      });
-
-    const failedLogins = Object.values(loginAttempts)
-      .filter(item => item.failed_attempts > 5)
-      .sort((a, b) => b.failed_attempts - a.failed_attempts)
-      .slice(0, 20);
-
-    // High request rates
-    const ipCounts = {};
-    allRequests.forEach(req => {
-      if (!ipCounts[req.ipAddress]) {
-        ipCounts[req.ipAddress] = {
-          ip_address: req.ipAddress,
-          request_count: 0,
-          unique_endpoints: new Set(),
-        };
-      }
-      ipCounts[req.ipAddress].request_count++;
-      ipCounts[req.ipAddress].unique_endpoints.add(req.endpoint);
-    });
-
-    const highRequestRates = Object.values(ipCounts)
-      .map(item => ({
-        ip_address: item.ip_address,
-        request_count: item.request_count,
-        unique_endpoints: item.unique_endpoints.size,
-      }))
-      .filter(item => item.request_count > 1000)
-      .sort((a, b) => b.request_count - a.request_count)
-      .slice(0, 20);
-
-    // Unauthorized access (403)
-    const unauthorizedAttempts = {};
-    allRequests
-      .filter(req => req.statusCode === 403)
-      .forEach(req => {
-        const key = `${req.endpoint}|${req.method}|${req.ipAddress}|${req.userId}`;
-        if (!unauthorizedAttempts[key]) {
-          unauthorizedAttempts[key] = {
-            endpoint: req.endpoint,
-            method: req.method,
-            ip_address: req.ipAddress,
-            user_id: req.userId,
-            attempt_count: 0,
-          };
-        }
-        unauthorizedAttempts[key].attempt_count++;
-      });
-
-    const unauthorizedAccess = Object.values(unauthorizedAttempts)
-      .sort((a, b) => b.attempt_count - a.attempt_count)
-      .slice(0, 20);
-
+    const num = (rows, keys) => rows.map((r) => ({ ...r, ...Object.fromEntries(keys.map((k) => [k, Number(r[k])])) }));
     return {
-      failedLogins,
-      highRequestRates,
-      unauthorizedAccess,
+      failedLogins: num(failedLogins, ["failed_attempts"]),
+      highRequestRates: num(highRequestRates, ["request_count", "unique_endpoints"]),
+      unauthorizedAccess: num(unauthorizedAccess, ["attempt_count"]),
     };
   }
 
@@ -557,6 +433,7 @@ class AnalyticsService {
         ? { createdAt: { gte: new Date(filters.startDate), lte: new Date(filters.endDate) } }
         : {}),
       ...(filters.userId ? { userId: filters.userId } : {}),
+      ...(filters.systemAdminId ? { systemAdminId: filters.systemAdminId } : {}), // BB-110
       ...(filters.companyId ? { companyId: filters.companyId } : {}),
       ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
       ...(filters.endpoint ? { endpoint: { contains: filters.endpoint } } : {}),
@@ -578,6 +455,9 @@ class AnalyticsService {
           },
           company: {
             select: { name: true },
+          },
+          systemAdmin: {
+            select: { username: true, name: true },
           },
         },
       }),

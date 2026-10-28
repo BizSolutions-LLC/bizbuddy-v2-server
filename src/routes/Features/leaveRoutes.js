@@ -4,6 +4,7 @@ const express = require("express");
 const router = express.Router();
 const { authorizeRoles } = require("@middlewares/roleMiddleware");
 const authenticate = require("@middlewares/authMiddleware");
+const { blockSystemAgent } = require("@utils/systemAgent");
 const {
   submitLeaveRequest,
   getUserLeaves,
@@ -33,12 +34,14 @@ router.get(
 router.post(
   "/submit",
   authenticate,
+  blockSystemAgent,
   authorizeRoles("employee", "admin", "supervisor", "superadmin"),
   submitLeaveRequest
 );
 router.get(
   "/my",
   authenticate,
+  blockSystemAgent,
   authorizeRoles("employee", "admin", "supervisor", "superadmin"),
   getUserLeaves
 );

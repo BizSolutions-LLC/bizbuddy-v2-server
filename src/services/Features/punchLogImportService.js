@@ -7,6 +7,7 @@
 
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const {
   parseClockTime,
   findOverlappingLog,
@@ -15,9 +16,24 @@ const {
 const { getLockedCutoffForDate } = require("@controllers/Features/timeLogController");
 const { VALID_PUNCH_TYPES, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
-const { parsePunchLogCsv } = require("@utils/csvPunchLogParser");
+const { parsePunchLogCsv, buildPrefilledTemplateCsv } = require("@utils/csvPunchLogParser");
+const {
+  ImportError,
+  teamWhere,
+  splitIds,
+  displayName,
+  loadActor,
+  parseDateRange,
+  resolveTargetEmployees,
+} = require("@services/Features/importTargets");
 
-const MAX_ROWS = 300;
+// BB-108: a pre-filled file is mostly blank rows (days off), so the cap on rows that
+// are actually imported is separate from the cap on the file as a whole.
+const MAX_ROWS = 500; // rows with a clockIn or clockOut
+const MAX_TOTAL_ROWS = 2000; // every row, blank ones included
+const MAX_RANGE_DAYS = 31; // a full cutoff period fits
+
+const isBlank = (v) => !v || !String(v).trim();
 
 // Spreadsheet tools routinely export a mix of formats in one `date` column — e.g. a
 // manually-typed first cell as ISO (2026-08-01) and the rest autofilled/dragged down as the
@@ -38,12 +54,48 @@ function hasExplicitDate(str) {
   return /\d{4}-\d{2}-\d{2}/.test(str) || /Z$|[+-]\d{2}:\d{2}$/.test(str);
 }
 
-// Combines the row's `date` column with a bare `clockIn`/`clockOut` time (e.g. "08:00")
-// into a string parseClockTime() can interpret. If the time column already carries its
-// own date/offset, it's used as-is.
-function buildClockDateTime(dateStr, timeStr) {
-  if (!timeStr) return null;
-  return hasExplicitDate(timeStr) ? timeStr : `${dateStr} ${timeStr}`;
+// BB-108: bare clock times accepted in a cell, read strictly in the company's timezone.
+// Spreadsheets often save "08:00" back as "8:00" or "8:00:00 AM", which moment's
+// format-less parsing only guesses at (in the server's own timezone).
+const TIME_FORMATS = ["HH:mm", "H:mm", "HH:mm:ss", "H:mm:ss", "h:mm A", "h:mm:ss A", "h A", "h:mmA", "h:mm:ssA", "hA"];
+const DATE_TIME_FORMATS = TIME_FORMATS.map((f) => `YYYY-MM-DD ${f}`);
+
+// The row's `date` plus a bare time ("08:00", "8:00 AM"). A time cell that carries
+// its own date/offset is used as-is, as before.
+function parseCellTime(dateStr, timeStr, companyTimezone) {
+  if (hasExplicitDate(timeStr)) return parseClockTime(timeStr, companyTimezone);
+  const parsed = moment.tz(`${dateStr} ${String(timeStr).trim()}`, DATE_TIME_FORMATS, true, companyTimezone);
+  return parsed.isValid() ? parsed.toDate() : new Date(NaN);
+}
+
+/**
+ * GET /template with startDate/endDate (BB-108): pre-filled CSV, one row per active
+ * employee × date (≤ 31 days). Target: userIds, departmentId, or everyone in scope;
+ * supervisors get their own department only. Throws ImportError (status 400/403).
+ */
+async function buildPunchLogTemplate({ companyId, actingUserId, actingRole, query }) {
+  const actor = await loadActor({ companyId, actingUserId, actingRole });
+  const range = parseDateRange(query.startDate, query.endDate, MAX_RANGE_DAYS);
+  const employees = await resolveTargetEmployees(
+    actor,
+    { userIds: splitIds(query.userIds), departmentId: query.departmentId || null },
+    { action: "import punch logs" }
+  );
+  if (employees.length === 0) throw new ImportError(400, "No active employees match this selection.");
+
+  const rowCount = employees.length * range.dates.length;
+  if (rowCount > MAX_TOTAL_ROWS)
+    throw new ImportError(
+      400,
+      `That's ${rowCount} rows (${employees.length} employees × ${range.dates.length} days); the limit is ${MAX_TOTAL_ROWS}. Pick fewer employees or days.`
+    );
+
+  const csv = buildPrefilledTemplateCsv({
+    isBnc: BNC_COMPANY_IDS.has(companyId),
+    dates: range.dates,
+    employees: employees.map((e) => ({ email: e.email, name: displayName(e) })),
+  });
+  return { csv, filename: `punch_logs_${range.startDate}_to_${range.endDate}.csv` };
 }
 
 /**
@@ -60,17 +112,33 @@ function buildClockDateTime(dateStr, timeStr) {
  * A `supervisor` uploader is restricted to employees in their own department, mirroring
  * viewAllRequestedPunchLogs (requestPunchLogController.js) — admin/superadmin stay company-wide.
  *
- * Returns { created: [{row, employeeId, date, clockIn, clockOut, timeLogId, requestedTimeLogId}],
- *           failed: [{row, employeeId, date, clockIn, clockOut, reason}] } — date/clockIn/clockOut
+ * Rows with neither clockIn nor clockOut are days off (BB-108): skipped and counted,
+ * never failed. Caps: MAX_TOTAL_ROWS rows in the file, MAX_ROWS non-blank ones.
+ *
+ * Returns { created: [{row, employeeId, name, date, clockIn, clockOut, timeLogId, requestedTimeLogId}],
+ *           failed: [{row, employeeId, name, date, clockIn, clockOut, reason}],
+ *           skipped: <number of blank rows> } — `name` is "Last, First" when the employee
+ * was matched, else null; date/clockIn/clockOut
  * on `created` rows are the parsed/normalized values actually stored; on `failed` rows they're
  * the raw CSV cell values as-is (parsing may not have succeeded), for the UI to render a
  * per-row approved/failed table without re-reading the original file.
  */
 async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverRole, approverDepartmentId }) {
-  const rows = parsePunchLogCsv(buffer);
+  const allRows = parsePunchLogCsv(buffer);
+
+  if (allRows.length > MAX_TOTAL_ROWS) {
+    const err = new Error(`CSV has ${allRows.length} rows; the limit is ${MAX_TOTAL_ROWS} per upload.`);
+    err.isRowCapError = true;
+    throw err;
+  }
+
+  const rows = allRows.filter(({ data }) => !(isBlank(data.clockIn) && isBlank(data.clockOut)));
+  const skipped = allRows.length - rows.length;
 
   if (rows.length > MAX_ROWS) {
-    const err = new Error(`CSV has ${rows.length} rows; the limit is ${MAX_ROWS} per upload.`);
+    const err = new Error(
+      `CSV has ${rows.length} rows with punches; the limit is ${MAX_ROWS} per upload. Split the file and upload it in parts.`
+    );
     err.isRowCapError = true;
     throw err;
   }
@@ -81,7 +149,8 @@ async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverR
   });
   const companyTimezone = company?.timeZone || "UTC";
   const isBncCompany = BNC_COMPANY_IDS.has(companyId);
-  const isScopedToDepartment = approverRole === "supervisor";
+  const isScopedToTeam = approverRole === "supervisor";
+  const actor = { id: approverId, departmentId: approverDepartmentId || null, scoped: isScopedToTeam };
 
   const identifiers = new Set();
   for (const { data } of rows) {
@@ -91,14 +160,21 @@ async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverR
 
   const users = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
-      ...(isScopedToDepartment ? { departmentId: approverDepartmentId } : {}),
-      OR: [
-        { employeeId: { in: [...identifiers] } },
-        { email: { in: [...identifiers] } },
+      // Supervisors: own department or direct reports (BB-080 team rule).
+      AND: [
+        teamWhere(actor),
+        { OR: [{ employeeId: { in: [...identifiers] } }, { email: { in: [...identifiers] } }] },
       ],
     },
-    select: { id: true, employeeId: true, email: true, departmentId: true },
+    select: {
+      id: true,
+      employeeId: true,
+      email: true,
+      departmentId: true,
+      profile: { select: { firstName: true, lastName: true } },
+    },
   });
 
   const userByEmployeeId = new Map();
@@ -118,23 +194,27 @@ async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverR
       (data.email && data.email.trim().toLowerCase()) ||
       null;
 
+    const matchedUser =
+      (data.employeeId && userByEmployeeId.get(data.employeeId.trim())) ||
+      (data.email && userByEmail.get(data.email.trim().toLowerCase())) ||
+      null;
+    const name = matchedUser ? displayName(matchedUser) : null;
+
     try {
       if (!identifier) throw new Error("Missing employeeId or email.");
       if (!data.date) throw new Error("Missing date.");
-      if (!data.clockIn) throw new Error("Missing clockIn.");
-      if (!data.clockOut) throw new Error("Missing clockOut.");
+      if (isBlank(data.clockIn)) throw new Error("Missing clock-in.");
+      if (isBlank(data.clockOut)) throw new Error("Missing clock-out.");
 
       const normalizedDate = normalizeDateCell(data.date);
       if (!normalizedDate) {
         throw new Error(`Invalid date format: "${data.date}". Use YYYY-MM-DD.`);
       }
 
-      const user =
-        (data.employeeId && userByEmployeeId.get(data.employeeId.trim())) ||
-        (data.email && userByEmail.get(data.email.trim().toLowerCase()));
+      const user = matchedUser;
       if (!user) {
         throw new Error(
-          isScopedToDepartment ? "Employee not found in your department." : "Employee not found in this company."
+          isScopedToTeam ? "Employee not found in your team." : "Employee not found in this company."
         );
       }
 
@@ -145,10 +225,11 @@ async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverR
         throw new Error("Driver/Aide punch types are not available for this company.");
       }
 
-      const clockIn = parseClockTime(buildClockDateTime(normalizedDate, data.clockIn), companyTimezone);
-      let clockOut = parseClockTime(buildClockDateTime(normalizedDate, data.clockOut), companyTimezone);
+      const clockIn = parseCellTime(normalizedDate, data.clockIn, companyTimezone);
+      let clockOut = parseCellTime(normalizedDate, data.clockOut, companyTimezone);
 
-      if (isNaN(clockIn) || isNaN(clockOut)) throw new Error("Invalid date, clockIn, or clockOut.");
+      if (isNaN(clockIn)) throw new Error(`Invalid clock-in time "${data.clockIn}". Use 08:00 or 8:00 AM.`);
+      if (isNaN(clockOut)) throw new Error(`Invalid clock-out time "${data.clockOut}". Use 17:00 or 5:00 PM.`);
 
       // Overnight shift: a bare clockOut time earlier than clockIn rolls to the next day.
       if (clockOut <= clockIn && !hasExplicitDate(data.clockOut)) {
@@ -207,6 +288,7 @@ async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverR
         created.push({
           row: rowNumber,
           employeeId: identifier,
+          name,
           date: normalizedDate,
           clockIn: moment.tz(clockIn, companyTimezone).format(),
           clockOut: moment.tz(clockOut, companyTimezone).format(),
@@ -224,6 +306,7 @@ async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverR
       failed.push({
         row: rowNumber,
         employeeId: identifier,
+        name,
         date: data.date || null,
         clockIn: data.clockIn || null,
         clockOut: data.clockOut || null,
@@ -232,7 +315,14 @@ async function importPunchLogsFromCsv({ buffer, companyId, approverId, approverR
     }
   }
 
-  return { created, failed };
+  return { created, failed, skipped };
 }
 
-module.exports = { importPunchLogsFromCsv, MAX_ROWS };
+module.exports = {
+  buildPunchLogTemplate,
+  importPunchLogsFromCsv,
+  ImportError,
+  MAX_ROWS,
+  MAX_TOTAL_ROWS,
+  MAX_RANGE_DAYS,
+};

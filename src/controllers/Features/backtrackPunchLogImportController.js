@@ -25,6 +25,7 @@ const previewBacktrack = async (req, res) => {
       buffer: req.file.buffer,
       companyId: req.user.companyId,
       cutoffPeriodId: req.body.cutoffPeriodId,
+      actingUserId: req.user.id,
       actingRole: (req.user.role || "").toLowerCase(),
       actingDepartmentId: req.user.departmentId,
     });

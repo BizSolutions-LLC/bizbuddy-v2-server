@@ -6,6 +6,9 @@ if (!buffer.SlowBuffer) {
 }
 
 require("module-alias/register");
+// BB-112: copy everything this process prints into the in-memory buffer behind
+// the system-admin Live Server page. Installed first so boot output is captured.
+require("@utils/serverMonitor").install();
 // Must load before app.js / @routes/index.js — it patches Express's router
 // methods so every async route handler registered afterwards automatically
 // forwards rejections to errorHandler.js instead of crashing the process on
@@ -56,6 +59,7 @@ connect()
     const { scheduleClockOutReminders } = require("@workers/clockOutReminderWorker");
     const { scheduleClockInReminders }  = require("@workers/clockInReminderWorker");
     const { initializeCronJobs }        = require("@utils/cronScheduler");
+    const { startCapacitySampler }      = require("@services/Analytics/capacityService");
 
     initSocket(server);
     initFirebase();
@@ -63,6 +67,7 @@ connect()
     scheduleClockOutReminders();
     scheduleClockInReminders();
     initializeCronJobs();
+    const capacitySampling = startCapacitySampler(); // BB-112: on Render (or CAPACITY_SAMPLING=true)
 
     server.listen(PORT, () => {
       const firebaseOk = isFirebaseReady();
@@ -92,6 +97,7 @@ connect()
       console.log(`  ✓  Leave accrual               daily`);
       console.log(`  ✓  Morning reports             10:00 AM daily`);
       console.log(`  ✓  Evening reports             6:00 PM daily`);
+      console.log(`  ${capacitySampling ? "✓" : "–"}  Capacity samples            ${capacitySampling ? "every 5 min" : "off (not on Render)"}`);
       console.log(`\n  started    ${new Date().toISOString()}`);
       console.log(`└${line}┘\n`);
     });

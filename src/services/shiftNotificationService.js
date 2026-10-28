@@ -1,6 +1,7 @@
 // src/services/shiftNotificationService.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { notifyUser } = require("./socketService");
 const { prefixWithCompanyName } = require("./notificationService");
 
@@ -136,6 +137,7 @@ async function notifyManagementShiftAssignment({
 }) {
   const managementUsers = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
       role: { in: ["admin", "superadmin", "supervisor"] },
       status: "active",
@@ -191,6 +193,7 @@ async function notifyManagementScheduleCreated({
 }) {
   const managementUsers = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
       role: { in: ["admin", "superadmin", "supervisor"] },
       status: "active",
