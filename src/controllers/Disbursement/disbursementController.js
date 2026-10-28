@@ -196,7 +196,7 @@ function sendProof(res, proof) {
     "Content-Disposition",
     `inline; filename="${String(proof.fileName).replace(/"/g, "")}"`
   );
-  return res.status(200).send(proof.bytes);
+  return res.status(200).send(Buffer.from(proof.bytes));
 }
 
 exports.getPaymentProof = async (req, res) => {

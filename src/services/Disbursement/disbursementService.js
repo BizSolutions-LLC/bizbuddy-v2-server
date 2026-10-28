@@ -124,6 +124,15 @@ function serializeRecipient(recipient) {
     currency: recipient.currency,
     payoutProviderAccountId: recipient.payoutProviderAccountId,
     payoutProvider: recipient.employee?.payrollDetails?.payoutProvider || null,
+    payoutDelivery:
+      ["CHECK", "CASH", "OTHER"].includes(recipient.paymentMethod) ||
+      (!recipient.paymentMethod && recipient.employee?.payrollDetails?.payoutDelivery === "manual")
+        ? "manual"
+        : "automatic",
+    payoutAccountLinked: Boolean(
+      recipient.employee?.payrollDetails?.payoutAccountLinked ||
+      (recipient.employee?.payrollDetails?.payoutProvider && recipient.employee?.payrollDetails?.payoutProviderAccountId),
+    ),
     status: recipient.status,
     providerTransactionId: recipient.providerTransactionId,
     failureReason: recipient.failureReason,
@@ -163,15 +172,10 @@ function serializeAudit(event) {
   };
 }
 
-async function writeAudit(tx, {
-  actorUserId,
-  action,
-  batchId,
-  recipientId = null,
-  previousState = null,
-  newState = null,
-  metadata = null,
-}) {
+async function writeAudit(
+  tx,
+  { actorUserId, action, batchId, recipientId = null, previousState = null, newState = null, metadata = null },
+) {
   return tx.disbursementAuditEvent.create({
     data: {
       actorUserId,
@@ -220,10 +224,10 @@ function createDisbursementService({ prisma, provider } = {}) {
       select: { id: true, status: true },
     });
     if (existing) {
-      throw new DisbursementError(
-        "An active disbursement batch already exists for this payroll run.",
-        { status: 409, code: "DUPLICATE_DISBURSEMENT" }
-      );
+      throw new DisbursementError("An active disbursement batch already exists for this payroll run.", {
+        status: 409,
+        code: "DUPLICATE_DISBURSEMENT",
+      });
     }
   }
 
@@ -234,7 +238,12 @@ function createDisbursementService({ prisma, provider } = {}) {
       include: {
         profile: true,
         payrollDetails: {
-          select: { payoutProvider: true, payoutProviderAccountId: true },
+          select: {
+            payoutProvider: true,
+            payoutProviderAccountId: true,
+            payoutDelivery: true,
+            payoutAccountLinked: true,
+          },
         },
       },
     });
@@ -249,10 +258,10 @@ function createDisbursementService({ prisma, provider } = {}) {
       });
     }
     if (!run.locked || run.status !== ELIGIBLE_PAYROLL_STATUS) {
-      throw new DisbursementError(
-        "Payroll must be locked and finalized before creating a disbursement batch.",
-        { status: 409, code: "PAYROLL_NOT_FINALIZED" }
-      );
+      throw new DisbursementError("Payroll must be locked and finalized before creating a disbursement batch.", {
+        status: 409,
+        code: "PAYROLL_NOT_FINALIZED",
+      });
     }
     const employees = extractSnapshotEmployees(run.payrollSnapshot);
     if (!employees.length) {
@@ -270,7 +279,8 @@ function createDisbursementService({ prisma, provider } = {}) {
       employeeId: planRecipient.employeeId,
       amount: planRecipient.amount,
       currency: planRecipient.currency,
-      payoutProviderAccountId: planRecipient.payoutProviderAccountId,
+      payoutProviderAccountId: null,
+      paymentMethod: planRecipient.paymentMethod || null,
       status: planRecipient.status,
       issues: planRecipient.issues,
     };
@@ -310,10 +320,10 @@ function createDisbursementService({ prisma, provider } = {}) {
   function assertNoBlockingRecipients(recipients) {
     const blocked = recipients.filter((r) => r.status === RECIPIENT_STATUSES.BLOCKED);
     if (blocked.length) {
-      throw new DisbursementError(
-        `Cannot proceed: ${blocked.length} recipient(s) have blocking errors.`,
-        { status: 409, code: "BLOCKING_RECIPIENTS" }
-      );
+      throw new DisbursementError(`Cannot proceed: ${blocked.length} recipient(s) have blocking errors.`, {
+        status: 409,
+        code: "BLOCKING_RECIPIENTS",
+      });
     }
   }
 
@@ -323,6 +333,11 @@ function createDisbursementService({ prisma, provider } = {}) {
 
   function isUnpaidPayableRecipient(recipient) {
     return isPayableRecipient(recipient) && recipient.status !== RECIPIENT_STATUSES.PAID;
+  }
+
+  function recipientIsManual(recipient) {
+    if (["CHECK", "CASH", "OTHER"].includes(recipient.paymentMethod)) return true;
+    return recipient.employee?.payrollDetails?.payoutDelivery === "manual";
   }
 
   function recipientPaymentProofData({ method, actorUserId, file, now }) {
@@ -373,9 +388,7 @@ function createDisbursementService({ prisma, provider } = {}) {
     const snapshotEmployees = assertPayrollEligible(run);
     const previous = await loadPreviousPayrollRun(tx, batch.companyId, run);
     const previousNets = previousNetMap(previous?.payrollSnapshot);
-    const employeeIds = snapshotEmployees
-      .map((emp) => emp.employeeId || emp.id)
-      .filter(Boolean);
+    const employeeIds = snapshotEmployees.map((emp) => emp.employeeId || emp.id).filter(Boolean);
     const usersById = await loadUsersById(tx, batch.companyId, employeeIds);
     const plan = buildRecipientPlan({
       snapshotEmployees,
@@ -392,22 +405,20 @@ function createDisbursementService({ prisma, provider } = {}) {
     for (const planned of plan.recipients) {
       const row = storedByEmployee.get(planned.employeeId);
       if (!row) {
-        throw new DisbursementError(
-          "Disbursement recipients no longer match the finalized payroll snapshot.",
-          { status: 409, code: "RECIPIENT_MISMATCH" }
-        );
+        throw new DisbursementError("Disbursement recipients no longer match the finalized payroll snapshot.", {
+          status: 409,
+          code: "RECIPIENT_MISMATCH",
+        });
       }
       if (roundMoney(toNumber(row.amount)) !== planned.amount) {
-        throw new DisbursementError(
-          "Stored recipient amounts do not match the finalized payroll snapshot.",
-          { status: 409, code: "AMOUNT_MISMATCH" }
-        );
+        throw new DisbursementError("Stored recipient amounts do not match the finalized payroll snapshot.", {
+          status: 409,
+          code: "AMOUNT_MISMATCH",
+        });
       }
     }
 
-    const recomputedTotal = roundMoney(
-      stored.reduce((sum, row) => sum + toNumber(row.amount), 0)
-    );
+    const recomputedTotal = roundMoney(stored.reduce((sum, row) => sum + toNumber(row.amount), 0));
     return { plan, stored, recomputedTotal };
   }
 
@@ -430,19 +441,23 @@ function createDisbursementService({ prisma, provider } = {}) {
           isSystemAgent: false, // BB-110: B. Buddy is never paid
           OR: [
             { payrollDetails: null },
-            { payrollDetails: { payoutProviderAccountId: null } },
+            {
+              AND: [
+                { payrollDetails: { payoutDelivery: "automatic" } },
+                { payrollDetails: { payoutAccountLinked: false } },
+                {
+                  OR: [{ payrollDetails: { payoutProvider: null } }, { payrollDetails: { payoutProviderAccountId: null } }],
+                },
+              ],
+            },
           ],
         },
       }),
     ]);
 
-    const activeRunIds = new Set(
-      batches.filter((b) => isActiveBatchStatus(b.status)).map((b) => b.payrollRunId)
-    );
+    const activeRunIds = new Set(batches.filter((b) => isActiveBatchStatus(b.status)).map((b) => b.payrollRunId));
     const readyRuns = eligibleRuns.filter((run) => !activeRunIds.has(run.id));
-    const totalPayrollReady = roundMoney(
-      readyRuns.reduce((sum, run) => sum + toNumber(run.totalNet), 0)
-    );
+    const totalPayrollReady = roundMoney(readyRuns.reduce((sum, run) => sum + toNumber(run.totalNet), 0));
 
     const countByStatus = batches.reduce((acc, batch) => {
       acc[batch.status] = (acc[batch.status] || 0) + 1;
@@ -456,9 +471,7 @@ function createDisbursementService({ prisma, provider } = {}) {
       batchesAwaitingApproval: countByStatus[BATCH_STATUSES.READY_FOR_REVIEW] || 0,
       batchesReadyForSubmission: countByStatus[BATCH_STATUSES.READY_FOR_DISBURSEMENT] || 0,
       completedBatches: countByStatus[BATCH_STATUSES.COMPLETED] || 0,
-      failedOrExceptionBatches:
-        (countByStatus[BATCH_STATUSES.FAILED] || 0) +
-        (countByStatus[BATCH_STATUSES.NEEDS_REVIEW] || 0),
+      failedOrExceptionBatches: (countByStatus[BATCH_STATUSES.FAILED] || 0) + (countByStatus[BATCH_STATUSES.NEEDS_REVIEW] || 0),
       currency: "USD",
     };
   }
@@ -499,7 +512,12 @@ function createDisbursementService({ prisma, provider } = {}) {
             include: {
               profile: true,
               payrollDetails: {
-                select: { payoutProvider: true, payoutProviderAccountId: true },
+                select: {
+                  payoutProvider: true,
+                  payoutProviderAccountId: true,
+                  payoutDelivery: true,
+                  payoutAccountLinked: true,
+                },
               },
             },
           },
@@ -515,12 +533,8 @@ function createDisbursementService({ prisma, provider } = {}) {
     ]);
 
     const serializedRecipients = recipients.map(serializeRecipient);
-    const blockingIssues = serializedRecipients.flatMap((r) =>
-      (r.issues || []).filter((i) => i.severity === "BLOCKING")
-    );
-    const warningIssues = serializedRecipients.flatMap((r) =>
-      (r.issues || []).filter((i) => i.severity === "WARNING")
-    );
+    const blockingIssues = serializedRecipients.flatMap((r) => (r.issues || []).filter((i) => i.severity === "BLOCKING"));
+    const warningIssues = serializedRecipients.flatMap((r) => (r.issues || []).filter((i) => i.severity === "WARNING"));
 
     return serializeBatch(batch, {
       recipients: serializedRecipients,
@@ -531,9 +545,7 @@ function createDisbursementService({ prisma, provider } = {}) {
       provider: {
         name: paymentProvider.name || "unconfigured",
         connected: paymentProvider.name !== "unconfigured",
-        message: paymentProvider.name === "unconfigured"
-          ? "Payment provider is not connected. Transfers are disabled."
-          : null,
+        message: paymentProvider.name === "unconfigured" ? "Payment provider is not connected. Transfers are disabled." : null,
       },
     });
   }
@@ -552,9 +564,7 @@ function createDisbursementService({ prisma, provider } = {}) {
 
         const previous = await loadPreviousPayrollRun(tx, companyId, run);
         const previousNets = previousNetMap(previous?.payrollSnapshot);
-        const employeeIds = [...new Set(
-          snapshotEmployees.map((emp) => emp.employeeId || emp.id).filter(Boolean)
-        )];
+        const employeeIds = [...new Set(snapshotEmployees.map((emp) => emp.employeeId || emp.id).filter(Boolean))];
         const usersById = await loadUsersById(tx, companyId, employeeIds);
         const plan = buildRecipientPlan({
           snapshotEmployees,
@@ -589,9 +599,9 @@ function createDisbursementService({ prisma, provider } = {}) {
               payrollPeriodEnd: run.periodEnd,
             },
             recipients: {
-              create: plan.recipients.map((recipient) =>
-                recipientCreateData(undefined, recipient)
-              ).map(({ batchId, ...rest }) => rest),
+              create: plan.recipients
+                .map((recipient) => recipientCreateData(undefined, recipient))
+                .map(({ batchId, ...rest }) => rest),
             },
           },
           include: batchInclude,
@@ -619,10 +629,10 @@ function createDisbursementService({ prisma, provider } = {}) {
       });
     } catch (error) {
       if (error.code === "P2002") {
-        throw new DisbursementError(
-          "An active disbursement batch already exists for this payroll run.",
-          { status: 409, code: "DUPLICATE_DISBURSEMENT" }
-        );
+        throw new DisbursementError("An active disbursement batch already exists for this payroll run.", {
+          status: 409,
+          code: "DUPLICATE_DISBURSEMENT",
+        });
       }
       throw error;
     }
@@ -641,10 +651,10 @@ function createDisbursementService({ prisma, provider } = {}) {
 
       const { stored, recomputedTotal, plan } = await revalidateBatch(tx, batch);
       if (plan.hasBlockingErrors) {
-        throw new DisbursementError(
-          `Cannot proceed: ${plan.blockingIssues.length} blocking error(s) remain on this batch.`,
-          { status: 409, code: "BLOCKING_RECIPIENTS" }
-        );
+        throw new DisbursementError(`Cannot proceed: ${plan.blockingIssues.length} blocking error(s) remain on this batch.`, {
+          status: 409,
+          code: "BLOCKING_RECIPIENTS",
+        });
       }
       assertNoBlockingRecipients(plan.recipients);
       assertNoBlockingRecipients(stored);
@@ -738,14 +748,27 @@ function createDisbursementService({ prisma, provider } = {}) {
     });
     assertNoBlockingRecipients(recipients);
 
+    const manualMissingProof = recipients.filter(
+      (recipient) =>
+        ["CHECK", "CASH", "OTHER"].includes(recipient.paymentMethod) &&
+        (recipient.status !== RECIPIENT_STATUSES.PAID || !recipient.paymentProofBytes),
+    );
+    if (manualMissingProof.length) {
+      throw new DisbursementError("Mark check, cash, and other payments as sent with proof before submitting payouts.", {
+        status: 422,
+        code: "MANUAL_PAYMENT_PROOF_REQUIRED",
+      });
+    }
+
+    let providerResult = null;
     try {
-      await paymentProvider.submitDisbursement({
+      providerResult = await paymentProvider.submitDisbursement({
         batch,
         recipients,
         idempotencyKey: batch.idempotencyKey,
       });
     } catch (error) {
-      if (error instanceof DisbursementError && error.code === "PROVIDER_NOT_CONFIGURED") {
+      if (error instanceof DisbursementError && (error.code === "PROVIDER_NOT_CONFIGURED" || error.status < 500)) {
         throw error;
       }
       await db.disbursementBatch.update({
@@ -770,23 +793,33 @@ function createDisbursementService({ prisma, provider } = {}) {
       });
     }
 
-    assertTransition(batch.status, BATCH_STATUSES.PROCESSING, "submit");
+    const returnedStatus = ["PROCESSING", "COMPLETED", "FAILED", "NEEDS_REVIEW"].includes(providerResult?.status)
+      ? providerResult.status
+      : BATCH_STATUSES.PROCESSING;
+    const now = new Date();
 
     const submitted = await db.disbursementBatch.update({
       where: { id: batch.id },
       data: {
-        status: BATCH_STATUSES.PROCESSING,
-        submittedAt: new Date(),
+        status: returnedStatus,
+        submittedAt: batch.submittedAt || now,
+        ...(returnedStatus === BATCH_STATUSES.COMPLETED ? { completedAt: now } : {}),
+        ...(returnedStatus === BATCH_STATUSES.FAILED
+          ? {
+              failureCode: providerResult?.failure_code || "PROVIDER_ERROR",
+              failureMessage: providerResult?.failure_message || providerResult?.detail || "Disbursement submission failed.",
+            }
+          : {}),
       },
       include: batchInclude,
     });
 
     await writeAudit(db, {
       actorUserId,
-      action: AUDIT_ACTIONS.BATCH_SUBMITTED,
+      action: returnedStatus === BATCH_STATUSES.COMPLETED ? AUDIT_ACTIONS.BATCH_COMPLETED : AUDIT_ACTIONS.BATCH_SUBMITTED,
       batchId: batch.id,
       previousState: batch.status,
-      newState: BATCH_STATUSES.PROCESSING,
+      newState: returnedStatus,
     });
 
     return serializeBatch(submitted);
@@ -806,21 +839,44 @@ function createDisbursementService({ prisma, provider } = {}) {
 
       const recipients = await tx.disbursementRecipient.findMany({
         where: { batchId: batch.id },
+        include: { employee: { include: { payrollDetails: true } } },
       });
       assertNoBlockingRecipients(recipients);
 
       const now = new Date();
-      const remaining = recipients.filter(isUnpaidPayableRecipient);
+      const remaining = recipients.filter(
+        (recipient) => recipientIsManual(recipient) && isUnpaidPayableRecipient(recipient)
+      );
+      if (!remaining.length) {
+        throw new DisbursementError("No employees are set to manual payment.", {
+          status: 409,
+          code: "NO_MANUAL_RECIPIENTS",
+        });
+      }
       const proofData = recipientPaymentProofData({ method, actorUserId, file, now });
 
-      if (remaining.length) {
-        await tx.disbursementRecipient.updateMany({
-          where: {
-            batchId: batch.id,
-            status: { notIn: [RECIPIENT_STATUSES.BLOCKED, RECIPIENT_STATUSES.PAID] },
+      await Promise.all(remaining.map((recipient) => tx.disbursementRecipient.update({
+        where: { id: recipient.id },
+        data: proofData,
+      })));
+
+      const after = await tx.disbursementRecipient.findMany({ where: { batchId: batch.id } });
+      if (after.some(isUnpaidPayableRecipient)) {
+        await writeAudit(tx, {
+          actorUserId,
+          action: AUDIT_ACTIONS.RECIPIENT_STATUS_CHANGED,
+          batchId: batch.id,
+          previousState: batch.status,
+          newState: batch.status,
+          metadata: {
+            paymentMethod: method,
+            fileName: file.originalname || "payment-proof",
+            recordedManually: true,
+            remainingRecipientCount: remaining.length,
           },
-          data: proofData,
         });
+        const current = await getBatchForCompany(tx, companyId, batch.id);
+        return serializeBatch(current);
       }
 
       const completed = await tx.disbursementBatch.update({
@@ -857,15 +913,7 @@ function createDisbursementService({ prisma, provider } = {}) {
     });
   }
 
-  async function markRecipientPaymentSent({
-    companyId,
-    actorUserId,
-    role,
-    batchId,
-    recipientId,
-    paymentMethod,
-    file,
-  }) {
+  async function markRecipientPaymentSent({ companyId, actorUserId, role, batchId, recipientId, paymentMethod, file }) {
     const method = assertValidPaymentMethod(paymentMethod);
     assertValidPaymentProof(file);
 
@@ -886,10 +934,10 @@ function createDisbursementService({ prisma, provider } = {}) {
         });
       }
       if (recipient.status === RECIPIENT_STATUSES.BLOCKED) {
-        throw new DisbursementError(
-          "This recipient has blocking errors and cannot be marked as paid.",
-          { status: 409, code: "RECIPIENT_BLOCKED" }
-        );
+        throw new DisbursementError("This recipient has blocking errors and cannot be marked as paid.", {
+          status: 409,
+          code: "RECIPIENT_BLOCKED",
+        });
       }
       if (recipient.status === RECIPIENT_STATUSES.PAID) {
         throw new DisbursementError("This employee has already been marked as paid.", {
@@ -999,10 +1047,10 @@ function createDisbursementService({ prisma, provider } = {}) {
     assertCanCreate(role);
     const batch = await getBatchForCompany(db, companyId, batchId);
     if (!canModifyAmounts(batch.status)) {
-      throw new DisbursementError(
-        "Recipient amounts cannot be modified after the batch leaves draft.",
-        { status: 409, code: "AMOUNTS_IMMUTABLE" }
-      );
+      throw new DisbursementError("Recipient amounts cannot be modified after the batch leaves draft.", {
+        status: 409,
+        code: "AMOUNTS_IMMUTABLE",
+      });
     }
     const nextAmount = roundMoney(amount);
     if (!(nextAmount > 0)) {

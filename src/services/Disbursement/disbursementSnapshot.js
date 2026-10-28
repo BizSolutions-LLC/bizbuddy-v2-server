@@ -98,14 +98,17 @@ function buildRecipientPlan({
       return;
     }
 
-    const payoutProviderAccountId = user?.payrollDetails?.payoutProviderAccountId || null;
-    const payoutProvider = user?.payrollDetails?.payoutProvider || null;
+    const payoutDelivery = user?.payrollDetails?.payoutDelivery === "manual" ? "manual" : "automatic";
+    const payoutAccountLinked = Boolean(
+      user?.payrollDetails?.payoutAccountLinked ||
+      (user?.payrollDetails?.payoutProvider && user?.payrollDetails?.payoutProviderAccountId)
+    );
 
-    if (!payoutProviderAccountId || !payoutProvider) {
+    if (payoutDelivery === "automatic" && !payoutAccountLinked) {
       issues.push({
         severity: "WARNING",
         code: "MISSING_PAYOUT_SETUP",
-        message: "Employee has no payout provider account configured.",
+        message: "Employee has not connected a payout account.",
       });
     }
 
@@ -136,8 +139,9 @@ function buildRecipientPlan({
       employeeName: emp.employeeName || employeeDisplayName(user),
       amount,
       currency,
-      payoutProviderAccountId,
-      payoutProvider,
+      payoutProviderAccountId: null,
+      payoutDelivery,
+      paymentMethod: payoutDelivery === "manual" ? "OTHER" : null,
       status,
       issues,
     };
