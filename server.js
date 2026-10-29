@@ -60,6 +60,7 @@ connect()
     const { scheduleClockInReminders }  = require("@workers/clockInReminderWorker");
     const { initializeCronJobs }        = require("@utils/cronScheduler");
     const { startCapacitySampler }      = require("@services/Analytics/capacityService");
+    const { startReportJob }            = require("@services/Analytics/capacityReportService");
 
     initSocket(server);
     initFirebase();
@@ -68,6 +69,7 @@ connect()
     scheduleClockInReminders();
     initializeCronJobs();
     const capacitySampling = startCapacitySampler(); // BB-112: on Render (or CAPACITY_SAMPLING=true)
+    const performanceReports = startReportJob(); // BB-113: same condition
 
     server.listen(PORT, () => {
       const firebaseOk = isFirebaseReady();
@@ -98,6 +100,7 @@ connect()
       console.log(`  ✓  Morning reports             10:00 AM daily`);
       console.log(`  ✓  Evening reports             6:00 PM daily`);
       console.log(`  ${capacitySampling ? "✓" : "–"}  Capacity samples            ${capacitySampling ? "every 5 min" : "off (not on Render)"}`);
+      console.log(`  ${performanceReports ? "✓" : "–"}  Performance reports         ${performanceReports ? "every 30 days (checked daily)" : "off (not on Render)"}`);
       console.log(`\n  started    ${new Date().toISOString()}`);
       console.log(`└${line}┘\n`);
     });

@@ -37,6 +37,12 @@ router.get("/server/health", verifySystemAdmin, insights.getServerHealth);
 // BB-112: Capacity (server / database / API hotspots gauges, read-only)
 router.get("/capacity", verifySystemAdmin, insights.getCapacity);
 router.get("/capacity/history", verifySystemAdmin, insights.getCapacityHistory);
+// BB-113: Performance reports — Baseline + 30-day periods (saved snapshots + PDF)
+router.get("/capacity/reports", verifySystemAdmin, insights.listCapacityReports);
+router.post("/capacity/reports/baseline", verifySystemAdmin, insights.saveCapacityBaseline);
+router.post("/capacity/reports/current", verifySystemAdmin, insights.saveCurrentCapacityPeriod);
+router.post("/capacity/reports/periods/:number", verifySystemAdmin, insights.saveCapacityPeriod);
+router.get("/capacity/reports/:number/pdf", verifySystemAdmin, insights.downloadCapacityReport);
 
 // BB-110: read-only database overview
 router.use("/database", require("@routes/Analytics/databaseOverviewRoutes"));
