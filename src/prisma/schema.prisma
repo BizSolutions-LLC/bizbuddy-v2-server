@@ -1941,3 +1941,23 @@ model ServerMetricSample {
 
   @@index([createdAt])
 }
+
+// BB-113: frozen Performance report snapshots, the source of the PDFs. Number 0 is
+// the Baseline: the 30 days before production's DATABASE_URL moved to Render's
+// Internal URL. Periods 1, 2, 3… are consecutive 30-day windows from the Baseline's
+// end. ServerMetricSample keeps only 35 days, so these rows are the lasting record
+// of each window's numbers and of the plans in effect.
+model CapacityReport {
+  id            String   @id @default(cuid())
+  number        Int      @unique // 0 = baseline, then 1, 2, 3…
+  kind          String   // "baseline" | "period"
+  periodStart   DateTime @db.Timestamptz(6)
+  periodEnd     DateTime @db.Timestamptz(6) // exclusive; earlier than plannedEnd while isPartial
+  plannedEnd    DateTime @db.Timestamptz(6) // periodStart + 30 days
+  isPartial     Boolean  @default(false) // window still running when saved
+  data          Json     // gauges, verdicts, plans, thresholds, daily series
+  generatedById String?  // SystemAdmin id; null = the scheduled job
+  generatedBy   String?  // name at the time, for the PDF
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+}
