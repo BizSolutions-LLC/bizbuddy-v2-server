@@ -1,4 +1,5 @@
 // src/controllers/Features/leaveBalanceController.js
+const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { leaveVisibilityWhere } = require("@utils/leaveUtils");
@@ -294,6 +295,39 @@ const getTransactions = async (req, res) => {
         }
       : null;
 
+  // BB-116: a ledger row is dated when the action happened (e.g. approval), which
+  // says nothing about which days the leave covers. Attach the leave's own dates
+  // and approver. LeaveTransaction.leaveId has no Prisma relation, so batch-load.
+  const leaveIds = [...new Set(transactions.map((t) => t.leaveId).filter(Boolean))];
+  const personSelect = { id: true, email: true, profile: { select: { firstName: true, lastName: true } } };
+  const [leaves, company] = await Promise.all([
+    leaveIds.length
+      ? prisma.leave.findMany({
+          where:  { id: { in: leaveIds } },
+          select: {
+            id: true, startDate: true, endDate: true, status: true,
+            approver:  { select: personSelect },
+            decidedBy: { select: personSelect },
+          },
+        })
+      : [],
+    prisma.company.findUnique({ where: { id: companyId }, select: { timeZone: true } }),
+  ]);
+  const companyTz = company?.timeZone || "America/Los_Angeles";
+  const leaveMap = new Map(
+    leaves.map((l) => [
+      l.id,
+      {
+        id:        l.id,
+        startDate: moment.tz(l.startDate, companyTz).format("YYYY-MM-DD"),
+        endDate:   moment.tz(l.endDate,   companyTz).format("YYYY-MM-DD"),
+        status:    l.status,
+        approver:  _formatPerson(l.approver),
+        decidedBy: _formatPerson(l.decidedBy),
+      },
+    ])
+  );
+
   const data = transactions.map((t) => ({
     ...t,
     hours:         t.hours         != null ? Number(t.hours)         : null,
@@ -301,6 +335,7 @@ const getTransactions = async (req, res) => {
     balanceAfter:  t.balanceAfter  != null ? Number(t.balanceAfter)  : null,
     user:        _formatPerson(t.user),
     performedBy: _formatPerson(t.performedBy),
+    leave:       t.leaveId ? (leaveMap.get(t.leaveId) ?? null) : null,
   }));
 
   res.json({ data, pagination: { total, limit, offset, hasMore: offset + limit < total } });

@@ -1163,10 +1163,18 @@ const getCutoffApprovals = async (req, res) => {
     const userWhere = { companyId };
     if (cutoffPeriod.departmentId) userWhere.departmentId = cutoffPeriod.departmentId;
 
+    // BB-116: periodEnd is UTC midnight of the last calendar day, but leave dates are
+    // stored as noon in the company timezone — comparing raw timestamps dropped every
+    // leave starting on the period's last day. Extend to end-of-day in company tz,
+    // same as syncApprovalRecords.
+    const periodStartStr = new Date(cutoffPeriod.periodStart).toISOString().slice(0, 10);
+    const periodEndStr   = new Date(cutoffPeriod.periodEnd).toISOString().slice(0, 10);
+    const periodEndEOD   = moment.tz(periodEndStr, companyTimezone).endOf("day").toDate();
+
     const leaveRecords = await prisma.leave.findMany({
       where: {
         status:    { in: ["approved", "pending"] },
-        startDate: { lte: cutoffPeriod.periodEnd   },
+        startDate: { lte: periodEndEOD },
         endDate:   { gte: cutoffPeriod.periodStart },
         User:      userWhere,
       },
@@ -1402,10 +1410,8 @@ const getCutoffApprovals = async (req, res) => {
             const dateStr = cursor.format("YYYY-MM-DD");
             const key = `${leave.userId}__${dateStr}`;
             // Only add if this day is within cutoff AND no punch exists
-            const cursorDate = cursor.toDate();
-            const inCutoff =
-              cursorDate >= cutoffPeriod.periodStart &&
-              cursorDate <= cutoffPeriod.periodEnd;
+            // BB-116: compare calendar-date strings — independent of server timezone.
+            const inCutoff = dateStr >= periodStartStr && dateStr <= periodEndStr;
             if (inCutoff && !punchUserDates.has(key)) {
               // Legacy fallback: leaves approved before LeaveDay existed have no rows here —
               // fall back to leave.isPaid deciding full scheduled hours vs. 0, so we don't
