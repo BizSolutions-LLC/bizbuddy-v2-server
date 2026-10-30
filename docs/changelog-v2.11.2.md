@@ -63,9 +63,18 @@ The leaves are loaded in one batched query, because `LeaveTransaction.leaveId` h
   `-BB-098`, `-BB-098-reports`, `-BB-102`, `-BB-103`, `-BB-104`, `client-update-BB-098-complete`,
   `-BB-108-followup` and `-BB-112-BB-113`.
 
-## Not covered
+## Checked — `/api/payroll/runs` (no change)
 
-- `payrollController.js:202` compares leave dates the same way. It has not been checked yet.
+`payrollController.computeEntryForUser` (`payrollController.js:202`) compares leave dates the same way.
+- **Date check:** it widens the period end to 23:59 with `setHours`. On a UTC server, last-day leaves are
+  included, but the result depends on the server's timezone.
+- **Leave pay:** it is a rough estimate. Every calendar day counts as `defaultShiftHours`, and it ignores
+  `LeaveDay`, unpaid leave and weekends.
+- **Usage:** `scripts/check-bb116-payroll-runs-usage.js` (read-only) found **0 calls** to
+  `/api/payroll/runs` in `RequestLog` from 2026-01-27 to 2026-10-30 (~928k rows). The only other
+  `/api/payroll/*` call was `GET /api/payroll/my`: 4 calls, last on 2026-06-23.
+- **Conclusion:** unused, so no pay was affected. Left as is. Retiring these routes could be a separate
+  ticket. Check the mobile apps for `/payroll/my` first.
 
 ## Deploy order
 
