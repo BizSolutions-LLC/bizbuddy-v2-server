@@ -196,6 +196,8 @@ bizbuddy-v2-server/
 | `/system-admin/capacity/reports` (+ `/baseline`, `/current`, `/periods/:number`, `/:number/pdf`) | `Analytics/systemAdminRoutes.js` → `insightsController` | Performance reports: a Baseline (30 days before the Internal-URL switch) then consecutive 30-day periods, each frozen in `CapacityReport` (job saves finished periods + manual), PDF via `utils/generateCapacityReportPDF.js`, logo `src/assets/bizbuddy-logo.png` (BB-113, `services/Analytics/capacityReportService.js`) |
 | `/test` | `testRoutes.js` | Dev/test endpoints |
 
+**System-admin caching (BB-114):** the heavy read-only system-admin aggregates (`activity/*` 15 min, `security/signals` 2 min, `overview` / `performance` / `errors` / `users` / `companies` / `trends` / `security` / `capacity` / `capacity/history` 1 min) are served through `utils/ttlCache.js` — in-memory, shared by all system admins, concurrent identical requests share one query, errors never cached. Responses add `cache: { hit, cachedAt, expiresAt }` + `X-Cache`; `?refresh=1` reloads (ignored if the copy is < 30 s old). Live views (`server/*`, `requests`, `logger-health`, `capacity/reports`, B. Buddy) are not cached. Client contract: `docs/client-update-BB-114.md`.
+
 ---
 
 ## Authentication

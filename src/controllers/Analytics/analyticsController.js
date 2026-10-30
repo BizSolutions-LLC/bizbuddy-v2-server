@@ -2,146 +2,83 @@
 
 const analyticsService = require("@services/Analytics/analyticsService");
 const { getLoggerStats } = require("@middlewares/requestLogger");
+const { cachedHandler, MINUTE } = require("@utils/ttlCache");
 
+// BB-114: the aggregate endpoints below are served from a shared 1-minute
+// cache (adds `cache: { hit, cachedAt, expiresAt }`; ?refresh=1 forces a
+// reload). Raw request logs and logger health stay live.
 class AnalyticsController {
   /**
    * GET /api/analytics/system/overview
    * Dashboard overview statistics
    */
-  async getOverview(req, res, next) {
-    try {
-      const { timeRange = "24h" } = req.query;
-
-      const overview = await analyticsService.getOverview(timeRange);
-
-      res.status(200).json({
-        success: true,
-        data: overview,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+  getOverview = cachedHandler("system.overview", MINUTE, (req) => {
+    const { timeRange = "24h" } = req.query;
+    return analyticsService.getOverview(timeRange);
+  });
 
   /**
    * GET /api/analytics/system/performance
    * Performance metrics by endpoint
    */
-  async getPerformance(req, res, next) {
-    try {
-      const { limit = 20, timeRange = "24h" } = req.query;
+  getPerformance = cachedHandler("system.performance", MINUTE, async (req) => {
+    const { limit = 20, timeRange = "24h" } = req.query;
 
-      const [metrics, slowest] = await Promise.all([
-        analyticsService.getPerformanceMetrics(parseInt(limit), timeRange),
-        analyticsService.getSlowestEndpoints(10, timeRange),
-      ]);
+    const [metrics, slowest] = await Promise.all([
+      analyticsService.getPerformanceMetrics(parseInt(limit), timeRange),
+      analyticsService.getSlowestEndpoints(10, timeRange),
+    ]);
 
-      res.status(200).json({
-        success: true,
-        data: {
-          endpoints: metrics,
-          slowestEndpoints: slowest,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+    return {
+      endpoints: metrics,
+      slowestEndpoints: slowest,
+    };
+  });
 
   /**
    * GET /api/analytics/system/errors
    * Error tracking and analysis
    */
-  async getErrors(req, res, next) {
-    try {
-      const { timeRange = "24h" } = req.query;
-
-      const errorStats = await analyticsService.getErrorStats(timeRange);
-
-      res.status(200).json({
-        success: true,
-        data: errorStats,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+  getErrors = cachedHandler("system.errors", MINUTE, (req) => {
+    const { timeRange = "24h" } = req.query;
+    return analyticsService.getErrorStats(timeRange);
+  });
 
   /**
    * GET /api/analytics/system/users
    * User activity metrics (API usage)
    */
-  async getUserActivity(req, res, next) {
-    try {
-      const { limit = 20, timeRange = "24h" } = req.query;
-
-      const userActivity = await analyticsService.getUserActivity(parseInt(limit), timeRange);
-
-      res.status(200).json({
-        success: true,
-        data: userActivity,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+  getUserActivity = cachedHandler("system.users", MINUTE, (req) => {
+    const { limit = 20, timeRange = "24h" } = req.query;
+    return analyticsService.getUserActivity(parseInt(limit), timeRange);
+  });
 
   /**
    * GET /api/analytics/system/companies
    * Company-level metrics (API usage)
    */
-  async getCompanyMetrics(req, res, next) {
-    try {
-      const { limit = 20, timeRange = "24h" } = req.query;
-
-      const companyMetrics = await analyticsService.getCompanyMetrics(parseInt(limit), timeRange);
-
-      res.status(200).json({
-        success: true,
-        data: companyMetrics,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+  getCompanyMetrics = cachedHandler("system.companies", MINUTE, (req) => {
+    const { limit = 20, timeRange = "24h" } = req.query;
+    return analyticsService.getCompanyMetrics(parseInt(limit), timeRange);
+  });
 
   /**
    * GET /api/analytics/system/trends
    * Hourly trends
    */
-  async getTrends(req, res, next) {
-    try {
-      const { timeRange = "24h" } = req.query;
-
-      const trends = await analyticsService.getHourlyTrends(timeRange);
-
-      res.status(200).json({
-        success: true,
-        data: trends,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+  getTrends = cachedHandler("system.trends", MINUTE, (req) => {
+    const { timeRange = "24h" } = req.query;
+    return analyticsService.getHourlyTrends(timeRange);
+  });
 
   /**
    * GET /api/analytics/system/security
    * Security monitoring and alerts
    */
-  async getSecurityAlerts(req, res, next) {
-    try {
-      const { timeRange = "24h" } = req.query;
-
-      const alerts = await analyticsService.getSecurityAlerts(timeRange);
-
-      res.status(200).json({
-        success: true,
-        data: alerts,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+  getSecurityAlerts = cachedHandler("system.security", MINUTE, (req) => {
+    const { timeRange = "24h" } = req.query;
+    return analyticsService.getSecurityAlerts(timeRange);
+  });
 
   /**
    * GET /api/analytics/system/requests
