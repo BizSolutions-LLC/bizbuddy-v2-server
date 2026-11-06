@@ -696,4 +696,22 @@ async function buildLeaveReport(actor, query) {
   };
 }
 
-module.exports = { buildLeaveReport, ReportError, REPORT_TYPES };
+module.exports = {
+  buildLeaveReport,
+  ReportError,
+  REPORT_TYPES,
+  // BB-106: shared with leaveTemplateReportService.js
+  BALANCE_TYPES,
+  DEFAULT_TZ,
+  r2,
+  num,
+  parseList,
+  parseBool,
+  startOf,
+  endOf,
+  localYmd,
+  calYmd,
+  resolveScope,
+  balancesAt,
+  bucketOf,
+};
