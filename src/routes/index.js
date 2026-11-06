@@ -48,6 +48,7 @@ const payrollExportRoutes = require("@routes/Payroll/payrollExportRoutes");
 const disbursementRoutes = require("@routes/Disbursement/disbursementRoutes");
 const yearlyTotalHoursReportRoutes = require("@routes/Reports/yearlyTotalHoursReportRoutes");
 const leaveReportRoutes = require("@routes/Reports/leaveReportRoutes");
+const setupGuideRoutes = require("@routes/Company/setupGuideRoutes");
 
 const testRoutes = require("@routes/testRoutes");
 
@@ -73,6 +74,7 @@ router.use("/leave-policies", leavePolicyRoutes);
 router.use("/leave-balances", leaveBalanceRoutes);
 router.use("/overtime", overtimeRoutes);
 router.use("/company-settings", companySettingsRoutes);
+router.use("/company-setup", setupGuideRoutes); // BB-115
 router.use("/employment-details", employmentDetailRoutes);
 router.use("/account-deletion", accountDeletionRoutes);
 router.use("/conflicts", conflictRoutes);
