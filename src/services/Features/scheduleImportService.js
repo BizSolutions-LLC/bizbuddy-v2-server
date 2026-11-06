@@ -19,6 +19,7 @@
 // `rows` contract) stay below until the new client ships.
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const moment = require("moment-timezone");
 const { hasTimeOverlap } = require("@controllers/Features/shiftAssignmentController");
 const {
@@ -34,6 +35,19 @@ const {
   normalizeDate,
   IDENTIFIER_COLUMNS,
 } = require("@utils/csvScheduleParser");
+const {
+  ImportError,
+  USER_SELECT,
+  teamWhere,
+  inTeam,
+  dayNum,
+  ymdOf,
+  splitIds,
+  displayName,
+  loadActor,
+  parseDateRange,
+  resolveTargetEmployees,
+} = require("@services/Features/importTargets");
 
 const MODES = ["time_blocks", "shifts"];
 const MAX_RANGE_DAYS = 14;
@@ -42,18 +56,12 @@ const MAX_ITEMS = 4000; // several shifts per row are allowed
 const LEGACY_MAX_ROWS = 300;
 const DAY_MINUTES = 24 * 60;
 
-class ScheduleImportError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
+// Shared with Import Punch Logs (BB-108); kept under its old name for the controller.
+const ScheduleImportError = ImportError;
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
 const pad2 = (n) => String(n).padStart(2, "0");
-const dayNum = (ymd) => Date.parse(`${ymd}T00:00:00Z`) / 86400000;
-const ymdOf = (n) => new Date(n * 86400000).toISOString().slice(0, 10);
 const dateColStr = (d) => new Date(d).toISOString().slice(0, 10);
 const toMinutes = (hhmm) => {
   const [h, m] = hhmm.split(":").map(Number);
@@ -64,11 +72,6 @@ const timeColToHHMM = (d) => {
   return `${pad2(x.getUTCHours())}:${pad2(x.getUTCMinutes())}`;
 };
 const crossesMidnightOf = (startTime, endTime) => toMinutes(endTime) <= toMinutes(startTime);
-const splitIds = (v) =>
-  (Array.isArray(v) ? v.join(",") : v || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
 
 // Absolute [start, end) in minutes for a shift on `ymd`; an overnight shift spills
 // into the next date.
@@ -98,41 +101,11 @@ function defaultShiftName(startTime, endTime) {
   return `${formatDisplayTime(startTime)} – ${formatDisplayTime(endTime)}`;
 }
 
-const USER_SELECT = {
-  id: true,
-  employeeId: true,
-  email: true,
-  status: true,
-  departmentId: true,
-  profile: { select: { firstName: true, lastName: true } },
-};
-
-// "Last, First", falling back to the email.
-function displayName(u) {
-  const first = u.profile?.firstName?.trim() || "";
-  const last = u.profile?.lastName?.trim() || "";
-  if (first && last) return `${last}, ${first}`;
-  return first || last || u.email;
-}
-
 const employeeOut = (u) => ({
   userId: u.id,
   email: u.email,
   name: displayName(u),
 });
-
-// The uploader, with their department loaded from the DB — req.user only carries
-// id/email/role/companyId. Supervisors are limited to their own department.
-async function loadActor({ companyId, actingUserId, actingRole }) {
-  const u = await prisma.user.findUnique({ where: { id: actingUserId }, select: { departmentId: true } });
-  return {
-    id: actingUserId,
-    companyId,
-    role: actingRole,
-    departmentId: u?.departmentId ?? null,
-    scoped: actingRole === "supervisor",
-  };
-}
 
 async function loadCompanyTimezone(companyId) {
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timeZone: true } });
@@ -145,20 +118,7 @@ function parseMode(raw) {
 }
 
 // Inclusive date range, at most MAX_RANGE_DAYS days.
-function parseRange(startRaw, endRaw) {
-  const startDate = normalizeDate(startRaw);
-  const endDate = normalizeDate(endRaw);
-  if (!startDate || !endDate) throw new ScheduleImportError(400, "startDate and endDate are required (YYYY-MM-DD).");
-  const days = dayNum(endDate) - dayNum(startDate) + 1;
-  if (days < 1) throw new ScheduleImportError(400, "endDate must be on or after startDate.");
-  if (days > MAX_RANGE_DAYS)
-    throw new ScheduleImportError(400, `The date range can be at most ${MAX_RANGE_DAYS} days (got ${days}).`);
-  return {
-    startDate,
-    endDate,
-    dates: Array.from({ length: days }, (_, i) => ymdOf(dayNum(startDate) + i)),
-  };
-}
+const parseRange = (startRaw, endRaw) => parseDateRange(startRaw, endRaw, MAX_RANGE_DAYS);
 
 // The picked shifts, in the order given. Company shifts only.
 async function loadShiftPool(companyId, shiftIds) {
@@ -187,33 +147,6 @@ function poolShiftOut(s) {
   };
 }
 
-// Template target: all employees in scope, one department, or specific people.
-// Active employees only.
-async function resolveTargetEmployees(actor, { userIds, departmentId }) {
-  if (actor.scoped) {
-    if (!actor.departmentId) throw new ScheduleImportError(403, "You aren't assigned to a department.");
-    if (departmentId && departmentId !== actor.departmentId)
-      throw new ScheduleImportError(403, "You can only upload schedules for your own department.");
-  } else if (departmentId) {
-    const dept = await prisma.department.findFirst({ where: { id: departmentId, companyId: actor.companyId }, select: { id: true } });
-    if (!dept) throw new ScheduleImportError(403, "Department not found in your company.");
-  }
-
-  const deptFilter = actor.scoped ? actor.departmentId : departmentId;
-  const users = await prisma.user.findMany({
-    where: {
-      companyId: actor.companyId,
-      status: "active",
-      ...(deptFilter ? { departmentId: deptFilter } : {}),
-      ...(userIds.length ? { id: { in: userIds } } : {}),
-    },
-    select: USER_SELECT,
-  });
-  if (userIds.length && users.length !== new Set(userIds).size)
-    throw new ScheduleImportError(403, "One or more employees are inactive or outside your scope.");
-
-  return users.sort((a, b) => displayName(a).localeCompare(displayName(b)));
-}
 
 // ── Replace rules ───────────────────────────────────────────────────────────
 
@@ -356,10 +289,11 @@ async function buildScheduleTemplate({ companyId, actingUserId, actingRole, quer
   mode = parseMode(mode);
   const range = parseRange(startDate, endDate);
   const pool = mode === "shifts" ? await loadShiftPool(companyId, splitIds(query.shiftIds)) : [];
-  const employees = await resolveTargetEmployees(actor, {
-    userIds: splitIds(query.userIds),
-    departmentId: query.departmentId || null,
-  });
+  const employees = await resolveTargetEmployees(
+    actor,
+    { userIds: splitIds(query.userIds), departmentId: query.departmentId || null },
+    { action: "upload schedules" }
+  );
 
   const rowCount = employees.length * range.dates.length;
   if (rowCount > MAX_ROWS)
@@ -425,6 +359,7 @@ async function previewSchedule({ buffer, companyId, actingUserId, actingRole, bo
   }
   const users = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
       OR: [{ employeeId: { in: [...identifiers] } }, { email: { in: [...identifiers] } }],
     },
@@ -506,8 +441,8 @@ async function previewSchedule({ buffer, companyId, actingUserId, actingRole, bo
     }
     const user = lookupUser(data);
     const fallbackEmployee = { userId: null, email: identifier, name: data.name || null };
-    if (!user || (actor.scoped && user.departmentId !== actor.departmentId)) {
-      rowError(actor.scoped ? "Employee not found in your department." : "Employee not found in this company.", fallbackEmployee, date);
+    if (!user || !inTeam(actor, user)) {
+      rowError(actor.scoped ? "Employee not found in your team." : "Employee not found in this company.", fallbackEmployee, date);
       continue;
     }
     if (user.status !== "active") {
@@ -651,7 +586,7 @@ async function confirmSchedule({ companyId, actingUserId, actingRole, body }) {
 
   const tz = await loadCompanyTimezone(companyId);
   const userIds = [...new Set(work.map((w) => w.item.employee?.userId).filter(Boolean))];
-  const users = await prisma.user.findMany({ where: { id: { in: userIds }, companyId }, select: USER_SELECT });
+  const users = await prisma.user.findMany({ where: { ...HUMAN_ONLY, id: { in: userIds }, companyId }, select: USER_SELECT });
   const userById = new Map(users.map((u) => [u.id, u]));
 
   const companyShifts =
@@ -682,8 +617,8 @@ async function confirmSchedule({ companyId, actingUserId, actingRole, body }) {
     const fail = (reason) => failed.push({ key: item.key, reason });
 
     const user = userById.get(item.employee?.userId);
-    if (!user || (actor.scoped && user.departmentId !== actor.departmentId)) {
-      fail(actor.scoped ? "Employee not found in your department." : "Employee not found in this company.");
+    if (!user || !inTeam(actor, user)) {
+      fail(actor.scoped ? "Employee not found in your team." : "Employee not found in this company.");
       continue;
     }
     if (user.status !== "active") {
@@ -920,7 +855,7 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
   }
 
   const actor = await loadActor({ companyId, actingUserId, actingRole });
-  const isScopedToDepartment = actor.scoped;
+  const isScopedToTeam = actor.scoped;
 
   const identifiers = new Set();
   for (const { data } of rows) {
@@ -930,9 +865,9 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
 
   const users = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
-      ...(isScopedToDepartment ? { departmentId: actor.departmentId } : {}),
-      OR: [{ employeeId: { in: [...identifiers] } }, { email: { in: [...identifiers] } }],
+      AND: [teamWhere(actor), { OR: [{ employeeId: { in: [...identifiers] } }, { email: { in: [...identifiers] } }] }],
     },
     select: USER_SELECT,
   });
@@ -963,7 +898,7 @@ async function previewScheduleImport({ buffer, companyId, actingUserId, actingRo
         (data.email && byEmail.get(data.email.trim().toLowerCase()));
       if (!user) {
         throw new Error(
-          isScopedToDepartment ? "Employee not found in your department." : "Employee not found in this company."
+          isScopedToTeam ? "Employee not found in your team." : "Employee not found in this company."
         );
       }
       if (user.status !== "active") throw new Error("Employee is inactive.");
@@ -1038,8 +973,8 @@ async function commitScheduleImport({ companyId, actingUserId, actingRole, rows 
 
   const userIds = [...new Set(candidates.map((r) => r.userId))];
   const users = await prisma.user.findMany({
-    where: { id: { in: userIds }, companyId, status: "active" },
-    select: { id: true, departmentId: true, employeeId: true, email: true },
+    where: { ...HUMAN_ONLY, id: { in: userIds }, companyId, status: "active" },
+    select: { id: true, departmentId: true, employeeId: true, email: true, employmentDetail: { select: { supervisorId: true } } },
   });
   const userById = new Map(users.map((u) => [u.id, u]));
 
@@ -1050,8 +985,8 @@ async function commitScheduleImport({ companyId, actingUserId, actingRole, rows 
       failed.push({ row: row.row, employeeId: row.employeeId, date: row.date, reason: "Employee not found in this company." });
       continue;
     }
-    if (actor.scoped && user.departmentId !== actor.departmentId) {
-      failed.push({ row: row.row, employeeId: row.employeeId, date: row.date, reason: "Employee not found in your department." });
+    if (!inTeam(actor, user)) {
+      failed.push({ row: row.row, employeeId: row.employeeId, date: row.date, reason: "Employee not found in your team." });
       continue;
     }
 

@@ -1,6 +1,7 @@
 // src/controllers/Features/leaveController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { calcDailyHours, calcRequestedHours, leaveVisibilityWhere } = require("@utils/leaveUtils");
 const { previewLeaveApproval, applyLeaveApproval } = require("@services/Leave/leaveApprovalService");
 const { isTracked, fyLabel, dateColStr } = require("@services/Leave/leaveCreditService");
@@ -197,6 +198,7 @@ const submitLeaveRequest = async (req, res) => {
 
   const approver = await prisma.user.findFirst({
     where: {
+      ...HUMAN_ONLY,
       id: approverId,
       companyId: req.user.companyId,
       OR: approverRoleConditions,
@@ -332,7 +334,7 @@ const submitLeaveRequest = async (req, res) => {
     const endDateStr   = toDateStr;
 
     const managementUsers = await prisma.user.findMany({
-      where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
+      where:  { ...HUMAN_ONLY, companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
       select: { id: true, role: true, departmentId: true },
     });
     // Same pool as _isEligibleApprover — admins/superadmins company-wide, the
@@ -428,6 +430,7 @@ const approveLeave = async (req, res) => {
 
     const secondaryApprover = await prisma.user.findFirst({
       where: {
+        ...HUMAN_ONLY,
         id:        escalateTo,
         companyId: req.user.companyId,
         role:      { in: ["admin", "supervisor", "superadmin"] },
@@ -469,7 +472,7 @@ const approveLeave = async (req, res) => {
       // else (any admin/superadmin, or any supervisor in the requester's department,
       // can act on a pending_secondary request, not just the person it was escalated to).
       const managementUsers = await prisma.user.findMany({
-        where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
+        where:  { ...HUMAN_ONLY, companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
         select: { id: true, role: true, departmentId: true },
       });
       const eligibleManagementUsers = managementUsers.filter((m) =>
@@ -675,7 +678,7 @@ const cancelLeave = async (req, res) => {
     const endDateStr   = new Date(leave.endDate).toLocaleDateString();
 
     const managementUsers = await prisma.user.findMany({
-      where:  { companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
+      where:  { ...HUMAN_ONLY, companyId: req.user.companyId, role: { in: ["admin", "superadmin", "supervisor"] }, status: "active" },
       select: { id: true, role: true, departmentId: true },
     });
     // Same eligible pool as submit's notification — admins/superadmins

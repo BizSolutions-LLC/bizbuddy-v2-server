@@ -22,7 +22,8 @@ async function processClockInReminders() {
 
   // Fetch candidate user shifts with users (for deviceToken)
   const todaysUserShifts = await prisma.userShift.findMany({
-    where: { assignedDate: { gte: windowStart, lte: windowEnd } },
+    // BB-107: no reminders for inactive accounts
+    where: { assignedDate: { gte: windowStart, lte: windowEnd }, user: { status: "active" } },
     include: {
       shift: { select: { startTime: true, timeZone: true, companyId: true } },
       user: { select: { id: true, deviceToken: true } },

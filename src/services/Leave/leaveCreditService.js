@@ -27,6 +27,7 @@
 // with toISOString().slice(0, 10), never through moment.tz().
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const moment = require("moment-timezone");
 const { createNotification } = require("@services/notificationService");
 
@@ -453,7 +454,7 @@ async function eligiblePairs(db, companyId) {
       select: { id: true, leaveType: true, assignedToAll: true, assignments: { select: { userId: true } } },
     }),
     db.user.findMany({
-      where:  { companyId, status: "active" },
+      where:  { ...HUMAN_ONLY, companyId, status: "active" },
       select: { id: true, hireDate: true },
     }),
   ]);
@@ -627,7 +628,7 @@ async function buildSetupPreview(company, settings, { expirationEnabled }) {
 
   // Regularization status of every active employee.
   const employees = await prisma.user.findMany({
-    where:  { companyId: c.id, status: "active" },
+    where:  { ...HUMAN_ONLY, companyId: c.id, status: "active" },
     select: { id: true, email: true, hireDate: true, profile: { select: { firstName: true, lastName: true } } },
   });
   const missingHireDate = [];

@@ -1,5 +1,6 @@
 // src/controllers/Account/companyController.js
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 const currentSubSelect = {
   take: 1,
@@ -211,7 +212,7 @@ const deleteCompany = async (req, res) => {
 const getCompanyUserCount = async (req, res) => {
   try {
     const companyId = req.params.id;
-    const count = await prisma.user.count({ where: { companyId } });
+    const count = await prisma.user.count({ where: { ...HUMAN_ONLY, companyId } });
     return res.status(200).json({ data: { companyId, userCount: count } });
   } catch (error) {
     console.error("Error in getCompanyUserCount:", error);

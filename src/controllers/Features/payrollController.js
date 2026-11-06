@@ -1,4 +1,5 @@
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 function toDate(value) {
   const d = new Date(value);
@@ -772,7 +773,7 @@ const calculatePayrollForUser = async (req, res) => {
       await computeEntryForUser({ run, userId: String(userId) });
     } else {
       const users = await prisma.user.findMany({
-        where: { companyId, status: "active" },
+        where: { ...HUMAN_ONLY, companyId, status: "active" },
         select: { id: true },
       });
       for (const u of users) {

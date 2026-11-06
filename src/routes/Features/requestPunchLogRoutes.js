@@ -4,6 +4,7 @@ const express = require("express");
 const router = express.Router();
 const { authorizeRoles } = require("@middlewares/roleMiddleware");
 const authenticate = require("@middlewares/authMiddleware");
+const { blockSystemAgent } = require("@utils/systemAgent");
 const {
   submitRequestPunchLog,
   checkConflict,
@@ -18,6 +19,7 @@ const {
 router.post(
   "/check-conflict",
   authenticate,
+  blockSystemAgent,
   authorizeRoles("employee", "admin", "supervisor", "superadmin"),
   checkConflict
 );
@@ -25,6 +27,7 @@ router.post(
 router.post(
   "/submit",
   authenticate,
+  blockSystemAgent,
   authorizeRoles("employee", "admin", "supervisor", "superadmin"),
   submitRequestPunchLog
 );
@@ -32,6 +35,7 @@ router.post(
 router.get(
   "/my-requests",
   authenticate,
+  blockSystemAgent,
   authorizeRoles("employee", "admin", "supervisor", "superadmin"),
   viewMyRequestedPunchLogs
 );

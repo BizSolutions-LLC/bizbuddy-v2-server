@@ -10,6 +10,7 @@
 // taken on behalf of the company, and the field is non-nullable in the schema.
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 // Generate the next period this many days before the current one ends.
 const LOOKAHEAD_DAYS = 3;
@@ -36,7 +37,7 @@ async function autoGenerateCutoffPeriodsJob() {
   // Batch-fetch one admin per company to satisfy the non-nullable createdBy relation.
   const companyIds = [...new Set(allSettings.map((s) => s.companyId))];
   const admins = await prisma.user.findMany({
-    where:    { companyId: { in: companyIds }, role: { in: ["admin", "superadmin"] } },
+    where:    { ...HUMAN_ONLY, companyId: { in: companyIds }, role: { in: ["admin", "superadmin"] } },
     select:   { id: true, companyId: true },
     distinct: ["companyId"],
   });

@@ -1,6 +1,7 @@
 // src/controllers/Features/shiftScheduleController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { format } = require("date-fns");
 const {
   notifyEmployeeScheduleCreated,
@@ -142,18 +143,18 @@ const createShiftSchedule = async (req, res) => {
     let targetUsers = [];
     if (assignmentType === 'all') {
       targetUsers = await prisma.user.findMany({
-        where: { companyId, status: 'active' },
+        where: { ...HUMAN_ONLY, companyId, status: 'active' },
         select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } },
       });
     } else if (assignmentType === 'department') {
       targetUsers = await prisma.user.findMany({
-        where: { companyId, departmentId: targetId, status: 'active' },
+        where: { ...HUMAN_ONLY, companyId, departmentId: targetId, status: 'active' },
         select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } },
       });
     } else {
       const normalizedIds = targetIds ?? [targetId];
       targetUsers = await prisma.user.findMany({
-        where: { id: { in: normalizedIds }, companyId },
+        where: { ...HUMAN_ONLY, id: { in: normalizedIds }, companyId },
         select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } },
       });
       if (targetUsers.length !== normalizedIds.length) {
@@ -685,17 +686,17 @@ const updateShiftSchedule = async (req, res) => {
       let targetUsers = [];
       if (finalAssignmentType === 'all') {
         targetUsers = await prisma.user.findMany({
-          where: { companyId, status: 'active' },
+          where: { ...HUMAN_ONLY, companyId, status: 'active' },
           select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } },
         });
       } else if (finalAssignmentType === 'department') {
         targetUsers = await prisma.user.findMany({
-          where: { companyId, departmentId: finalTargetId, status: 'active' },
+          where: { ...HUMAN_ONLY, companyId, departmentId: finalTargetId, status: 'active' },
           select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } },
         });
       } else {
         const user = await prisma.user.findFirst({
-          where: { id: finalTargetId, companyId },
+          where: { ...HUMAN_ONLY, id: finalTargetId, companyId },
           select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } },
         });
         if (!user) {

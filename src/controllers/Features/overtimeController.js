@@ -1,6 +1,7 @@
 // src/controllers/Features/overtimeController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { createNotification } = require("@services/notificationService");
 const moment = require("moment-timezone");
 
@@ -192,6 +193,7 @@ const submitOvertime = async (req, res) => {
     // Validate approver
     const approver = await prisma.user.findFirst({
       where: {
+        ...HUMAN_ONLY,
         id: approverId,
         companyId: req.user.companyId,
         role: { in: ["admin", "supervisor", "superadmin"] },
@@ -298,7 +300,7 @@ const submitOvertime = async (req, res) => {
         : newOT.requester?.email || 'An employee';
       const otDate = new Date(newOT.timeLog.timeIn).toLocaleDateString();
       const managementUsers = await prisma.user.findMany({
-        where: { companyId: req.user.companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
+        where: { ...HUMAN_ONLY, companyId: req.user.companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
         select: { id: true, departmentId: true },
       });
       await Promise.all(managementUsers.map(manager =>

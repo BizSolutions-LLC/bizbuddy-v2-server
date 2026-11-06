@@ -2,3 +2,14 @@ node_modules
 .env
 *.log
 scripts/output/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Data exports from one-off scripts (real payroll / employee data) — keep locally, never commit
+scripts/backup-*.json
+scripts/old-*.json
+scripts/restore-*.json
+scripts/all-run1.json
+scripts/*.csv

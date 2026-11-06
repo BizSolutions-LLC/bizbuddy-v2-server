@@ -1,4 +1,5 @@
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { getMessaging } = require("@config/firebase");
 const { sendEmail } = require("./emailService");
 const { notifyUser, notifyManagement } = require("./socketService");
@@ -31,6 +32,14 @@ async function createNotification({
   payload = {},
 }) {
   try {
+    // BB-107: inactive (or deleted) accounts receive nothing — no in-app entry,
+    // no socket event, no push.
+    const recipient = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { status: true, deviceToken: true },
+    });
+    if (!recipient || recipient.status !== "active") return null;
+
     const [prefixedTitle, prefixedMessage] = await Promise.all([
       prefixWithCompanyName(companyId, title),
       prefixWithCompanyName(companyId, message),
@@ -63,10 +72,7 @@ async function createNotification({
     const messaging = getMessaging();
     if (messaging) {
       try {
-        const { deviceToken } = await prisma.user.findUnique({
-          where: { id: userId },
-          select: { deviceToken: true },
-        });
+        const { deviceToken } = recipient;
         if (deviceToken) {
           await messaging.send({
             token: deviceToken,
@@ -104,6 +110,17 @@ async function sendEmailNotification({
   metadata = {},
 }) {
   try {
+    // BB-107: never email an inactive (or deleted) account.
+    if (recipientUserId) {
+      const recipient = await prisma.user.findUnique({
+        where: { id: recipientUserId },
+        select: { status: true },
+      });
+      if (!recipient || recipient.status !== "active") {
+        return { success: false, skipped: true, reason: "Recipient account is not active." };
+      }
+    }
+
     // Send email
     const result = await sendEmail({
       to,
@@ -239,6 +256,7 @@ async function sendMorningReport(
 
   const managementUsers = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
       role: { in: ["admin", "superadmin", "supervisor"] },
       status: "active",
@@ -323,6 +341,7 @@ async function sendEveningReport(
   // Get management users
   const managementUsers = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
       role: { in: ["admin", "superadmin", "supervisor"] },
       status: "active",

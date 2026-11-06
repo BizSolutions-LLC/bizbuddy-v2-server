@@ -1,6 +1,7 @@
 // src/controllers/Account/departmentController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 const createDepartment = async (req, res) => {
   try {
@@ -376,7 +377,7 @@ const assignUsersToDepartment = async (req, res) => {
       return res.status(400).json({ error: "A non-empty array of user IDs is required." });
     }
     const validUsers = await prisma.user.findMany({
-      where: { id: { in: userIds }, companyId, role: { not: "superadmin" } },
+      where: { ...HUMAN_ONLY, id: { in: userIds }, companyId, role: { not: "superadmin" } },
       select: { id: true },
     });
     const validUserIds = validUsers.map((user) => user.id);
@@ -416,7 +417,7 @@ const removeUsersFromDepartment = async (req, res) => {
       return res.status(400).json({ error: "A non-empty array of user IDs is required." });
     }
     const assignedUsers = await prisma.user.findMany({
-      where: { id: { in: userIds }, departmentId, companyId },
+      where: { ...HUMAN_ONLY, id: { in: userIds }, departmentId, companyId },
       select: { id: true },
     });
     const assignedUserIds = assignedUsers.map((user) => user.id);
@@ -451,7 +452,7 @@ const getUsersInDepartment = async (req, res) => {
       return res.status(404).json({ error: "Department not found." });
     }
     const users = await prisma.user.findMany({
-      where: { departmentId, companyId },
+      where: { ...HUMAN_ONLY, departmentId, companyId },
       select: { id: true, firstName: true, lastName: true, email: true },
       orderBy: { id: "asc" },
     });
@@ -482,7 +483,7 @@ const getFixedHoursMembers = async (req, res) => {
     }
 
     const users = await prisma.user.findMany({
-      where: { departmentId, companyId, status: { not: "deleted" } },
+      where: { ...HUMAN_ONLY, departmentId, companyId, status: { not: "deleted" } },
       select: {
         id: true,
         email: true,
@@ -545,7 +546,7 @@ const updateFixedHoursMembers = async (req, res) => {
 
     const uniqueIds = [...new Set(userIds)];
     const users = await prisma.user.findMany({
-      where: { id: { in: uniqueIds }, departmentId, companyId },
+      where: { ...HUMAN_ONLY, id: { in: uniqueIds }, departmentId, companyId },
       select: { id: true },
     });
     if (users.length !== uniqueIds.length) {

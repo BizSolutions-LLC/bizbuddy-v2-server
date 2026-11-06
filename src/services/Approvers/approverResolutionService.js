@@ -1,5 +1,6 @@
 // src/services/Approvers/approverResolutionService.js
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 const displayName = (profile, fallback) =>
   profile ? `${profile.firstName || ""} ${profile.lastName || ""}`.trim() || fallback : fallback;
@@ -10,6 +11,7 @@ const displayName = (profile, fallback) =>
 async function getEligibleApprovers({ id: userId, companyId }) {
   const approvers = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
       NOT: { id: userId },
       role: { in: ["admin", "superadmin"] },
@@ -62,7 +64,7 @@ async function getDirectSupervisors({ id: userId, companyId }) {
   }
 
   const companyAdmins = await prisma.user.findMany({
-    where: { companyId, role: { in: ["admin", "superadmin"] }, status: "active" },
+    where: { ...HUMAN_ONLY, companyId, role: { in: ["admin", "superadmin"] }, status: "active" },
     select: {
       id: true, email: true, role: true,
       profile: { select: { firstName: true, lastName: true } },

@@ -56,6 +56,12 @@ function readMark(raw) {
 
 class CsvShapeError extends Error {}
 
+// BB-108: template guide rows start with "#" in their first cell and never become
+// preview items. Matched on the marker rather than position, so sorting the sheet
+// doesn't break it.
+const GUIDE_MARKER = "# GUIDE - not imported";
+const isGuideRow = (data) => String(Object.values(data)[0] ?? "").trim().startsWith("#");
+
 // Dates in a pre-filled template are often re-saved by Excel as M/D/YYYY, so both
 // forms are accepted. Returns "YYYY-MM-DD" or null.
 function normalizeDate(raw) {
@@ -138,11 +144,13 @@ function parseScheduleCsv(buffer, { mode = "time_blocks", shiftHeaders = [] } = 
       );
     }
     const sourceColumns = shiftHeaders.map((h) => byNormalized.get(normalizeHeader(h)));
-    return records.map((data, i) => ({
-      rowNumber: i + 2,
-      data,
-      marks: sourceColumns.map((c) => readMark(data[c])),
-    }));
+    return withoutGuideRows(
+      records.map((data, i) => ({
+        rowNumber: i + 2,
+        data,
+        marks: sourceColumns.map((c) => readMark(data[c])),
+      }))
+    );
   }
 
   const missingBlocks = BLOCK_COLUMNS.filter((c) => !columns.includes(c));
@@ -154,7 +162,14 @@ function parseScheduleCsv(buffer, { mode = "time_blocks", shiftHeaders = [] } = 
 
   // rowNumber is 1-indexed counting the header as row 1, so the first data row is 2 —
   // same convention as the punch-log importer's failed[] entries.
-  return records.map((data, i) => ({ rowNumber: i + 2, data }));
+  return withoutGuideRows(records.map((data, i) => ({ rowNumber: i + 2, data })));
+}
+
+// Drops guide rows after numbering, so the rest keep their real line numbers.
+function withoutGuideRows(rows) {
+  const kept = rows.filter((r) => !isGuideRow(r.data));
+  if (kept.length === 0) throw new CsvShapeError("CSV file has no data rows.");
+  return kept;
 }
 
 // Converts one contiguous run of block indices into a { startTime, endTime,
@@ -225,7 +240,8 @@ function csvCell(value) {
 }
 
 /**
- * Builds the pre-filled CSV template (BB-103): one row per employee × date, sorted by
+ * Builds the pre-filled CSV template (BB-103): a guide row (BB-108, never imported),
+ * then one row per employee × date, sorted by
  * employee (the caller passes them sorted) then date, with every marking cell blank.
  *   employees: [{ email, name }] — rows match on email; name is for reading only
  *   dates:     ["YYYY-MM-DD", ...]
@@ -236,8 +252,15 @@ function buildTemplateCsv({ mode, employees, dates, shiftHeaders = [] }) {
   const markColumns = mode === "shifts" ? shiftHeaders : BLOCK_COLUMNS;
   const header = [TEMPLATE_IDENTIFIER, NAME_COLUMN, DATE_COLUMN, ...markColumns].map(csvCell).join(",");
   const blanks = markColumns.map(() => "");
+  // Guide row (never imported): one example mark under the first slot.
+  const guide = [
+    GUIDE_MARKER,
+    "Mark x (or 1 / yes) under each slot to schedule",
+    "YYYY-MM-DD",
+    ...markColumns.map((_, i) => (i === 0 ? "x" : "")),
+  ];
 
-  const lines = [header];
+  const lines = [header, guide.map(csvCell).join(",")];
   for (const e of employees) {
     for (const date of dates) {
       lines.push([csvCell(e.email), csvCell(e.name), date, ...blanks].join(","));

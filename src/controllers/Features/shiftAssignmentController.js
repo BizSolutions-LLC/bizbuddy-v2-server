@@ -1,6 +1,7 @@
 // src/controllers/Features/shiftAssignmentController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const {
     notifyEmployeeShiftAssigned,
     notifyManagementShiftAssignment,
@@ -121,6 +122,7 @@ const assignShifts = async (req, res) => {
     // Verify users belong to company
     const users = await prisma.user.findMany({
       where: {
+        ...HUMAN_ONLY,
         id: { in: userIds },
         companyId,
         status: "active",
@@ -280,7 +282,7 @@ const bulkAssignShifts = async (req, res) => {
     let users;
     if (assignmentType === "all") {
       users = await prisma.user.findMany({
-        where: { companyId, status: "active" },
+        where: { ...HUMAN_ONLY, companyId, status: "active" },
         select: {
           id: true,
           email: true,
@@ -291,6 +293,7 @@ const bulkAssignShifts = async (req, res) => {
       // Department
       users = await prisma.user.findMany({
         where: {
+          ...HUMAN_ONLY,
           companyId,
           departmentId,
           status: "active",

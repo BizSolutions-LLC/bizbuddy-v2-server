@@ -1,6 +1,7 @@
 // src/controllers/Features/adminAnalyticsController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { differenceInHours, parseISO, startOfDay, endOfDay, addDays } = require("date-fns");
 
 function shiftDurationHours(shift) {
@@ -274,6 +275,7 @@ exports.getAdminAnalyticsDashboard = async (req, res) => {
       // Active employees with department info
       prisma.user.findMany({
         where: { 
+          ...HUMAN_ONLY,
           companyId,
           status: 'active',
         },

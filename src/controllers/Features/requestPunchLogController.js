@@ -1,6 +1,7 @@
 // src/controllers/Features/requestPunchLogController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { createNotification } = require("@services/notificationService");
 const moment = require("moment-timezone");
 const { resolvePunchType, applyTrainingFlatHours, VALID_PUNCH_TYPES, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
@@ -273,7 +274,7 @@ const submitRequestPunchLog = async (req, res) => {
         : newRequest.user?.email || 'An employee';
       const dateStr = new Date(requestedDate).toLocaleDateString();
       const managementUsers = await prisma.user.findMany({
-        where: { companyId: req.user.companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
+        where: { ...HUMAN_ONLY, companyId: req.user.companyId, role: { in: ['admin', 'superadmin', 'supervisor'] }, status: 'active' },
         select: { id: true, departmentId: true },
       });
       await Promise.all(managementUsers.map(manager =>

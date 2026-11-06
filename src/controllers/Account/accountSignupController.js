@@ -3,7 +3,8 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { prisma } = require("@config/connection");
-const { JWT_SECRET } = require("@config/env");
+const { JWT_SECRET, BBUDDY_EMAIL, BBUDDY_PASSWORD_HASH } = require("@config/env");
+const { createSystemAgentForCompany } = require("@services/systemAgentService");
 const { sendMail } = require("@utils/mailer");
 const { renderWelcome } = require("@emails/renderTemplate");
 const { getDirectSupervisors } = require("@services/Approvers/approverResolutionService");
@@ -115,6 +116,12 @@ const signUp = async (req, res) => {
       await tx.user.update({
         where: { id: newUser.id },
         data: { companyId: newCompany.id },
+      });
+
+      // BB-110: B. Buddy support account
+      await createSystemAgentForCompany(tx, newCompany.id, {
+        email: BBUDDY_EMAIL,
+        passwordHash: BBUDDY_PASSWORD_HASH,
       });
 
       if (!JWT_SECRET) throw new Error("JWT secret is not configured.");

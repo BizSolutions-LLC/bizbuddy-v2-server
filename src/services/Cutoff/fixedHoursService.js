@@ -23,6 +23,7 @@
 
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 const FIXED_HOURS_NOTE = "Fixed-hours department (BB-089) — not counted for pay";
 const OFF_DAY_NOTE     = "Off-day work (BB-089) — paid as OT if approved";
@@ -92,6 +93,7 @@ function n(v) {
 async function getFixedHoursMembers(cutoffPeriod) {
   const users = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId: cutoffPeriod.companyId,
       status:    "active",
       fixedHoursEnabled: true,

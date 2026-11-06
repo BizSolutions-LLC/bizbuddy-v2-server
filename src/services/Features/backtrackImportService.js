@@ -19,6 +19,7 @@
 
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const {
   findOverlappingLog,
   createTimeLogFromRequest,
@@ -31,6 +32,7 @@ const {
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 const { parseBacktrackPunchLogCsv } = require("@utils/csvBacktrackPunchLogParser");
 const { synthesizeDaySegments } = require("@utils/backtrackSegmentSynthesis");
+const { teamWhere, inTeam } = require("@services/Features/importTargets");
 
 // Expressed in employee×day units (each can expand into up to 2 TimeLog
 // records for a triple-segment day) rather than raw CSV rows, since one CSV
@@ -146,7 +148,7 @@ function resolveDayShiftWindows({ userId, dateStr, tz, userShiftsByUserDate, cat
 
 // ── Shared context (company + users + shift catalog + assignments) ─────────
 
-async function loadCompanyContext({ companyId, actingRole, actingDepartmentId, dates }) {
+async function loadCompanyContext({ companyId, actingUserId, actingRole, actingDepartmentId, dates }) {
   const company = await prisma.company.findUnique({
     where: { id: companyId },
     select: { timeZone: true, gracePeriodMinutes: true },
@@ -154,11 +156,15 @@ async function loadCompanyContext({ companyId, actingRole, actingDepartmentId, d
   const tz = company?.timeZone || "America/Los_Angeles";
   const graceMinutes = company?.gracePeriodMinutes ?? 15;
 
-  const isScopedToDepartment = actingRole === "supervisor";
+  // BB-108: a supervisor matches against their team (own department or direct
+  // reports, as GET /employee/team), active people only — the same people commit accepts.
+  const actor = { id: actingUserId, departmentId: actingDepartmentId || null, scoped: actingRole === "supervisor" };
   const users = await prisma.user.findMany({
     where: {
+      ...HUMAN_ONLY,
       companyId,
-      ...(isScopedToDepartment ? { departmentId: actingDepartmentId } : {}),
+      status: "active",
+      ...teamWhere(actor),
     },
     select: {
       id: true,
@@ -260,7 +266,7 @@ async function findCoveringOpenCutoffPeriod({ companyId, actingRole, actingDepar
  *     status: "ready"|"conflict"|"error"|"unresolved-employee"|"informational",
  *     reason, records, warnings }
  */
-async function previewBacktrackImport({ buffer, companyId, cutoffPeriodId, actingRole, actingDepartmentId }) {
+async function previewBacktrackImport({ buffer, companyId, cutoffPeriodId, actingUserId, actingRole, actingDepartmentId }) {
   if (BNC_COMPANY_IDS.has(companyId)) {
     const err = new Error("Backtrack import is not available for this company.");
     err.isRowCapError = true;
@@ -308,7 +314,7 @@ async function previewBacktrackImport({ buffer, companyId, cutoffPeriodId, actin
   }
 
   const { tz, graceMinutes, candidateUsers, catalogShiftMap, userShiftsByUserDate } =
-    await loadCompanyContext({ companyId, actingRole, actingDepartmentId, dates: [...allDates] });
+    await loadCompanyContext({ companyId, actingUserId, actingRole, actingDepartmentId, dates: [...allDates] });
 
   const entries = [];
 
@@ -419,16 +425,16 @@ async function commitBacktrackImport({ companyId, actingUserId, actingRole, acti
   const candidateUserIds = [...new Set(
     entries.map((e) => e.userId || e.employeeMatch?.userId).filter(Boolean)
   )];
-  const isScopedToDepartment = actingRole === "supervisor";
+  const actor = { id: actingUserId, departmentId: actingDepartmentId || null, scoped: actingRole === "supervisor" };
   const users = await prisma.user.findMany({
-    where: { id: { in: candidateUserIds }, companyId, status: "active" },
-    select: { id: true, departmentId: true },
+    where: { ...HUMAN_ONLY, id: { in: candidateUserIds }, companyId, status: "active" },
+    select: { id: true, departmentId: true, employmentDetail: { select: { supervisorId: true } } },
   });
   const userById = new Map(users.map((u) => [u.id, u]));
 
   const dates = [...new Set(entries.map((e) => e.date).filter(Boolean))];
   const { tz, graceMinutes, catalogShiftMap, userShiftsByUserDate } = await loadCompanyContext({
-    companyId, actingRole, actingDepartmentId, dates: dates.length > 0 ? dates : [moment().format("YYYY-MM-DD")],
+    companyId, actingUserId, actingRole, actingDepartmentId, dates: dates.length > 0 ? dates : [moment().format("YYYY-MM-DD")],
   });
 
   const created = [];
@@ -445,8 +451,8 @@ async function commitBacktrackImport({ companyId, actingUserId, actingRole, acti
       if (!userId) throw new Error("No employee assigned to this row.");
       const user = userById.get(userId);
       if (!user) throw new Error("Employee not found in this company.");
-      if (isScopedToDepartment && user.departmentId !== actingDepartmentId) {
-        throw new Error("Employee not found in your department.");
+      if (!inTeam(actor, user)) {
+        throw new Error("Employee not found in your team.");
       }
       if (!entry.date) throw new Error("Missing date.");
 

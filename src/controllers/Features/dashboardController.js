@@ -1,6 +1,7 @@
 // src/controllers/Features/dashboardController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { leaveVisibilityWhere } = require("@utils/leaveUtils");
 
 const getSidebarStats = async (req, res) => {
@@ -29,7 +30,7 @@ const getSidebarStats = async (req, res) => {
     ] = await Promise.all([
       // Total active employees in company
       prisma.user.count({
-        where: { companyId, status: "active" },
+        where: { ...HUMAN_ONLY, companyId, status: "active" },
       }),
 
       // Employees who have at least one shift this month

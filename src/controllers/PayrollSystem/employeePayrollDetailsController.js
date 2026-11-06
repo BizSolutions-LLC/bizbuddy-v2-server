@@ -1,6 +1,7 @@
 // src/controllers/PayrollSystem/employeePayrollDetailsController.js
 
 const { prisma } = require("@config/connection");
+const { HUMAN_ONLY } = require("@utils/systemAgent");
 
 // Validates an optional flat percentage override (customFederalRate /
 // customStateRate). Unlike the other payroll fields, `null` is a
@@ -671,6 +672,7 @@ exports.getAllEmployeesWithPayrollDetails = async (req, res) => {
     // Fetch all active employees with their payroll details
     const employees = await prisma.user.findMany({
       where: {
+        ...HUMAN_ONLY,
         companyId,
         status: "active",
       },
