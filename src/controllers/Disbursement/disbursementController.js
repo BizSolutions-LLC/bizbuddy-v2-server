@@ -179,6 +179,7 @@ exports.markRecipientPaymentSent = async (req, res) => {
       recipientId: req.params.recipientId,
       paymentMethod: req.body?.paymentMethod,
       file: req.file,
+      remark: req.body?.remark,
     });
     return res.status(200).json({
       success: true,

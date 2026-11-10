@@ -152,9 +152,18 @@ function serializeRecipient(recipient) {
           mimeType: recipient.paymentProofMimeType,
         }
       : { hasProof: false },
+    payslipRemark: recipient.payslipRemark || null,
     createdAt: recipient.createdAt,
     updatedAt: recipient.updatedAt,
   };
+}
+
+function normalizePayslipRemark(raw) {
+  if (raw == null) return null;
+  // Plain text only: strip null bytes; keep newlines. No length cap (product rule).
+  const textValue = String(raw).replace(/\0/g, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const trimmed = textValue.trim();
+  return trimmed ? textValue.replace(/[^\S\n]+$/g, "") : null;
 }
 
 function serializeAudit(event) {
@@ -340,7 +349,7 @@ function createDisbursementService({ prisma, provider } = {}) {
     return recipient.employee?.payrollDetails?.payoutDelivery === "manual";
   }
 
-  function recipientPaymentProofData({ method, actorUserId, file, now }) {
+  function recipientPaymentProofData({ method, actorUserId, file, now, payslipRemark = null }) {
     return {
       status: RECIPIENT_STATUSES.PAID,
       paymentMethod: method,
@@ -349,6 +358,7 @@ function createDisbursementService({ prisma, provider } = {}) {
       paymentProofFileName: file.originalname || "payment-proof",
       paymentProofMimeType: file.mimetype,
       paymentProofBytes: file.buffer,
+      payslipRemark,
     };
   }
 
@@ -913,9 +923,10 @@ function createDisbursementService({ prisma, provider } = {}) {
     });
   }
 
-  async function markRecipientPaymentSent({ companyId, actorUserId, role, batchId, recipientId, paymentMethod, file }) {
+  async function markRecipientPaymentSent({ companyId, actorUserId, role, batchId, recipientId, paymentMethod, file, remark }) {
     const method = assertValidPaymentMethod(paymentMethod);
     assertValidPaymentProof(file);
+    const payslipRemark = normalizePayslipRemark(remark);
 
     return db.$transaction(async (tx) => {
       const batch = await getBatchForCompany(tx, companyId, batchId);
@@ -949,7 +960,7 @@ function createDisbursementService({ prisma, provider } = {}) {
       const now = new Date();
       await tx.disbursementRecipient.update({
         where: { id: recipient.id },
-        data: recipientPaymentProofData({ method, actorUserId, file, now }),
+        data: recipientPaymentProofData({ method, actorUserId, file, now, payslipRemark }),
       });
 
       await writeAudit(tx, {
@@ -965,6 +976,7 @@ function createDisbursementService({ prisma, provider } = {}) {
           mimeType: file.mimetype,
           recordedManually: true,
           employeeId: recipient.employeeId,
+          hasPayslipRemark: Boolean(payslipRemark),
         },
       });
 
@@ -1065,6 +1077,30 @@ function createDisbursementService({ prisma, provider } = {}) {
     });
   }
 
+
+  /**
+   * Latest paid recipient remark for this payroll run + employee (PDF regenerate).
+   * Authz: caller must already have verified company access to the payroll run.
+   */
+  async function findPayslipRemark({ companyId, payrollRunId, employeeId }) {
+    if (!companyId || !payrollRunId || !employeeId) return null;
+    const recipient = await db.disbursementRecipient.findFirst({
+      where: {
+        employeeId,
+        status: RECIPIENT_STATUSES.PAID,
+        payslipRemark: { not: null },
+        batch: {
+          companyId,
+          payrollRunId,
+          status: { not: BATCH_STATUSES.CANCELLED },
+        },
+      },
+      orderBy: { paymentMarkedAt: "desc" },
+      select: { payslipRemark: true },
+    });
+    return recipient?.payslipRemark || null;
+  }
+
   return {
     getSummary,
     listBatches,
@@ -1075,6 +1111,7 @@ function createDisbursementService({ prisma, provider } = {}) {
     submitBatch,
     markPaymentSent,
     markRecipientPaymentSent,
+    findPayslipRemark,
     getPaymentProof,
     getRecipientPaymentProof,
     updateRecipientAmount,

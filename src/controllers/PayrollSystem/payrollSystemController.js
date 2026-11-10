@@ -5,6 +5,7 @@ const { HUMAN_ONLY } = require("@utils/systemAgent");
 const generatePayslipPDF = require('@utils/generatePayslipPDF');
 const calculateYTD = require('@utils/calculateYTD');
 const { createNotification } = require('@services/notificationService');
+const { getDefaultDisbursementService } = require('@services/Disbursement/disbursementService');
 
 // Fallback rates (as decimal fractions) used only if a company has no
 // PayrollConfiguration row yet — kept in sync with the DEDUCTION_RATE_DEFAULTS
@@ -639,13 +640,21 @@ exports.generatePayslipPDF = async (req, res) => {
     // ✅ NEW: Calculate YTD
     const ytd = await calculateYTD(employeeId, companyId, payrollRun.periodEnd);
 
+    const disbursementService = getDefaultDisbursementService();
+    const payslipRemark = await disbursementService.findPayslipRemark({
+      companyId,
+      payrollRunId,
+      employeeId,
+    });
+
     const pdfBuffer = await generatePayslipPDF(
       payrollRun, 
       employee, 
       company, 
       earningTypes, 
       deductionTypes,
-      ytd // ✅ Pass YTD data
+      ytd, // ✅ Pass YTD data
+      payslipRemark
     );
 
     const cleanName = employee.employeeName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
@@ -782,13 +791,21 @@ exports.getMyPayslipPDF = async (req, res) => {
     // ✅ NEW: Calculate YTD
     const ytd = await calculateYTD(userId, companyId, payrollRun.periodEnd);
 
+    const disbursementService = getDefaultDisbursementService();
+    const payslipRemark = await disbursementService.findPayslipRemark({
+      companyId,
+      payrollRunId,
+      employeeId: userId,
+    });
+
     const pdfBuffer = await generatePayslipPDF(
       payrollRun, 
       employee, 
       company, 
       earningTypes, 
       deductionTypes,
-      ytd // ✅ Pass YTD data
+      ytd, // ✅ Pass YTD data
+      payslipRemark
     );
 
     const cleanName = employee.employeeName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');

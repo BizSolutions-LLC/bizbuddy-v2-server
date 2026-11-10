@@ -63,7 +63,7 @@ function makePayrollRun(overrides = {}) {
   };
 }
 
-function matchesWhere(row, where = {}) {
+function matchesWhere(row, where = {}, db = null) {
   return Object.entries(where).every(([key, expected]) => {
     if (expected == null) return row[key] == null;
     if (typeof expected !== "object") return row[key] === expected;
@@ -71,6 +71,12 @@ function matchesWhere(row, where = {}) {
     if (expected.notIn) return !expected.notIn.includes(row[key]);
     if (expected.in) return expected.in.includes(row[key]);
     if (expected.lt) return row[key] < expected.lt;
+    // Nested relation filter used by findPayslipRemark: { batch: { companyId, payrollRunId, status } }
+    if (key === "batch" && db) {
+      const batch = db.batches.find((b) => b.id === row.batchId);
+      if (!batch) return false;
+      return matchesWhere(batch, expected, db);
+    }
     return true;
   });
 }
@@ -236,7 +242,7 @@ function createFakePrisma(seed = {}) {
     },
     disbursementRecipient: {
       async findFirst({ where, include, select } = {}) {
-        const row = db.recipients.find((item) => matchesWhere(item, where));
+        const row = db.recipients.find((item) => matchesWhere(item, where, db));
         if (!row) return null;
         if (select) {
           const picked = {};
@@ -249,7 +255,7 @@ function createFakePrisma(seed = {}) {
       },
       async findMany({ where, include } = {}) {
         return db.recipients
-          .filter((row) => matchesWhere(row, where))
+          .filter((row) => matchesWhere(row, where, db))
           .map((row) => applyInclude(row, include));
       },
       async update({ where, data }) {
@@ -688,9 +694,24 @@ describe("disbursementService", () => {
       recipientId: first.id,
       paymentMethod: "CHECK",
       file: paymentProof,
+      remark: "  Q4 spiff — thank you  ",
     });
     assert.equal(afterFirst.status, "READY_FOR_DISBURSEMENT");
     assert.equal(prisma._db.recipients.find((row) => row.id === first.id).status, "PAID");
+    assert.equal(
+      prisma._db.recipients.find((row) => row.id === first.id).payslipRemark,
+      "  Q4 spiff — thank you"
+    );
+    assert.equal(
+      (
+        await service.findPayslipRemark({
+          companyId: actor.companyId,
+          payrollRunId: "run-1",
+          employeeId: "emp-1",
+        })
+      ),
+      "  Q4 spiff — thank you"
+    );
     assert.equal(prisma._db.recipients.find((row) => row.id === second.id).status, "READY");
 
     const otherProof = {

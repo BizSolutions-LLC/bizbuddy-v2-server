@@ -7,7 +7,7 @@ const {
   resolveEarningYtd,
 } = require('./payrollEarningRows');
 
-async function generatePayslipPDF(payrollRun, employee, company, earningTypes, deductionTypes, ytd) {
+async function generatePayslipPDF(payrollRun, employee, company, earningTypes, deductionTypes, ytd, payslipRemark = null) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ margin: 40, size: 'LETTER' });
@@ -254,10 +254,34 @@ async function generatePayslipPDF(payrollRun, employee, company, earningTypes, d
       doc.text(`$${parseFloat(ytd.netPay).toFixed(2)}`, 490, tableY + 10, { width: 72, align: 'right' });
 
       // ============================================
+      // REMARKS (optional — from disbursement mark-paid)
+      // ============================================
+
+      tableY += 20;
+      const remarkText = typeof payslipRemark === "string" ? payslipRemark.trim() : "";
+      if (remarkText) {
+        doc.rect(40, tableY, 532, 20).fillAndStroke("#e8e8e8", "#000");
+        doc.fillColor("#000").fontSize(11).font("Helvetica-Bold").text("REMARKS", 50, tableY + 6);
+        tableY += 20;
+        // PDFKit draws plain text (not HTML). Still strip control chars except newlines.
+        const safeRemark = remarkText.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+        const remarkHeight = Math.max(
+          36,
+          doc.heightOfString(safeRemark, { width: 512, align: "left" }) + 16
+        );
+        doc.rect(40, tableY, 532, remarkHeight).stroke();
+        doc.fontSize(9).font("Helvetica").fillColor("#000").text(safeRemark, 50, tableY + 8, {
+          width: 512,
+          align: "left",
+        });
+        tableY += remarkHeight + 10;
+      }
+
+      // ============================================
       // FOOTER
       // ============================================
       
-      tableY += 50;
+      tableY += remarkText ? 20 : 50;
       
       // Separator line
       doc.moveTo(40, tableY).lineTo(572, tableY).stroke();
