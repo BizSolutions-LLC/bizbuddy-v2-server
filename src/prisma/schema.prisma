@@ -733,6 +733,10 @@ model Company {
 
   supportAgents SupportAgent[] // BB-110: support staff assigned to this company
 
+  // BB-115: "Set up your business" guide state — { skipped: [], reviewed: [], dismissedAt }.
+  // Step completion itself is derived live (setupGuideService); only admin choices live here.
+  setupGuide Json?
+
 }
 
 model CompanyCutoffSettings {

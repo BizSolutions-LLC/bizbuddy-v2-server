@@ -5,6 +5,8 @@
 // supervisors only their own department. See leaveReportService.
 
 const { buildLeaveReport, ReportError } = require("@services/Reports/leaveReportService");
+const { buildLeaveTemplateReport } = require("@services/Reports/leaveTemplateReportService");
+const { generateLeaveReportXlsx } = require("@utils/generateLeaveReportXlsx");
 
 /**
  * GET /api/reports/leave
@@ -27,4 +29,30 @@ const getLeaveReport = async (req, res) => {
   }
 };
 
-module.exports = { getLeaveReport };
+/**
+ * BB-106: GET /api/reports/leave/template — the "Leave Report" workbook
+ * (docs/LeaveReport_Template.csv layout, one sheet per leave type).
+ *   ?year=YYYY                       (default: current year, company timezone)
+ *   &quarters=Q1,Q2 | &months=Jan,Feb (optional, not both; default whole year)
+ *   &policyIds=a,b &departmentId=x &userIds=a,b &includeInactive=true
+ * Errors are JSON; success streams an .xlsx.
+ */
+const getLeaveTemplateReport = async (req, res) => {
+  try {
+    const report = await buildLeaveTemplateReport(req.user, req.query);
+    const buffer = await generateLeaveReportXlsx(report);
+
+    const range = report.groupBy === "year" ? "" : `_${report.periods.join("-")}`;
+    const filename = `Leave_Report_${(report.company.name || "Company").replace(/[^a-z0-9]+/gi, "_")}_${report.year}${range}.xlsx`;
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(buffer);
+  } catch (err) {
+    if (err instanceof ReportError) return res.status(err.status).json({ message: err.message });
+    console.error("getLeaveTemplateReport error:", err);
+    return res.status(500).json({ message: "Failed to build leave report." });
+  }
+};
+
+module.exports = { getLeaveReport, getLeaveTemplateReport };

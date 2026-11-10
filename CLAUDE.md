@@ -54,3 +54,11 @@ The rules above are backed by actual tool permissions, not just instructions:
 ## Related reference
 
 Architecture, stack, routes, and module conventions are documented separately in `docs/CLAUDE.md`. This file is about *how we work*; that one is about *what the system is*.
+
+## Current state (as of 2026-11-06)
+
+**v2.11.4: pushed on branch `release/v2.11.4`** with BB-106, BB-115 and BB-118 (changelog: `docs/changelog-v2.11.4.md`). Client hand-offs: `docs/client-update-BB-106.md`, `docs/client-update-BB-115.md`, `docs/client-update-BB-118.md`.
+
+**BB-117 Optimize Notifications: paused, nothing implemented.** Waiting for the mobile developer's reply to `docs/proposal-BB-117-notifications.md` (uncommitted), and for the owner's decisions on the phase split, retention numbers and which shift-ending reminder to keep. Not yet in the proposal, offer them on resume: the `[Company]` prefix shows on both the push title and the body (`notificationService.js:43-46`), and the missed clock-out time shows seconds (`notificationService.js:212`).
+
+Remove or update this section as tickets close.
