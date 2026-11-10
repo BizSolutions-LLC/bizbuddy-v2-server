@@ -886,7 +886,11 @@ function createDisbursementService({ prisma, provider } = {}) {
           },
         });
         const current = await getBatchForCompany(tx, companyId, batch.id);
-        return serializeBatch(current);
+        return {
+          ...serializeBatch(current),
+          newlyPaidEmployeeIds: remaining.map((recipient) => recipient.employeeId),
+          payrollRunId: batch.payrollRunId,
+        };
       }
 
       const completed = await tx.disbursementBatch.update({
@@ -919,7 +923,11 @@ function createDisbursementService({ prisma, provider } = {}) {
         },
       });
 
-      return serializeBatch(completed);
+      return {
+        ...serializeBatch(completed),
+        newlyPaidEmployeeIds: remaining.map((recipient) => recipient.employeeId),
+        payrollRunId: batch.payrollRunId,
+      };
     });
   }
 
@@ -983,7 +991,11 @@ function createDisbursementService({ prisma, provider } = {}) {
       const completed = await maybeCompleteBatchIfAllPaid(tx, batch, actorUserId, {
         paymentMethod: method,
       });
-      return serializeBatch(completed);
+      return {
+        ...serializeBatch(completed),
+        newlyPaidEmployeeIds: [recipient.employeeId],
+        payrollRunId: batch.payrollRunId,
+      };
     });
   }
 
@@ -1101,6 +1113,46 @@ function createDisbursementService({ prisma, provider } = {}) {
     return recipient?.payslipRemark || null;
   }
 
+  /**
+   * True when this employee has been marked PAID on a non-cancelled
+   * disbursement batch for the payroll run (gate for My Payslip / mobile).
+   */
+  async function isEmployeePaidForPayrollRun({ companyId, payrollRunId, employeeId }) {
+    if (!companyId || !payrollRunId || !employeeId) return false;
+    const recipient = await db.disbursementRecipient.findFirst({
+      where: {
+        employeeId,
+        status: RECIPIENT_STATUSES.PAID,
+        batch: {
+          companyId,
+          payrollRunId,
+          status: { not: BATCH_STATUSES.CANCELLED },
+        },
+      },
+      select: { id: true },
+    });
+    return Boolean(recipient);
+  }
+
+  /**
+   * Paid employee ids for a payroll run (batch filter for getMyPayslips).
+   */
+  async function listPaidEmployeeIdsForPayrollRun({ companyId, payrollRunId }) {
+    if (!companyId || !payrollRunId) return new Set();
+    const rows = await db.disbursementRecipient.findMany({
+      where: {
+        status: RECIPIENT_STATUSES.PAID,
+        batch: {
+          companyId,
+          payrollRunId,
+          status: { not: BATCH_STATUSES.CANCELLED },
+        },
+      },
+      select: { employeeId: true },
+    });
+    return new Set(rows.map((row) => String(row.employeeId)));
+  }
+
   return {
     getSummary,
     listBatches,
@@ -1112,6 +1164,8 @@ function createDisbursementService({ prisma, provider } = {}) {
     markPaymentSent,
     markRecipientPaymentSent,
     findPayslipRemark,
+    isEmployeePaidForPayrollRun,
+    listPaidEmployeeIdsForPayrollRun,
     getPaymentProof,
     getRecipientPaymentProof,
     updateRecipientAmount,
