@@ -152,9 +152,18 @@ function serializeRecipient(recipient) {
           mimeType: recipient.paymentProofMimeType,
         }
       : { hasProof: false },
+    payslipRemark: recipient.payslipRemark || null,
     createdAt: recipient.createdAt,
     updatedAt: recipient.updatedAt,
   };
+}
+
+function normalizePayslipRemark(raw) {
+  if (raw == null) return null;
+  // Plain text only: strip null bytes; keep newlines. No length cap (product rule).
+  const textValue = String(raw).replace(/\0/g, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const trimmed = textValue.trim();
+  return trimmed ? textValue.replace(/[^\S\n]+$/g, "") : null;
 }
 
 function serializeAudit(event) {
@@ -340,7 +349,7 @@ function createDisbursementService({ prisma, provider } = {}) {
     return recipient.employee?.payrollDetails?.payoutDelivery === "manual";
   }
 
-  function recipientPaymentProofData({ method, actorUserId, file, now }) {
+  function recipientPaymentProofData({ method, actorUserId, file, now, payslipRemark = null }) {
     return {
       status: RECIPIENT_STATUSES.PAID,
       paymentMethod: method,
@@ -349,6 +358,7 @@ function createDisbursementService({ prisma, provider } = {}) {
       paymentProofFileName: file.originalname || "payment-proof",
       paymentProofMimeType: file.mimetype,
       paymentProofBytes: file.buffer,
+      payslipRemark,
     };
   }
 
@@ -876,7 +886,11 @@ function createDisbursementService({ prisma, provider } = {}) {
           },
         });
         const current = await getBatchForCompany(tx, companyId, batch.id);
-        return serializeBatch(current);
+        return {
+          ...serializeBatch(current),
+          newlyPaidEmployeeIds: remaining.map((recipient) => recipient.employeeId),
+          payrollRunId: batch.payrollRunId,
+        };
       }
 
       const completed = await tx.disbursementBatch.update({
@@ -909,13 +923,18 @@ function createDisbursementService({ prisma, provider } = {}) {
         },
       });
 
-      return serializeBatch(completed);
+      return {
+        ...serializeBatch(completed),
+        newlyPaidEmployeeIds: remaining.map((recipient) => recipient.employeeId),
+        payrollRunId: batch.payrollRunId,
+      };
     });
   }
 
-  async function markRecipientPaymentSent({ companyId, actorUserId, role, batchId, recipientId, paymentMethod, file }) {
+  async function markRecipientPaymentSent({ companyId, actorUserId, role, batchId, recipientId, paymentMethod, file, remark }) {
     const method = assertValidPaymentMethod(paymentMethod);
     assertValidPaymentProof(file);
+    const payslipRemark = normalizePayslipRemark(remark);
 
     return db.$transaction(async (tx) => {
       const batch = await getBatchForCompany(tx, companyId, batchId);
@@ -949,7 +968,7 @@ function createDisbursementService({ prisma, provider } = {}) {
       const now = new Date();
       await tx.disbursementRecipient.update({
         where: { id: recipient.id },
-        data: recipientPaymentProofData({ method, actorUserId, file, now }),
+        data: recipientPaymentProofData({ method, actorUserId, file, now, payslipRemark }),
       });
 
       await writeAudit(tx, {
@@ -965,13 +984,18 @@ function createDisbursementService({ prisma, provider } = {}) {
           mimeType: file.mimetype,
           recordedManually: true,
           employeeId: recipient.employeeId,
+          hasPayslipRemark: Boolean(payslipRemark),
         },
       });
 
       const completed = await maybeCompleteBatchIfAllPaid(tx, batch, actorUserId, {
         paymentMethod: method,
       });
-      return serializeBatch(completed);
+      return {
+        ...serializeBatch(completed),
+        newlyPaidEmployeeIds: [recipient.employeeId],
+        payrollRunId: batch.payrollRunId,
+      };
     });
   }
 
@@ -1065,6 +1089,70 @@ function createDisbursementService({ prisma, provider } = {}) {
     });
   }
 
+
+  /**
+   * Latest paid recipient remark for this payroll run + employee (PDF regenerate).
+   * Authz: caller must already have verified company access to the payroll run.
+   */
+  async function findPayslipRemark({ companyId, payrollRunId, employeeId }) {
+    if (!companyId || !payrollRunId || !employeeId) return null;
+    const recipient = await db.disbursementRecipient.findFirst({
+      where: {
+        employeeId,
+        status: RECIPIENT_STATUSES.PAID,
+        payslipRemark: { not: null },
+        batch: {
+          companyId,
+          payrollRunId,
+          status: { not: BATCH_STATUSES.CANCELLED },
+        },
+      },
+      orderBy: { paymentMarkedAt: "desc" },
+      select: { payslipRemark: true },
+    });
+    return recipient?.payslipRemark || null;
+  }
+
+  /**
+   * True when this employee has been marked PAID on a non-cancelled
+   * disbursement batch for the payroll run (gate for My Payslip / mobile).
+   */
+  async function isEmployeePaidForPayrollRun({ companyId, payrollRunId, employeeId }) {
+    if (!companyId || !payrollRunId || !employeeId) return false;
+    const recipient = await db.disbursementRecipient.findFirst({
+      where: {
+        employeeId,
+        status: RECIPIENT_STATUSES.PAID,
+        batch: {
+          companyId,
+          payrollRunId,
+          status: { not: BATCH_STATUSES.CANCELLED },
+        },
+      },
+      select: { id: true },
+    });
+    return Boolean(recipient);
+  }
+
+  /**
+   * Paid employee ids for a payroll run (batch filter for getMyPayslips).
+   */
+  async function listPaidEmployeeIdsForPayrollRun({ companyId, payrollRunId }) {
+    if (!companyId || !payrollRunId) return new Set();
+    const rows = await db.disbursementRecipient.findMany({
+      where: {
+        status: RECIPIENT_STATUSES.PAID,
+        batch: {
+          companyId,
+          payrollRunId,
+          status: { not: BATCH_STATUSES.CANCELLED },
+        },
+      },
+      select: { employeeId: true },
+    });
+    return new Set(rows.map((row) => String(row.employeeId)));
+  }
+
   return {
     getSummary,
     listBatches,
@@ -1075,6 +1163,9 @@ function createDisbursementService({ prisma, provider } = {}) {
     submitBatch,
     markPaymentSent,
     markRecipientPaymentSent,
+    findPayslipRemark,
+    isEmployeePaidForPayrollRun,
+    listPaidEmployeeIdsForPayrollRun,
     getPaymentProof,
     getRecipientPaymentProof,
     updateRecipientAmount,

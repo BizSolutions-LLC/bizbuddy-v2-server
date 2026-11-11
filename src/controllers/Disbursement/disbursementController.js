@@ -4,8 +4,54 @@ const {
   getDefaultDisbursementService,
 } = require("@services/Disbursement/disbursementService");
 const { DisbursementError } = require("@services/Disbursement/disbursementErrors");
+const { prisma } = require("@config/connection");
+const { createNotification } = require("@services/notificationService");
 
 const service = getDefaultDisbursementService();
+
+async function notifyPayslipsReleased({ companyId, payrollRunId, employeeIds }) {
+  const ids = [...new Set((employeeIds || []).filter(Boolean).map(String))];
+  if (!companyId || !payrollRunId || ids.length === 0) return;
+
+  const run = await prisma.payrollRun.findFirst({
+    where: { id: payrollRunId, companyId },
+    select: { periodStart: true, periodEnd: true },
+  });
+  if (!run) return;
+
+  const startDate = new Date(run.periodStart).toISOString().split("T")[0];
+  const endDate = new Date(run.periodEnd).toISOString().split("T")[0];
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids }, companyId },
+    select: { id: true, departmentId: true },
+  });
+  const deptById = new Map(users.map((u) => [u.id, u.departmentId || null]));
+
+  await Promise.all(
+    ids.map(async (employeeId) => {
+      try {
+        await createNotification({
+          userId: employeeId,
+          companyId,
+          departmentId: deptById.get(employeeId) || null,
+          notificationCode: "PAYSLIP_GENERATED",
+          title: "Payslip Available",
+          message: `Your payslip for ${startDate} - ${endDate} is now available.`,
+          payload: {
+            payrollRunId,
+            periodStart: run.periodStart,
+            periodEnd: run.periodEnd,
+          },
+        });
+      } catch (err) {
+        console.error("❌ Failed to send payslip-available notification:", err);
+      }
+    })
+  );
+}
+
+
 
 function actorFromRequest(req) {
   return {
@@ -158,6 +204,11 @@ exports.markPaymentSent = async (req, res) => {
       paymentMethod: req.body?.paymentMethod,
       file: req.file,
     });
+    await notifyPayslipsReleased({
+      companyId,
+      payrollRunId: data?.payrollRun?.id || data?.payrollRunId,
+      employeeIds: data?.newlyPaidEmployeeIds || [],
+    });
     return res.status(200).json({
       success: true,
       message: "Payment marked as sent with proof attached.",
@@ -179,6 +230,12 @@ exports.markRecipientPaymentSent = async (req, res) => {
       recipientId: req.params.recipientId,
       paymentMethod: req.body?.paymentMethod,
       file: req.file,
+      remark: req.body?.remark,
+    });
+    await notifyPayslipsReleased({
+      companyId,
+      payrollRunId: data?.payrollRunId || data?.payrollRun?.id,
+      employeeIds: data?.newlyPaidEmployeeIds || [],
     });
     return res.status(200).json({
       success: true,

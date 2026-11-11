@@ -4,7 +4,7 @@ const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const generatePayslipPDF = require('@utils/generatePayslipPDF');
 const calculateYTD = require('@utils/calculateYTD');
-const { createNotification } = require('@services/notificationService');
+const { getDefaultDisbursementService } = require('@services/Disbursement/disbursementService');
 
 // Fallback rates (as decimal fractions) used only if a company has no
 // PayrollConfiguration row yet — kept in sync with the DEDUCTION_RATE_DEFAULTS
@@ -639,13 +639,21 @@ exports.generatePayslipPDF = async (req, res) => {
     // ✅ NEW: Calculate YTD
     const ytd = await calculateYTD(employeeId, companyId, payrollRun.periodEnd);
 
+    const disbursementService = getDefaultDisbursementService();
+    const payslipRemark = await disbursementService.findPayslipRemark({
+      companyId,
+      payrollRunId,
+      employeeId,
+    });
+
     const pdfBuffer = await generatePayslipPDF(
       payrollRun, 
       employee, 
       company, 
       earningTypes, 
       deductionTypes,
-      ytd // ✅ Pass YTD data
+      ytd, // ✅ Pass YTD data
+      payslipRemark
     );
 
     const cleanName = employee.employeeName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
@@ -653,24 +661,8 @@ exports.generatePayslipPDF = async (req, res) => {
     const endDate = new Date(payrollRun.periodEnd).toISOString().split('T')[0];
     const filename = `Payslip_${cleanName}_${startDate}_to_${endDate}.pdf`;
 
-    // Notify the employee that their payslip is available
-    try {
-      const empUser = await prisma.user.findUnique({
-        where: { id: employeeId },
-        select: { departmentId: true },
-      });
-      await createNotification({
-        userId: employeeId,
-        companyId,
-        departmentId: empUser?.departmentId || null,
-        notificationCode: 'PAYSLIP_GENERATED',
-        title: 'Payslip Available',
-        message: `Your payslip for ${startDate} - ${endDate} is now available.`,
-        payload: { payrollRunId, periodStart: payrollRun.periodStart, periodEnd: payrollRun.periodEnd },
-      });
-    } catch (notifError) {
-      console.error('❌ Failed to send payslip notification:', notifError);
-    }
+    // Do not notify here — admin View/Download must not push "Payslip Available"
+    // before Disbursement mark-paid. Notification is sent from mark-paid instead.
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -705,31 +697,34 @@ exports.getMyPayslips = async (req, res) => {
     });
 
 
-    const myPayslips = payrollRuns
-      .map(run => {
-        const employee = run.payrollSnapshot.employees.find(e => {
-          return e.employeeId === userId;
-        });
-        
-        if (!employee) {
-          console.log('❌ Employee not found in this run');
-          return null;
-        }
+    const disbursementService = getDefaultDisbursementService();
+    const myPayslips = [];
 
-        return {
-          id: run.id,
-          payrollRunId: run.id,
-          payDate: run.payDate,
-          periodStart: run.periodStart,
-          checkNumber: employee.checkNumber,
-          periodEnd: run.periodEnd,
-          grossPay: employee.grossPay,
-          taxes: employee.totalTaxes,
-          deductions: employee.totalDeductions,
-          netPay: employee.netPay,
-        };
-      })
-      .filter(Boolean);
+    for (const run of payrollRuns) {
+      const employee = (run.payrollSnapshot?.employees || []).find((e) => e.employeeId === userId);
+      if (!employee) continue;
+
+      // Payslips are only visible after Disbursement marks this employee paid.
+      const paid = await disbursementService.isEmployeePaidForPayrollRun({
+        companyId,
+        payrollRunId: run.id,
+        employeeId: userId,
+      });
+      if (!paid) continue;
+
+      myPayslips.push({
+        id: run.id,
+        payrollRunId: run.id,
+        payDate: run.payDate,
+        periodStart: run.periodStart,
+        checkNumber: employee.checkNumber,
+        periodEnd: run.periodEnd,
+        grossPay: employee.grossPay,
+        taxes: employee.totalTaxes,
+        deductions: employee.totalDeductions,
+        netPay: employee.netPay,
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -771,6 +766,20 @@ exports.getMyPayslipPDF = async (req, res) => {
       return res.status(404).json({ success: false, message: 'You are not in this payroll run' });
     }
 
+    const disbursementService = getDefaultDisbursementService();
+    const paid = await disbursementService.isEmployeePaidForPayrollRun({
+      companyId,
+      payrollRunId,
+      employeeId: userId,
+    });
+    if (!paid) {
+      return res.status(403).json({
+        success: false,
+        message: 'Payslip is available after your payment is recorded in Disbursement.',
+        code: 'PAYSLIP_NOT_RELEASED',
+      });
+    }
+
     const company = await prisma.company.findUnique({
       where: { id: companyId },
       select: { name: true, addressLine1: true },
@@ -782,13 +791,20 @@ exports.getMyPayslipPDF = async (req, res) => {
     // ✅ NEW: Calculate YTD
     const ytd = await calculateYTD(userId, companyId, payrollRun.periodEnd);
 
+    const payslipRemark = await disbursementService.findPayslipRemark({
+      companyId,
+      payrollRunId,
+      employeeId: userId,
+    });
+
     const pdfBuffer = await generatePayslipPDF(
       payrollRun, 
       employee, 
       company, 
       earningTypes, 
       deductionTypes,
-      ytd // ✅ Pass YTD data
+      ytd, // ✅ Pass YTD data
+      payslipRemark
     );
 
     const cleanName = employee.employeeName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
