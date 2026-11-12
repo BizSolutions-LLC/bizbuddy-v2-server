@@ -1,5 +1,87 @@
+const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { computeTimeLogSummary } = require("@services/timeLogComputeService");
+
+// BB-123: guard requested times. The server only sees two instants, so it can
+// reject impossible requests (backwards, 24h+) but not a plausible wrong-zone one.
+const MAX_CONTEST_SHIFT_MS = 24 * 60 * 60 * 1000;
+
+/** Returns an error message, or null when the requested times are acceptable. */
+function validateRequestedTimes(clockIn, clockOut) {
+  const inDate  = new Date(clockIn);
+  const outDate = new Date(clockOut);
+  if (Number.isNaN(inDate.getTime()) || Number.isNaN(outDate.getTime())) {
+    return "Requested clock-in and clock-out must be valid dates.";
+  }
+  if (outDate <= inDate) {
+    return "Requested clock-out must be after the requested clock-in. For an overnight shift, the clock-out falls on the next day.";
+  }
+  if (outDate - inDate >= MAX_CONTEST_SHIFT_MS) {
+    return "Requested shift must be shorter than 24 hours.";
+  }
+  return null;
+}
+
+// BB-123: a contest may not touch a locked/processed cutoff. Approving one changes
+// the TimeLog but never the reviewed TimeLogApproval rows, which left stale hours
+// in a locked cutoff (Robert Ramirez, PadPro, Oct 2026).
+const LOCKED_CUTOFF_STATUSES = ["locked", "processed"];
+
+function fmtPeriod(p) {
+  // periodStart/periodEnd are stored as UTC-midnight calendar dates
+  const f = (d) => moment.utc(d).format("MMM D, YYYY");
+  return `${f(p.periodStart)} – ${f(p.periodEnd)}`;
+}
+
+/**
+ * Returns the locked/processed CutoffPeriod that blocks this contest, or null.
+ * Checks (1) the cutoff the time log is already reviewed in, and (2) the cutoff
+ * covering the recorded and requested clock-in dates (company zone) for the
+ * employee's department or company-wide, so a punch can't be moved into or out
+ * of a locked period.
+ */
+async function findLockedCutoffForContest(timeLogId, requestedClockIn) {
+  const viaApproval = await prisma.timeLogApproval.findFirst({
+    where: {
+      timeLogId,
+      cutoffPeriod: { status: { in: LOCKED_CUTOFF_STATUSES } },
+    },
+    select: { cutoffPeriod: { select: { id: true, status: true, periodStart: true, periodEnd: true } } },
+  });
+  if (viaApproval?.cutoffPeriod) return viaApproval.cutoffPeriod;
+
+  const log = await prisma.timeLog.findUnique({
+    where: { id: timeLogId },
+    select: {
+      timeIn: true,
+      user: { select: { companyId: true, departmentId: true, company: { select: { timeZone: true } } } },
+    },
+  });
+  if (!log?.user?.companyId) return null;
+
+  const tz = log.user.company?.timeZone && moment.tz.zone(log.user.company.timeZone)
+    ? log.user.company.timeZone
+    : "America/Los_Angeles";
+
+  const dates = [log.timeIn, requestedClockIn].filter(Boolean);
+  for (const d of dates) {
+    // Calendar day in the company zone; periodStart/End are UTC-midnight dates.
+    const day = moment(d).tz(tz).format("YYYY-MM-DD");
+    const dayDate = new Date(`${day}T00:00:00.000Z`);
+    const period = await prisma.cutoffPeriod.findFirst({
+      where: {
+        companyId: log.user.companyId,
+        status: { in: LOCKED_CUTOFF_STATUSES },
+        OR: [{ departmentId: log.user.departmentId || null }, { departmentId: null }],
+        periodStart: { lte: dayDate },
+        periodEnd:   { gte: dayDate },
+      },
+      select: { id: true, status: true, periodStart: true, periodEnd: true },
+    });
+    if (period) return period;
+  }
+  return null;
+}
 
 const submitContestPolicy = async (req, res) => {
   try {
@@ -17,6 +99,33 @@ const submitContestPolicy = async (req, res) => {
 
     if (!timeLogId || !requestedClockIn || !requestedClockOut) {
       return res.status(400).json({ message: "Missing required fields." });
+    }
+
+    const timesError = validateRequestedTimes(requestedClockIn, requestedClockOut);
+    if (timesError) {
+      return res.status(400).json({ message: timesError });
+    }
+
+    const lockedCutoff = await findLockedCutoffForContest(timeLogId, requestedClockIn);
+    if (lockedCutoff) {
+      return res.status(400).json({
+        code: "CUTOFF_LOCKED",
+        message: `This punch is in a ${lockedCutoff.status} cutoff period (${fmtPeriod(lockedCutoff)}), so it can't be contested. Please contact your admin.`,
+      });
+    }
+
+    // BB-123: one pending contest per punch. A second one could be approved after
+    // the first and silently overwrite it. Rejected/approved contests don't block.
+    const pendingContest = await prisma.contestTimeLog.findFirst({
+      where:  { timeLogId, status: "PENDING" },
+      select: { id: true, submittedAt: true },
+    });
+    if (pendingContest) {
+      return res.status(400).json({
+        code: "CONTEST_PENDING",
+        message: "A contest for this punch is already pending. Wait for a decision, or ask your approver to reject it before filing a new one.",
+        contestId: pendingContest.id,
+      });
     }
 
     const newContest = await prisma.contestTimeLog.create({
@@ -346,6 +455,23 @@ const viewContestTimeLogs = async (req, res) => {
         contest.timeLog?.user?.companyId !== req.user.companyId
       ) {
         return res.status(403).json({ message: "Unauthorized to approve this contest request." });
+      }
+
+      // BB-123: never write impossible times to the time log (covers requests
+      // submitted before the submit check existed).
+      const timesError = validateRequestedTimes(contest.requestedClockIn, contest.requestedClockOut);
+      if (timesError) {
+        return res.status(400).json({
+          message: `${timesError} Reject this request and ask the employee to resubmit.`,
+        });
+      }
+
+      const lockedCutoff = await findLockedCutoffForContest(contest.timeLogId, contest.requestedClockIn);
+      if (lockedCutoff) {
+        return res.status(400).json({
+          code: "CUTOFF_LOCKED",
+          message: `This punch is in a ${lockedCutoff.status} cutoff period (${fmtPeriod(lockedCutoff)}). Reopen the cutoff before approving, or reject this request.`,
+        });
       }
   
       // 3. ✅ KEY FIX: Update the actual TimeLog with the corrected times

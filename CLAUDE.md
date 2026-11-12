@@ -55,14 +55,18 @@ The rules above are backed by actual tool permissions, not just instructions:
 
 Architecture, stack, routes, and module conventions are documented separately in `docs/CLAUDE.md`. This file is about *how we work*; that one is about *what the system is*.
 
-## Current state (as of 2026-11-06)
+## Current state (as of 2026-11-12)
 
-**v2.11.4: pushed on branch `release/v2.11.4`** with BB-106, BB-115 and BB-118 (changelog: `docs/changelog-v2.11.4.md`). Client hand-offs: `docs/client-update-BB-106.md`, `docs/client-update-BB-115.md`, `docs/client-update-BB-118.md`.
+**v2.11.7: pushed 2026-11-12 on branch `release/v2.11.7`** (commit a73be23) with BB-119 (closed), BB-117 (complete) and BB-120 (pushed before the user's test). Changelog: `docs/changelog-v2.11.7.md`. Client hand-offs: `docs/client-update-BB-119.md`, `docs/client-update-BB-120.md`. The two test PDFs in `docs/` stay uncommitted.
 
-**BB-119 Company zone + report redo: CLOSED 2026-11-11, uncommitted.** All reports are built on the server (shared PDF layout + Excel template); changelog `docs/changelog-v2.11.7.md`, client hand-off `docs/client-update-BB-119.md` (items 1–14). To ship: create `release/v2.11.7` and commit when the user asks, leaving out the two test PDFs in `docs/`. (The BB-117 proposal, BB-119 notes and `docs/BB-121/` designs were deleted 2026-11-12.)
+**v2.11.8: pushed 2026-11-12 on branch `release/v2.11.8`** with BB-122 (complete), BB-123 (server side, awaiting test) and BB-114 (planning docs only). Changelog: `docs/changelog-v2.11.8.md`, which ends with every open question for the mobile developer (on leave). Client hand-off: `docs/client-update-BB-123.md`. `docs/Screenshots/` and the two test PDFs stay uncommitted.
 
-**BB-117 Optimize Notifications: complete 2026-11-11 (user confirmed), uncommitted.** Server only, one phase; schema applied. Details in `docs/changelog-v2.11.7.md` (BB-117 section); mobile route table in `src/services/notificationTargets.js`. Retention is report-only until `NOTIFICATION_RETENTION=on`. Waiting for the mobile developer (on leave): clearing the FCM token on sign-out (biometric re-register question), routes for unlisted types, old app versions and the login header. Retired companies are not yet set `isActive = false`.
-
-**BB-120 B. Buddy, remove access to payroll: built 2026-11-11, awaiting the user's test, uncommitted.** Server guard on all payroll prefixes + setup guide hides the payroll step for B. Buddy; client hand-off `docs/client-update-BB-120.md`. Cutoff review and hours reports stay. In `docs/changelog-v2.11.7.md`.
+Open follow-ups:
+- BB-120: the user's test (client applies the hand-off).
+- BB-117: the sign-out token clear and the unlisted routes wait for the mobile developer; retired companies not yet `isActive = false`.
+- BB-121 (new cutoff page): server work reverted 2026-11-12, not in v2.11.7.
+- BB-114 (Improvement of API Endpoints): **OPEN, do not close.** Plan of record: `docs/BB-114-endpoint-plan.md`; mobile questions: `docs/BB-114-mobile-questionnaire.md` (written 2026-11-12, user sends it). Batch 1 (shared Prisma client, checklist cache, timelogs count, leaves N+1) is planned only, no code yet; release right after BB-113 Period 1 ends (~2026-11-28). On resume, read the plan file first and follow it unless the user changes it.
+- BB-123 (Employee Page update; the punch-logs table is done on the client): contest dialog bug. The server rejects backwards or 24h+ requested times in submit + approve; read-only `scripts/check-bb123-contest-requested-times.js` for the user to run. Contest check run (no corrupted logs; reject 4 pending in the UI); Contests blocked on locked/processed cutoffs (CUTOFF_LOCKED); Robert Ramirez data confirmed fine. Ownership check in submit held for the mobile dev (on leave); questions in the changelog. Client hand-off `docs/client-update-BB-123.md` (dialog + approver page), applied by the client-side session. Uncommitted, awaiting the user's test. Logged in `docs/changelog-v2.11.8.md`.
+- BB-122 (Carlo Corcuera / BizSolutions LLC early auto clock-out): COMPLETE 2026-11-12. `liveUserService.createLiveUser` now honours `Shift.timeZone`; logged in `docs/changelog-v2.11.8.md`, uncommitted (push with the next ticket). OT in `timeLogComputeService` still reads shifts in the company zone (declined for now); bad logs fixed via appeals.
 
 Remove or update this section as tickets close.
