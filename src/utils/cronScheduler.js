@@ -6,6 +6,7 @@ const sendMorningReportJob           = require('../jobs/sendMorningReport');
 const sendEveningReportJob           = require('../jobs/sendEveningReport');
 const autoClockOutJob                = require('../jobs/autoClockOutJob');
 const autoGenerateCutoffPeriodsJob   = require('../jobs/autoGenerateCutoffPeriodsJob');
+const notificationRetentionJob       = require('../jobs/notificationRetentionJob');
 
 /**
  * Initialize all cron jobs for the notification system
@@ -26,13 +27,12 @@ function initializeCronJobs() {
     await autoClockOutJob();
   });
 
-  // Job 4: Send morning report at 10:00 AM daily
-  cron.schedule('0 10 * * *', async () => {
+  // Jobs 4 + 5: morning / evening attendance reports. BB-117: checked every 5
+  // minutes; each company gets its report at its own Notification Settings time
+  // (morningReportTime / eveningReportTime) in its own time zone, once per day.
+  // (Was a fixed 10:00 / 18:00 in the server's clock, which is UTC on Render.)
+  cron.schedule('*/5 * * * *', async () => {
     await sendMorningReportJob();
-  });
-
-  // Job 5: Send evening report at 6:00 PM daily
-  cron.schedule('0 18 * * *', async () => {
     await sendEveningReportJob();
   });
 
@@ -40,6 +40,12 @@ function initializeCronJobs() {
   // Ensures each department always has at least 2 open future periods ahead.
   cron.schedule('0 2 * * *', async () => {
     await autoGenerateCutoffPeriodsJob();
+  });
+
+  // Job 7 (BB-117): notification retention, nightly at 03:30 server time.
+  // Report-only until NOTIFICATION_RETENTION=on.
+  cron.schedule('30 3 * * *', async () => {
+    await notificationRetentionJob();
   });
 }
 

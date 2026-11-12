@@ -7,6 +7,8 @@
 
 const { prisma } = require("@config/connection");
 const ERROR_CODES = require("@constants/errorCodes");
+const jwt = require("jsonwebtoken");
+const { JWT_SECRET } = require("@config/env");
 
 // Spread into any prisma.user where clause that lists, counts or iterates people.
 const HUMAN_ONLY = { isSystemAgent: false };
@@ -71,10 +73,34 @@ async function checkAgentAccess(agentId, companyId) {
   return { ok: true, agent };
 }
 
+// BB-120: keeps B. Buddy out of a whole area (payroll), mounted in routes/index.js
+// before the area's own routes. It reads the B. Buddy flag the sign-in puts in the
+// login token (isSystemAgent), so it needs no database query. A missing or invalid
+// token is left to the route's own `authenticate`, which rejects it as usual.
+function blockSystemAgentArea(req, res, next) {
+  const header = req.headers["authorization"];
+  const token = header && header.split(" ")[1];
+  if (!token) return next();
+  let claims = null;
+  try {
+    claims = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return next();
+  }
+  if (claims && claims.isSystemAgent === true) {
+    return res.status(403).json({
+      message: "This action isn't available to the B. Buddy account.",
+      code: ERROR_CODES.SYSTEM_AGENT_NOT_ALLOWED,
+    });
+  }
+  return next();
+}
+
 module.exports = {
   HUMAN_ONLY,
   HUMAN_USER,
   blockSystemAgent,
+  blockSystemAgentArea,
   isSystemAgentUser,
   rejectIfSystemAgentTarget,
   protectSystemAgentTarget,

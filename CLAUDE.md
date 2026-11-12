@@ -59,6 +59,10 @@ Architecture, stack, routes, and module conventions are documented separately in
 
 **v2.11.4: pushed on branch `release/v2.11.4`** with BB-106, BB-115 and BB-118 (changelog: `docs/changelog-v2.11.4.md`). Client hand-offs: `docs/client-update-BB-106.md`, `docs/client-update-BB-115.md`, `docs/client-update-BB-118.md`.
 
-**BB-117 Optimize Notifications: paused, nothing implemented.** Waiting for the mobile developer's reply to `docs/proposal-BB-117-notifications.md` (uncommitted), and for the owner's decisions on the phase split, retention numbers and which shift-ending reminder to keep. Not yet in the proposal, offer them on resume: the `[Company]` prefix shows on both the push title and the body (`notificationService.js:43-46`), and the missed clock-out time shows seconds (`notificationService.js:212`).
+**BB-119 Company zone + report redo: CLOSED 2026-11-11, uncommitted.** All reports are built on the server (shared PDF layout + Excel template); changelog `docs/changelog-v2.11.7.md`, client hand-off `docs/client-update-BB-119.md` (items 1–14). To ship: create `release/v2.11.7` and commit when the user asks, leaving out the two test PDFs in `docs/`. (The BB-117 proposal, BB-119 notes and `docs/BB-121/` designs were deleted 2026-11-12.)
+
+**BB-117 Optimize Notifications: complete 2026-11-11 (user confirmed), uncommitted.** Server only, one phase; schema applied. Details in `docs/changelog-v2.11.7.md` (BB-117 section); mobile route table in `src/services/notificationTargets.js`. Retention is report-only until `NOTIFICATION_RETENTION=on`. Waiting for the mobile developer (on leave): clearing the FCM token on sign-out (biometric re-register question), routes for unlisted types, old app versions and the login header. Retired companies are not yet set `isActive = false`.
+
+**BB-120 B. Buddy, remove access to payroll: built 2026-11-11, awaiting the user's test, uncommitted.** Server guard on all payroll prefixes + setup guide hides the payroll step for B. Buddy; client hand-off `docs/client-update-BB-120.md`. Cutoff review and hours reports stay. In `docs/changelog-v2.11.7.md`.
 
 Remove or update this section as tickets close.

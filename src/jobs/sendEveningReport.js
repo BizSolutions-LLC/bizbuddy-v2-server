@@ -1,5 +1,7 @@
 const { prisma } = require('@config/connection');
+const { HUMAN_ONLY } = require('@utils/systemAgent');
 const { sendEveningReport } = require('@services/notificationService');
+const { claimDueCompanies, listName, shiftTimeStr, calendarDate } = require('@services/attendanceReportSchedule');
 const moment = require('moment-timezone');
 
 /**
@@ -7,28 +9,22 @@ const moment = require('moment-timezone');
  * Lists employees who haven't clocked out and who's still clocked in
  */
 async function sendEveningReportJob() {
-  console.log('📊 Generating evening reports...');
-
   try {
-    const companies = await prisma.company.findMany({
-      where: { notifyAdminMissedClocks: true },
-      select: {
-        id: true,
-        name: true,
-        timeZone: true,
-        eveningReportTime: true,
-      },
-    });
+    // BB-117: runs every 5 minutes; each company gets its report at its own
+    // eveningReportTime in its own time zone, once per day.
+    const companies = await claimDueCompanies('evening', { notifyAdminMissedClocks: true });
+    if (!companies.length) return;
 
     for (const company of companies) {
-      const timezone = company.timeZone || 'America/Los_Angeles';
-      const now = moment().tz(timezone);
+      const timezone = company.timeZone;
+      const now = company.now;
 
       // Find all active time logs (still clocked in)
       const stillClockedIn = await prisma.timeLog.findMany({
         where: {
           timeOut: null,
           user: {
+            ...HUMAN_ONLY,
             companyId: company.id,
             status: 'active',
           },
@@ -50,20 +46,23 @@ async function sendEveningReportJob() {
         const clockInTime = moment(timeLog.timeIn).tz(timezone);
         const hoursWorked = now.diff(clockInTime, 'hours', true).toFixed(1);
 
-        // Find their shift
+        // Find their shift. BB-117: assignedDate is the calendar date at UTC midnight,
+        // so match the company-zone date of the clock-in (as checkMissedClockOuts does).
+        const localDateStr = clockInTime.format('YYYY-MM-DD');
         const userShift = await prisma.userShift.findFirst({
           where: {
             userId: timeLog.userId,
+            status: { not: 'cancelled' },
             assignedDate: {
-              gte: clockInTime.clone().startOf('day').toDate(),
-              lte: clockInTime.clone().endOf('day').toDate(),
+              gte: new Date(`${localDateStr}T00:00:00.000Z`),
+              lte: new Date(`${localDateStr}T23:59:59.999Z`),
             },
           },
           include: { shift: true },
         });
 
         const employeeData = {
-          employeeName: `${timeLog.user.profile?.firstName || ''} ${timeLog.user.profile?.lastName || ''}`.trim() || timeLog.user.username,
+          employeeName: listName(timeLog.user),
           department: timeLog.user.department?.name || 'N/A',
           clockInTime: clockInTime.format('h:mm A'),
           hoursWorked,
@@ -71,7 +70,7 @@ async function sendEveningReportJob() {
 
         if (userShift) {
           // ✅ Fix 1: Guard against null/undefined endTime
-          const endTime = userShift.customEndTime || userShift.shift?.endTime;
+          const endTime = shiftTimeStr(userShift.customEndTime || userShift.shift?.endTime);
 
           if (!endTime) {
             // No end time defined — treat as active, no expectedClockOut
@@ -80,7 +79,9 @@ async function sendEveningReportJob() {
           }
 
           // ✅ Fix 2: Use moment-timezone to get correct local date (not UTC)
-          const assignedDateStr = moment(userShift.assignedDate).tz(timezone).format('YYYY-MM-DD');
+          // BB-117: assignedDate is already the calendar date (UTC midnight); converting it
+          // to a negative-offset zone moved it to the day before.
+          const assignedDateStr = calendarDate(userShift.assignedDate);
           const shiftEndTime = moment.tz(
             `${assignedDateStr} ${endTime}`,
             'YYYY-MM-DD HH:mm:ss',
@@ -118,16 +119,19 @@ async function sendEveningReportJob() {
         }
       }
 
+      const byName = (a, b) => a.employeeName.localeCompare(b.employeeName);
+      missedClockOuts.sort(byName);
+      activeEmployees.sort(byName);
+
       // Send report
       if (missedClockOuts.length > 0 || activeEmployees.length > 0) {
         console.log(`📧 Sending evening report for ${company.name}`);
-        await sendEveningReport(company.id, missedClockOuts, activeEmployees);
+        await sendEveningReport(company.id, missedClockOuts, activeEmployees, { dateKey: company.dateKey });
       } else {
         console.log(`✅ All employees clocked out for ${company.name}`);
       }
     }
 
-    console.log('✅ Evening reports complete');
   } catch (error) {
     console.error('❌ Error sending evening reports:', error);
   }

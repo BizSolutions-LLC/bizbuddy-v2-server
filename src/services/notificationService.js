@@ -1,26 +1,120 @@
 const { prisma } = require("@config/connection");
+const moment = require("moment-timezone");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { getMessaging } = require("@config/firebase");
 const { sendEmail } = require("./emailService");
 const { notifyUser, notifyManagement } = require("./socketService");
 const { getIO } = require("@config/socket");
+const { targetRouteFor } = require("./notificationTargets");
 
-async function prefixWithCompanyName(companyId, text) {
-  if (!text || !companyId) return text;
+// ── BB-117: company prefix only when it helps ───────────────────────────────
+// "[Company] " is added only when the recipient's email also has an active
+// account in another active company, so single-company users get clean titles.
+// Cached briefly per user: reports and bulk imports notify the same people.
+const MULTI_COMPANY_TTL_MS = 10 * 60 * 1000;
+const multiCompanyCache = new Map(); // userId -> { multi, at }
 
-  const company = await prisma.company.findUnique({
-    where: { id: companyId },
-    select: { name: true },
+async function isMultiCompany(user) {
+  if (!user?.email) return false;
+  const hit = multiCompanyCache.get(user.id);
+  if (hit && Date.now() - hit.at < MULTI_COMPANY_TTL_MS) return hit.multi;
+  const others = await prisma.user.count({
+    where: {
+      ...HUMAN_ONLY,
+      email: user.email,
+      id: { not: user.id },
+      status: "active",
+      companyId: { not: user.companyId },
+      company: { isActive: true },
+    },
   });
-  if (!company?.name) return text;
+  const multi = others > 0;
+  multiCompanyCache.set(user.id, { multi, at: Date.now() });
+  return multi;
+}
 
-  const prefix = `[${company.name}] `;
-  if (text.startsWith(prefix) || text.startsWith(`[${company.name}]`)) return text;
-  return `${prefix}${text}`;
+function withPrefix(companyName, text) {
+  if (!text || !companyName) return text;
+  const tag = `[${companyName}]`;
+  return text.startsWith(tag) ? text : `${tag} ${text}`;
 }
 
 /**
- * Create internal notification (database + socket)
+ * Kept for older callers: adds "[Company] " to a text. New code should let
+ * createNotification decide (it prefixes only multi-company recipients).
+ */
+async function prefixWithCompanyName(companyId, text) {
+  if (!text || !companyId) return text;
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { name: true } });
+  return withPrefix(company?.name, text);
+}
+
+// FCM errors that mean the token will never work again (app uninstalled,
+// reinstalled, or token rotated): the token is removed so we stop sending to it.
+const DEAD_TOKEN_CODES = new Set([
+  "messaging/registration-token-not-registered",
+  "messaging/invalid-registration-token",
+  "messaging/invalid-argument",
+]);
+
+async function dropDeadToken(token, err) {
+  if (!DEAD_TOKEN_CODES.has(err?.code || err?.errorInfo?.code)) return false;
+  // invalid-argument can also mean a bad payload; only treat it as a dead token
+  // when FCM says the token itself is the problem.
+  if ((err?.code || err?.errorInfo?.code) === "messaging/invalid-argument" && !/token/i.test(err?.message || "")) return false;
+  const { count } = await prisma.user.updateMany({ where: { deviceToken: token }, data: { deviceToken: null } });
+  console.warn(`[BB-117] removed a dead FCM token from ${count} account(s): ${err.code || err?.errorInfo?.code}`);
+  return true;
+}
+
+/**
+ * BB-117: the one push format for every notification type.
+ * FCM data values must be strings.
+ */
+function pushMessage({ token, title, body, notificationId, notificationCode, companyId, targetRoute, payload }) {
+  return {
+    token,
+    notification: { title: title || "BizBuddy", body: body || "" },
+    data: {
+      notificationId: String(notificationId || ""),
+      type: String(notificationCode),
+      companyId: String(companyId || ""),
+      targetRoute: String(targetRoute),
+      payload: JSON.stringify(payload || {}),
+    },
+    android: { notification: { channelId: "default" } },
+  };
+}
+
+/**
+ * Sends one push. Never throws; a dead token is removed.
+ * @returns {Promise<boolean>} sent
+ */
+async function sendPush(message) {
+  const messaging = getMessaging();
+  if (!messaging || !message?.token) return false;
+  try {
+    await messaging.send(message);
+    return true;
+  } catch (err) {
+    const dropped = await dropDeadToken(message.token, err).catch(() => false);
+    if (!dropped) console.error("❌ FCM push error:", err?.code || err?.message || err);
+    return false;
+  }
+}
+
+/**
+ * Create an internal notification: inbox row + socket event + phone push.
+ *
+ * BB-117 additions (all optional for callers):
+ *   dedupeKey    e.g. "MISSED_CLOCK_IN:{userId}:{userShiftId}". The database rejects a
+ *                second row with the same key (also after the user deleted the first,
+ *                since deleting only hides it), so nothing is sent twice.
+ *   targetRoute  app screen for a tap; defaults by notification type (notificationTargets.js).
+ *   push         false to skip the phone push (inbox + socket only).
+ *
+ * Nothing is sent to an inactive account or an inactive company (BB-107 / BB-117).
+ * @returns {Promise<object|null>} the inbox row, or null when skipped or a duplicate.
  */
 async function createNotification({
   userId,
@@ -30,63 +124,83 @@ async function createNotification({
   title,
   message,
   payload = {},
+  dedupeKey = null,
+  targetRoute = null,
+  push = true,
 }) {
   try {
-    // BB-107: inactive (or deleted) accounts receive nothing — no in-app entry,
-    // no socket event, no push.
     const recipient = await prisma.user.findUnique({
       where: { id: userId },
-      select: { status: true, deviceToken: true },
-    });
-    if (!recipient || recipient.status !== "active") return null;
-
-    const [prefixedTitle, prefixedMessage] = await Promise.all([
-      prefixWithCompanyName(companyId, title),
-      prefixWithCompanyName(companyId, message),
-    ]);
-
-    // Save to database
-    const notification = await prisma.notificationLog.create({
-      data: {
-        userId,
-        companyId,
-        departmentId,
-        notificationCode,
-        title: prefixedTitle,
-        message: prefixedMessage,
-        payload,
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        deviceToken: true,
+        companyId: true,
+        company: { select: { name: true, isActive: true } },
       },
     });
+    if (!recipient || recipient.status !== "active") return null;
+    if (recipient.company && recipient.company.isActive === false) return null;
 
-    // Send via Socket.io
+    // Cheap early exit for jobs that re-check every few minutes; the unique
+    // index below still decides when two processes race.
+    if (dedupeKey) {
+      const seen = await prisma.notificationLog.findUnique({ where: { dedupeKey }, select: { id: true } });
+      if (seen) return null;
+    }
+
+    const multi = await isMultiCompany(recipient);
+    const companyName = multi ? recipient.company?.name : null;
+    const finalTitle = withPrefix(companyName, title);
+    const finalMessage = withPrefix(companyName, message);
+    const route = targetRoute || targetRouteFor(notificationCode);
+
+    let notification;
+    try {
+      notification = await prisma.notificationLog.create({
+        data: {
+          userId,
+          companyId,
+          departmentId,
+          notificationCode,
+          title: finalTitle,
+          message: finalMessage,
+          payload,
+          dedupeKey,
+          targetRoute: route,
+        },
+      });
+    } catch (err) {
+      // P2002 = unique violation on dedupeKey: already sent, send nothing.
+      if (err?.code === "P2002" && dedupeKey) return null;
+      throw err;
+    }
+
     notifyUser(userId, {
       id: notification.id,
       type: notificationCode,
-      title: prefixedTitle,
-      message: prefixedMessage,
+      title: finalTitle,
+      message: finalMessage,
       payload,
+      targetRoute: route,
       createdAt: notification.createdAt,
       seen: false,
     });
 
-    const messaging = getMessaging();
-    if (messaging) {
-      try {
-        const { deviceToken } = recipient;
-        if (deviceToken) {
-          await messaging.send({
-            token: deviceToken,
-            notification: { title: prefixedTitle, body: prefixedMessage || "" },
-            data: {
-              type: String(notificationCode),
-              notificationId: String(notification.id),
-              payload: JSON.stringify(payload || {}),
-            },
-          });
-        }
-      } catch (pushErr) {
-        console.error("❌ FCM push error:", pushErr);
-      }
+    if (push && recipient.deviceToken) {
+      await sendPush(
+        pushMessage({
+          token: recipient.deviceToken,
+          title: finalTitle,
+          body: finalMessage,
+          notificationId: notification.id,
+          notificationCode,
+          companyId,
+          targetRoute: route,
+          payload,
+        })
+      );
     }
 
     return notification;
@@ -111,13 +225,22 @@ async function sendEmailNotification({
 }) {
   try {
     // BB-107: never email an inactive (or deleted) account.
+    // BB-117: nor anyone in an inactive company.
     if (recipientUserId) {
       const recipient = await prisma.user.findUnique({
         where: { id: recipientUserId },
-        select: { status: true },
+        select: { status: true, company: { select: { isActive: true } } },
       });
       if (!recipient || recipient.status !== "active") {
         return { success: false, skipped: true, reason: "Recipient account is not active." };
+      }
+      if (recipient.company && recipient.company.isActive === false) {
+        return { success: false, skipped: true, reason: "Company is not active." };
+      }
+    } else if (companyId) {
+      const company = await prisma.company.findUnique({ where: { id: companyId }, select: { isActive: true } });
+      if (company && company.isActive === false) {
+        return { success: false, skipped: true, reason: "Company is not active." };
       }
     }
 
@@ -157,12 +280,14 @@ async function sendEmailNotification({
 async function notifyMissedClockIn(employee, shift, company) {
   const { user, shiftDetails } = employee;
 
-  // Internal notification
-  await createNotification({
+  // Internal notification. BB-117: once per scheduled shift (dedupeKey); the
+  // email goes out only when the inbox entry was actually created.
+  const created = await createNotification({
     userId: user.id,
     companyId: company.id,
     departmentId: user.departmentId,
     notificationCode: "MISSED_CLOCK_IN",
+    dedupeKey: shiftDetails.userShiftId ? `MISSED_CLOCK_IN:${user.id}:${shiftDetails.userShiftId}` : null,
     title: "⏰ Missed Clock-In",
     message: `You haven't clocked in for your ${shiftDetails.shiftName} shift scheduled at ${shiftDetails.startTime}.`,
     payload: {
@@ -173,7 +298,7 @@ async function notifyMissedClockIn(employee, shift, company) {
   });
 
   // Email notification (if enabled)
-  if (company.notifyEmployeeMissedIn && user.email) {
+  if (created && company.notifyEmployeeMissedIn && user.email) {
     await sendEmailNotification({
       to: user.email,
       subject: "⏰ Reminder: Missing Clock-In",
@@ -202,12 +327,15 @@ async function notifyMissedClockIn(employee, shift, company) {
 async function notifyMissedClockOut(employee, timeLog, company) {
   const { user } = employee;
 
-  // Internal notification
-  await createNotification({
+  // Internal notification. BB-117: once per punch (dedupeKey), so deleting it in
+  // the app or the job's next run doesn't send it again; the email goes out only
+  // when the inbox entry was actually created.
+  const created = await createNotification({
     userId: user.id,
     companyId: company.id,
     departmentId: user.departmentId,
     notificationCode: "MISSED_CLOCK_OUT",
+    dedupeKey: timeLog.id ? `MISSED_CLOCK_OUT:${user.id}:${timeLog.id}` : null,
     title: "⏰ Missed Clock-Out",
     message: `You haven't clocked out yet. Your shift ended at ${new Date(timeLog.expectedClockOut).toLocaleTimeString("en-US", { timeZone: company.timeZone || "America/Los_Angeles" })}.`,
     payload: {
@@ -218,7 +346,7 @@ async function notifyMissedClockOut(employee, timeLog, company) {
   });
 
   // Email notification (if enabled)
-  if (company.notifyEmployeeMissedOut && user.email) {
+  if (created && company.notifyEmployeeMissedOut && user.email) {
     await sendEmailNotification({
       to: user.email,
       subject: "⏰ Reminder: Missing Clock-Out",
@@ -243,16 +371,35 @@ async function notifyMissedClockOut(employee, timeLog, company) {
 /**
  * Send daily morning report to management
  */
+// BB-117: the report date is the company's own date (passed in by the job, in
+// the company zone); one report per manager per day (dedupeKey); greeting uses
+// the manager's name. Shared by the morning and evening reports.
+const MANAGER_SELECT = {
+  id: true,
+  email: true,
+  username: true,
+  role: true,
+  profile: { select: { firstName: true, lastName: true } },
+};
+const managerName = (m) => m.profile?.firstName?.trim() || m.username || "there";
+function companyReportDate(company, dateKey) {
+  const tz = company.timeZone || "America/Los_Angeles";
+  const day = dateKey ? moment.tz(dateKey, "YYYY-MM-DD", tz) : moment().tz(tz);
+  return { dateKey: day.format("YYYY-MM-DD"), reportDate: day.format("dddd, MMMM D, YYYY") };
+}
+
 async function sendMorningReport(
   companyId,
   missedClockIns,
   currentlyClockedIn,
+  options = {},
 ) {
   const company = await prisma.company.findUnique({
     where: { id: companyId },
   });
 
-  if (!company.notifyAdminMissedClocks) return;
+  if (!company?.notifyAdminMissedClocks || company.isActive === false) return;
+  const { dateKey, reportDate } = companyReportDate(company, options.dateKey);
 
   const managementUsers = await prisma.user.findMany({
     where: {
@@ -261,21 +408,17 @@ async function sendMorningReport(
       role: { in: ["admin", "superadmin", "supervisor"] },
       status: "active",
     },
-    select: {
-      id: true,
-      email: true,
-      username: true,
-      role: true,
-    },
+    select: MANAGER_SELECT,
   });
 
   const emailPromises = managementUsers.map(async (manager) => {
     // Internal notification
-    await createNotification({
+    const created = await createNotification({
       userId: manager.id,
       companyId,
       departmentId: null,
       notificationCode: "DAILY_CLOCK_IN_REPORT",
+      dedupeKey: `DAILY_CLOCK_IN_REPORT:${manager.id}:${dateKey}`,
       title: "📊 Morning Clock-In Report",
       message: `${missedClockIns.length} employees missed clock-in. ${currentlyClockedIn.length} employees are currently clocked in.`,
       payload: {
@@ -284,21 +427,18 @@ async function sendMorningReport(
       },
     });
 
-    // Email notification
-    if (manager.email) {
+    // Email notification (only with a new inbox entry: once per manager per day)
+    if (created && manager.email) {
       await sendEmailNotification({
         to: manager.email,
         subject: `🔔 Morning Clock-In Report - ${company.name}`,
         templateName: "morningReport",
         context: {
-          managerName: manager.username,
+          managerName: managerName(manager),
           companyName: company.name,
-          reportDate: new Date().toLocaleDateString("en-US", {
-            weekday: "long",
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          }),
+          reportDate,
+          timeZone: company.timeZone || "America/Los_Angeles",
+          currentYear: new Date().getFullYear(),
           missedClockIns,
           currentlyClockedIn,
           missedCount: missedClockIns.length,
@@ -336,7 +476,8 @@ async function sendEveningReport(
     where: { id: companyId },
   });
 
-  if (!company.notifyAdminMissedClocks) return;
+  if (!company?.notifyAdminMissedClocks || company.isActive === false) return;
+  const { dateKey, reportDate } = companyReportDate(company, options.dateKey);
 
   // Get management users
   const managementUsers = await prisma.user.findMany({
@@ -346,23 +487,15 @@ async function sendEveningReport(
       role: { in: ["admin", "superadmin", "supervisor"] },
       status: "active",
     },
-    select: {
-      id: true,
-      email: true,
-      username: true,
-      role: true,
-    },
+    select: MANAGER_SELECT,
   });
 
   const emailContext = (manager) => ({
-    managerName: manager.username,
+    managerName: managerName(manager),
     companyName: company.name,
-    reportDate: new Date().toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    }),
+    reportDate,
+    timeZone: company.timeZone || "America/Los_Angeles",
+    currentYear: new Date().getFullYear(),
     missedClockOuts,
     stillClockedIn,
     missedCount: missedClockOuts.length,
@@ -372,13 +505,16 @@ async function sendEveningReport(
   });
 
   const emailPromises = managementUsers.map(async (manager) => {
-    // Internal notification — skip in test mode to avoid polluting the DB
+    // Internal notification — skip in test mode to avoid polluting the DB.
+    // BB-117: once per manager per day; no new inbox entry means no email either.
+    let created = true;
     if (!testEmail) {
-      await createNotification({
+      created = await createNotification({
         userId: manager.id,
         companyId,
         departmentId: null,
         notificationCode: "DAILY_CLOCK_OUT_REPORT",
+        dedupeKey: `DAILY_CLOCK_OUT_REPORT:${manager.id}:${dateKey}`,
         title: "Evening Clock-Out Report",
         message: `${missedClockOuts.length} employees missed clock-out. ${stillClockedIn.length} employees are still clocked in.`,
         payload: {
@@ -391,7 +527,7 @@ async function sendEveningReport(
     // In test mode, send only one email to testEmail using the first manager's context.
     // Skip all subsequent managers so we don't send duplicate test emails per company.
     const recipientEmail = testEmail || manager.email;
-    if (!recipientEmail) return;
+    if (!created || !recipientEmail) return;
     if (testEmail && managementUsers.indexOf(manager) !== 0) return;
 
     await sendEmailNotification({
@@ -424,11 +560,12 @@ async function notifyAutoClockOut({ user, timeLog }) {
   });
 
   // 1. Internal notification (database + socket)
-  await createNotification({
+  const created = await createNotification({
     userId: user.id,
     companyId: user.companyId,
     departmentId: user.departmentId,
     notificationCode: "AUTO_CLOCK_OUT",
+    dedupeKey:        `AUTO_CLOCK_OUT:${user.id}:${timeLog.id}`, // BB-117: once per punch
     title: "⏰ Automatic Clock-Out",
     message: `You were automatically clocked out after working ${timeLog.hoursWorked} hours (5-hour limit reached).`,
     payload: {
@@ -453,7 +590,7 @@ async function notifyAutoClockOut({ user, timeLog }) {
   });
 
   // 3. Email notification
-  if (user.email) {
+  if (created && user.email) {
     await sendEmailNotification({
       to: user.email,
       subject: "⏰ Automatic Clock-Out - 5 Hour Limit Reached",
@@ -505,11 +642,12 @@ async function notifyClockOutWarning({ user, scheduledEnd, timeLog }) {
     ? new Date(scheduledEnd).toLocaleTimeString("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit" })
     : "your scheduled end time";
 
-  await createNotification({
+  const created = await createNotification({
     userId:           user.id,
     companyId:        user.companyId,
     departmentId:     user.departmentId,
     notificationCode: "CLOCK_OUT_WARNING",
+    dedupeKey:        `CLOCK_OUT_WARNING:${user.id}:${timeLog.id}`, // BB-117: once per punch
     title:            "Clock-Out Reminder",
     message:          `Your shift ends at ${endStr}. Please clock out before then.`,
     payload: {
@@ -518,7 +656,7 @@ async function notifyClockOutWarning({ user, scheduledEnd, timeLog }) {
     },
   });
 
-  if (user.email) {
+  if (created && user.email) {
     const clockInStr = new Date(timeLog.timeIn).toLocaleTimeString("en-US", {
       timeZone: tz,
       hour:     "2-digit",
@@ -605,6 +743,8 @@ async function notifyAutoClockOutSupervisors({ user, timeLog, scheduledEnd, noti
 module.exports = {
   prefixWithCompanyName,
   createNotification,
+  sendPush,
+  pushMessage,
   sendEmailNotification,
   notifyMissedClockIn,
   notifyMissedClockOut,

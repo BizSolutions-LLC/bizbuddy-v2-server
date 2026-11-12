@@ -35,8 +35,17 @@ router.get("/profile", getUserProfile);
 router.get("/approver", authenticate, getApprover);
 router.put("/profile", authenticate, blockSystemAgent, updateProfile);
 router.put("/change-password", authenticate, blockSystemAgent, changePassword);
-router.get("/device-token", getDeviceToken);
-router.post("/device-token", updateDeviceToken);
+// BB-117: the device-token endpoints use the signed-in user. The app already
+// sends the login header; a call without it still works the old way (userId in
+// the body) for now and is logged, so we can see whether old app versions remain
+// before closing it. A header that is present but invalid is rejected as usual.
+const loginIfPresent = (req, res, next) => {
+  if (req.headers["authorization"]) return authenticate(req, res, next);
+  console.warn(`[BB-117] ${req.method} /account/device-token without login header (userId ${req.body?.userId || req.query?.userId || "none"})`);
+  return next();
+};
+router.get("/device-token", loginIfPresent, getDeviceToken);
+router.post("/device-token", loginIfPresent, updateDeviceToken);
 router.get("/sign-in", signIn);   // legacy — kept for backwards compatibility
 router.post("/sign-in", signIn);  // legacy — kept for backwards compatibility
 router.post("/login", signIn);    // new — use this going forward

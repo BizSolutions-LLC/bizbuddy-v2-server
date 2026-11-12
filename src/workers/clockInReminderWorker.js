@@ -2,7 +2,7 @@
 const cron = require("node-cron");
 const { prisma } = require("@config/connection");
 const { getIO } = require("@config/socket");
-const { getMessaging } = require("@config/firebase");
+const { createNotification } = require("@services/notificationService");
 const moment = require("moment-timezone");
 const { evaluateClockInReminder } = require("@services/timeLogComputeUtils");
 
@@ -22,17 +22,19 @@ async function processClockInReminders() {
 
   // Fetch candidate user shifts with users (for deviceToken)
   const todaysUserShifts = await prisma.userShift.findMany({
-    // BB-107: no reminders for inactive accounts
-    where: { assignedDate: { gte: windowStart, lte: windowEnd }, user: { status: "active" } },
+    // BB-107: no reminders for inactive accounts; BB-117: nor inactive companies
+    where: {
+      assignedDate: { gte: windowStart, lte: windowEnd },
+      user: { status: "active", company: { isActive: true } },
+    },
     include: {
       shift: { select: { startTime: true, timeZone: true, companyId: true } },
-      user: { select: { id: true, deviceToken: true } },
+      user: { select: { id: true, companyId: true, departmentId: true } },
     },
   });
   if (!todaysUserShifts.length) return;
 
   const io = getIO();
-  const messaging = getMessaging();
 
   // Preload active logs for users to avoid per-row queries
   const userIds = [...new Set(todaysUserShifts.map((u) => u.userId))];
@@ -73,48 +75,38 @@ async function processClockInReminders() {
       if (!evaluation.shouldRemind) continue;
 
       const { shiftStart, minutesRemaining } = evaluation;
-      const marker = `clockinReminder:${us.id}`; // dedupe by userShift id
-      const existing = await prisma.userActivity.findFirst({
-        where: { userId: us.userId, activityDescription: marker },
-      });
-      if (existing) continue;
 
+      // Sent before BB-117 (the old UserActivity marker): don't send it again.
+      // Read-only, for the shifts that were already reminded around the deploy.
+      const legacyMarker = await prisma.userActivity.findFirst({
+        where: { userId: us.userId, activityDescription: `clockinReminder:${us.id}` },
+        select: { id: true },
+      });
+      if (legacyMarker) continue;
+
+      // BB-117: the reminder is now an inbox entry (CLOCK_IN_REMINDER) and goes
+      // through the shared sender: same push format and tap route as every other
+      // notification, once per scheduled shift (dedupeKey replaces the marker).
+      const message = "Your shift starts in 30 minutes. Please remember to clock in.";
+      const created = await createNotification({
+        userId: us.userId,
+        companyId: us.user.companyId || us.shift?.companyId,
+        departmentId: us.user.departmentId || null,
+        notificationCode: "CLOCK_IN_REMINDER",
+        title: "Shift starting soon",
+        message,
+        payload: { userShiftId: us.id, shiftStart: shiftStart.toISOString(), minutesRemaining },
+        dedupeKey: `CLOCK_IN_REMINDER:${us.userId}:${us.id}`,
+      });
+      if (!created) continue;
+
+      // Kept for the app's existing live listener.
       io.to(us.userId).emit("clockInReminder", {
         userId: us.userId,
         userShiftId: us.id,
         shiftStart: shiftStart.toISOString(),
         minutesRemaining,
-        message:
-          "Your shift starts in 30 minutes. Please remember to clock in.",
-      });
-
-      // Send FCM push if possible
-      const token = us.user?.deviceToken;
-      if (messaging && token) {
-        try {
-          await messaging.send({
-            token,
-            notification: {
-              title: "Shift starting soon",
-              body: "Your shift starts in 30 minutes. Please remember to clock in.",
-            },
-            data: {
-              userShiftId: String(us.id),
-              userId: String(us.userId),
-              shiftStart: shiftStart.toISOString(),
-              minutesRemaining: String(minutesRemaining),
-              type: "clockInReminder",
-              targetScreen: "timekeeping-punch",
-              targetRoute: "/(tabs)/(shifts)/timekeeping-punch",
-            },
-          });
-        } catch (pushErr) {
-          console.error("[ClockInReminder] FCM send error", us.id, pushErr);
-        }
-      }
-
-      await prisma.userActivity.create({
-        data: { userId: us.userId, activityDescription: marker },
+        message,
       });
     } catch (err) {
       console.error("[ClockInReminder] Error for userShift", us.id, err);

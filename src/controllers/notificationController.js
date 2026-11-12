@@ -1,4 +1,17 @@
 const { prisma } = require('@config/connection');
+const { targetRouteFor } = require('@services/notificationTargets');
+
+// BB-117: deleting hides a notification (deletedAt) instead of erasing it, so its
+// duplicate-check key keeps working and it isn't sent again. Hidden rows are never
+// returned; the nightly retention job removes them for good after 30 days.
+// Responses keep their shape, plus `targetRoute` (the app screen a tap opens;
+// older rows get the default for their type). Internal fields are not sent.
+const VISIBLE = { deletedAt: null };
+function toClient(n) {
+  if (!n) return n;
+  const { dedupeKey, deletedAt, ...rest } = n;
+  return { ...rest, targetRoute: n.targetRoute || targetRouteFor(n.notificationCode) };
+}
 
 /**
  * Get user's notifications (paginated)
@@ -9,7 +22,7 @@ exports.getNotifications = async (req, res) => {
     const { page = 1, limit = 20, seen } = req.query;
 
     const skip = (page - 1) * limit;
-    const where = { userId };
+    const where = { userId, ...VISIBLE };
 
     if (seen !== undefined) {
       where.seen = seen === 'true';
@@ -28,7 +41,7 @@ exports.getNotifications = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: {
-        notifications,
+        notifications: notifications.map(toClient),
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -57,6 +70,7 @@ exports.getUnreadCount = async (req, res) => {
       where: {
         userId,
         seen: false,
+        ...VISIBLE,
       },
     });
 
@@ -85,6 +99,7 @@ exports.markAsSeen = async (req, res) => {
       where: {
         id: notificationId,
         userId,
+        ...VISIBLE,
       },
     });
 
@@ -105,7 +120,7 @@ exports.markAsSeen = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      data: updated,
+      data: toClient(updated),
     });
   } catch (error) {
     console.error('❌ Error marking notification as seen:', error);
@@ -127,6 +142,7 @@ exports.markAllAsSeen = async (req, res) => {
       where: {
         userId,
         seen: false,
+        ...VISIBLE,
       },
       data: {
         seen: true,
@@ -160,6 +176,7 @@ exports.deleteNotification = async (req, res) => {
       where: {
         id: notificationId,
         userId,
+        ...VISIBLE,
       },
     });
 
@@ -170,8 +187,9 @@ exports.deleteNotification = async (req, res) => {
       });
     }
 
-    await prisma.notificationLog.delete({
+    await prisma.notificationLog.update({
       where: { id: notificationId },
+      data: { deletedAt: new Date() },
     });
 
     return res.status(200).json({
@@ -194,8 +212,9 @@ exports.clearAllNotifications = async (req, res) => {
   try {
     const { id: userId } = req.user;
 
-    const result = await prisma.notificationLog.deleteMany({
-      where: { userId },
+    const result = await prisma.notificationLog.updateMany({
+      where: { userId, ...VISIBLE },
+      data: { deletedAt: new Date() },
     });
 
     return res.status(200).json({
