@@ -107,7 +107,13 @@ async function createLiveUser(userId, timeLogId, timeIn) {
         }
       }
       if (latestShift?.endTime) {
-        scheduledEnd = combineDateWithTimeTz(clockInDate, latestShift.endTime, tz);
+        // BB-122: shift clock times belong to the shift's own zone (stamped at
+        // creation), not the company's current zone — same rule as the cutoff
+        // strategies. Fixes early auto clock-out after a company zone change.
+        const shiftTz = latestShift.timeZone && moment.tz.zone(latestShift.timeZone)
+          ? latestShift.timeZone
+          : tz;
+        scheduledEnd = combineDateWithTimeTz(clockInDate, latestShift.endTime, shiftTz);
       }
     }
 
