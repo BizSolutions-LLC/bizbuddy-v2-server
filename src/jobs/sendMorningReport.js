@@ -1,45 +1,37 @@
 const { prisma } = require('@config/connection');
+const { HUMAN_ONLY } = require('@utils/systemAgent');
 const { sendMorningReport } = require('@services/notificationService');
+const { claimDueCompanies, listName, shiftTimeStr } = require('@services/attendanceReportSchedule');
 const moment = require('moment-timezone');
 
 /**
  * Send daily morning report to management
  * Lists employees who missed clock-in and who's currently clocked in
+ *
+ * BB-117: runs every 5 minutes; each company gets its report at its own
+ * morningReportTime in its own time zone, once per day (attendanceReportSchedule).
+ * Today's shifts are read by the company-zone date (assignedDate is stored as
+ * UTC midnight of the calendar date), names are "Last, First".
  */
 async function sendMorningReportJob() {
-  console.log('📊 Generating morning reports...');
-  console.log('⏰ Current server time:', new Date().toISOString());
-
   try {
-    const companies = await prisma.company.findMany({
-      where: { notifyAdminMissedClocks: true },
-      select: {
-        id: true,
-        name: true,
-        timeZone: true,
-        morningReportTime: true,
-      },
-    });
-
-    console.log(`📌 Found ${companies.length} companies with notifications enabled`);
+    const companies = await claimDueCompanies('morning', { notifyAdminMissedClocks: true });
+    if (!companies.length) return;
 
     for (const company of companies) {
-      console.log(`\n🏢 Processing company: ${company.name}`);
-      const timezone = company.timeZone || 'America/Los_Angeles';
-      console.log(`   Timezone: ${timezone}`);
-      console.log(`   Morning report time: ${company.morningReportTime}`);
-      const now = moment().tz(timezone);
-      const todayStart = now.clone().startOf('day');
-      const todayEnd = now.clone().endOf('day');
+      const timezone = company.timeZone;
+      const now = company.now;
 
-      // Get all shifts scheduled for today
+      // assignedDate holds the calendar date at UTC midnight: match the company's date.
+      const dayStart = new Date(`${company.dateKey}T00:00:00.000Z`);
+      const dayEnd = new Date(`${company.dateKey}T23:59:59.999Z`);
+
       const todayShifts = await prisma.userShift.findMany({
         where: {
-          assignedDate: {
-            gte: todayStart.toDate(),
-            lte: todayEnd.toDate(),
-          },
+          assignedDate: { gte: dayStart, lte: dayEnd },
+          status: { not: 'cancelled' },
           user: {
+            ...HUMAN_ONLY,
             companyId: company.id,
             status: 'active',
           },
@@ -59,61 +51,54 @@ async function sendMorningReportJob() {
       const currentlyClockedIn = [];
 
       for (const userShift of todayShifts) {
-        const shiftStartTime = moment.tz(
-          `${userShift.assignedDate.toISOString().split('T')[0]} ${userShift.customStartTime || userShift.shift.startTime}`,
-          timezone
-        );
+        const startTime = shiftTimeStr(userShift.customStartTime || userShift.shift?.startTime);
+        if (!startTime) continue;
+        const shiftStartTime = moment.tz(`${company.dateKey} ${startTime}`, 'YYYY-MM-DD HH:mm:ss', timezone);
+        if (!shiftStartTime.isValid() || !shiftStartTime.isBefore(now)) continue;
 
-        // Only check shifts that should have started before now
-        if (shiftStartTime.isBefore(now)) {
-          // Check for clock-in
-          const clockIn = await prisma.timeLog.findFirst({
-            where: {
-              userId: userShift.userId,
-              timeIn: {
-                gte: shiftStartTime.clone().subtract(30, 'minutes').toDate(),
-                lte: now.toDate(),
-              },
+        const clockIn = await prisma.timeLog.findFirst({
+          where: {
+            userId: userShift.userId,
+            timeIn: {
+              gte: shiftStartTime.clone().subtract(30, 'minutes').toDate(),
+              lte: now.toDate(),
             },
-            orderBy: { timeIn: 'desc' },
-          });
+          },
+          orderBy: { timeIn: 'desc' },
+        });
 
-          if (!clockIn) {
-            // Missed clock-in
-            const minutesLate = now.diff(shiftStartTime, 'minutes');
-            missedClockIns.push({
-              employeeName: `${userShift.user.profile?.firstName || ''} ${userShift.user.profile?.lastName || ''}`.trim() || userShift.user.username,
-              department: userShift.user.department?.name || 'N/A',
-              scheduledTime: shiftStartTime.format('h:mm A'),
-              minutesLate,
-              supervisor: userShift.user.department?.supervisor?.username || 'N/A',
-            });
-          } else if (!clockIn.timeOut) {
-            // Currently clocked in
-            const hoursWorked = now.diff(moment(clockIn.timeIn), 'hours', true).toFixed(1);
-            currentlyClockedIn.push({
-              employeeName: `${userShift.user.profile?.firstName || ''} ${userShift.user.profile?.lastName || ''}`.trim() || userShift.user.username,
-              department: userShift.user.department?.name || 'N/A',
-              clockInTime: moment(clockIn.timeIn).tz(timezone).format('h:mm A'),
-              hoursWorked,
-            });
-          }
+        const employeeName = listName(userShift.user);
+        const department = userShift.user.department?.name || 'N/A';
+
+        if (!clockIn) {
+          missedClockIns.push({
+            employeeName,
+            department,
+            scheduledTime: shiftStartTime.format('h:mm A'),
+            minutesLate: now.diff(shiftStartTime, 'minutes'),
+          });
+        } else if (!clockIn.timeOut) {
+          currentlyClockedIn.push({
+            employeeName,
+            department,
+            clockInTime: moment(clockIn.timeIn).tz(timezone).format('h:mm A'),
+            hoursWorked: now.diff(moment(clockIn.timeIn), 'hours', true).toFixed(1),
+          });
         }
       }
 
-      console.log(`   Missed clock-ins: ${missedClockIns.length}`);
-      console.log(`   Currently clocked in: ${currentlyClockedIn.length}`);
+      const byName = (a, b) => a.employeeName.localeCompare(b.employeeName);
+      missedClockIns.sort(byName);
+      currentlyClockedIn.sort(byName);
 
       // Send report only if there's something to report
       if (missedClockIns.length > 0 || currentlyClockedIn.length > 0) {
-        console.log(`📧 Sending morning report for ${company.name}`);
-        await sendMorningReport(company.id, missedClockIns, currentlyClockedIn);
+        console.log(`📧 Morning report for ${company.name}: ${missedClockIns.length} missed, ${currentlyClockedIn.length} clocked in`);
+        await sendMorningReport(company.id, missedClockIns, currentlyClockedIn, { dateKey: company.dateKey });
       } else {
-        console.log(`✅ No issues to report for ${company.name}`);
+        console.log(`✅ Morning report for ${company.name}: nothing to report`);
       }
     }
-
-    console.log('✅ Morning reports complete');
   } catch (error) {
     console.error('❌ Error sending morning reports:', error);
   }

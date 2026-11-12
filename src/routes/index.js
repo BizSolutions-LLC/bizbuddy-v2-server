@@ -10,6 +10,7 @@ const employeeRoutes = require("@routes/Features/employeeRoutes");
 const userPresenceRoutes = require("@routes/Features/userPresenceRoutes");
 const leavesRoutes = require("@routes/Features/leaveRoutes");
 const locationRoutes = require("@routes/Features/locationRoutes");
+const { blockSystemAgentArea } = require("@utils/systemAgent"); // BB-120: payroll is off-limits to B. Buddy
 const payrollRoutes = require("@routes/Features/payrollRoutes");
 const timeLogsRoutes = require("@routes/Features/timeLogRoutes.js");
 const shiftRoutes = require("@routes/Features/shiftRoutes");
@@ -48,6 +49,10 @@ const payrollExportRoutes = require("@routes/Payroll/payrollExportRoutes");
 const disbursementRoutes = require("@routes/Disbursement/disbursementRoutes");
 const yearlyTotalHoursReportRoutes = require("@routes/Reports/yearlyTotalHoursReportRoutes");
 const leaveReportRoutes = require("@routes/Reports/leaveReportRoutes");
+const employeeReportRoutes = require("@routes/Reports/employeeReportRoutes"); // BB-119
+const departmentReportRoutes = require("@routes/Reports/departmentReportRoutes"); // BB-119
+const contestReportRoutes = require("@routes/Reports/contestReportRoutes"); // BB-119
+const punchLogReportRoutes = require("@routes/Reports/punchLogReportRoutes"); // BB-119
 const setupGuideRoutes = require("@routes/Company/setupGuideRoutes");
 
 const testRoutes = require("@routes/testRoutes");
@@ -63,7 +68,7 @@ router.use("/timelogs", timeLogsRoutes);
 router.use("/presence", userPresenceRoutes);
 router.use("/leaves", leavesRoutes);
 router.use("/location", locationRoutes);
-router.use("/payroll", payrollRoutes);
+router.use("/payroll", blockSystemAgentArea, payrollRoutes); // BB-120: no B. Buddy
 router.use("/shifts", shiftRoutes);
 router.use("/shift-assignments", shiftAssignmentRoutes);
 router.use("/shiftschedules", shiftSchedulesRoutes);
@@ -83,20 +88,24 @@ router.use("/request-punch-log", requestPunchRoutes);
 router.use("/punch-log-import", punchLogImportRoutes);
 router.use("/schedule-import", scheduleImportRoutes);
 router.use("/backtrack-punch-log-import", backtrackPunchLogImportRoutes);
-router.use("/payroll-system", payrollSystemRoutes);
-router.use("/company-information", companyInformationRoutes);
+router.use("/payroll-system", blockSystemAgentArea, payrollSystemRoutes); // BB-120
+router.use("/company-information", blockSystemAgentArea, companyInformationRoutes); // BB-120
 router.use("/deductions", deductionsRoutes);
-router.use("/employee-payroll-details", employeePayrollDetailsRoutes);
+router.use("/employee-payroll-details", blockSystemAgentArea, employeePayrollDetailsRoutes); // BB-120
 router.use("/cutoff-periods", cutOffDetailsRoutes);
 router.use('/notifications', notificationRoutes);
 router.use("/cutoff", cutoffRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/feedback", feedbackRoutes);
 router.use("/punch-logs", punchLogsBootstrapRoutes);
-router.use("/payroll-export", payrollExportRoutes);
-router.use("/disbursements", disbursementRoutes);
+router.use("/payroll-export", blockSystemAgentArea, payrollExportRoutes); // BB-120
+router.use("/disbursements", blockSystemAgentArea, disbursementRoutes); // BB-120
 router.use("/reports", yearlyTotalHoursReportRoutes);
 router.use("/reports", leaveReportRoutes);
+router.use("/reports", employeeReportRoutes); // BB-119
+router.use("/reports", departmentReportRoutes); // BB-119
+router.use("/reports", contestReportRoutes); // BB-119
+router.use("/reports", punchLogReportRoutes); // BB-119
 
 router.use("/analytics", analyticsRoutes);
 router.use("/system-admin", systemAdminRoutes);

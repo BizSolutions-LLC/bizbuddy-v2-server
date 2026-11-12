@@ -129,15 +129,24 @@ const employeeName = (u) => {
   return last && first ? `${last}, ${first}` : (`${first} ${last}`.trim() || u.email);
 };
 
-async function resolveScope(actor, f) {
-  // Supervisors only ever see their own department.
+// options.team (BB-119 Leave Requests PDF): a supervisor sees their department
+// PLUS their direct reports — the same scope as the Leave Requests page
+// (leaveVisibilityWhere, BB-072). Without it, supervisors see their own
+// department only (BB-098 / BB-106 reports, unchanged).
+async function resolveScope(actor, f, { team = false } = {}) {
   let departmentId = f.departmentId;
+  let teamOr = null;
   if (actor.role === "supervisor") {
     const me = await prisma.user.findUnique({ where: { id: actor.id }, select: { departmentId: true } });
-    if (!me?.departmentId) throw new ReportError(403, "You aren't assigned to a department.");
-    if (departmentId && departmentId !== me.departmentId)
-      throw new ReportError(403, "You can only report on your own department.");
-    departmentId = me.departmentId;
+    if (team) {
+      teamOr = [{ employmentDetail: { supervisorId: actor.id } }, ...(me?.departmentId ? [{ departmentId: me.departmentId }] : [])];
+      departmentId = null;
+    } else {
+      if (!me?.departmentId) throw new ReportError(403, "You aren't assigned to a department.");
+      if (departmentId && departmentId !== me.departmentId)
+        throw new ReportError(403, "You can only report on your own department.");
+      departmentId = me.departmentId;
+    }
   }
 
   const users = await prisma.user.findMany({
@@ -145,6 +154,7 @@ async function resolveScope(actor, f) {
       ...HUMAN_ONLY,
       companyId: actor.companyId,
       ...(departmentId && { departmentId }),
+      ...(teamOr && { OR: teamOr }),
       ...(f.userIds.length && { id: { in: f.userIds } }),
       ...(!f.includeInactive && { status: "active" }),
     },
@@ -575,6 +585,7 @@ async function requestsReport(ctx) {
       isPaid:            l.isPaid,
       // LeaveDay rows exist once a leave is decided; pending requests → null.
       requestedHours:    l.days.length ? r2(l.days.reduce((s, d) => s + num(d.hours), 0)) : null,
+      dayCount:          l.days.length || null, // BB-119: leave days actually counted (null until decided)
       paidHours:         decided ? r2(l.actualPaidHours) : null,
       unpaidHours:       decided ? r2(l.actualUnpaidHours) : null,
       reason:            l.leaveReason ?? null,
@@ -714,4 +725,8 @@ module.exports = {
   resolveScope,
   balancesAt,
   bucketOf,
+  // BB-119: shared with leaveRequestsReportService.js
+  requestsReport,
+  REQUEST_STATUSES,
+  isYmd,
 };

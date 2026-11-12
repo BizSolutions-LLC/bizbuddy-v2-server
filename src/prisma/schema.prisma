@@ -63,11 +63,16 @@ model NotificationLog {
   seen             Boolean          @default(false)
   seenAt           DateTime?        @db.Timestamptz(6)
   createdAt        DateTime         @default(now()) @db.Timestamptz(6)
+  // BB-117: duplicate check (a second copy is rejected), soft delete, and the app screen a tap opens.
+  dedupeKey        String?          @unique
+  deletedAt        DateTime?        @db.Timestamptz(6)
+  targetRoute      String?
   company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   department       Department?      @relation(fields: [departmentId], references: [id])
   user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, seen])
+  @@index([createdAt])
   @@index([companyId, notificationCode])
   @@index([departmentId])
 }
@@ -736,6 +741,12 @@ model Company {
   // BB-115: "Set up your business" guide state — { skipped: [], reviewed: [], dismissedAt }.
   // Step completion itself is derived live (setupGuideService); only admin choices live here.
   setupGuide Json?
+
+  // BB-117: inactive companies get no inbox entries, pushes, emails, reminders or reports.
+  isActive            Boolean   @default(true)
+  // BB-117: company-zone date the morning / evening attendance email last went out (once per day).
+  morningReportSentOn DateTime? @db.Date
+  eveningReportSentOn DateTime? @db.Date
 
 }
 
@@ -1576,6 +1587,7 @@ enum NotificationCode {
   AUTO_CLOCK_OUT
   AUTO_CLOCK_OUT_SV
   CLOCK_OUT_WARNING
+  CLOCK_IN_REMINDER // BB-117: "shift starts in 30 minutes", now in the inbox
 
   // Schedule
   SCHEDULE_ASSIGNED

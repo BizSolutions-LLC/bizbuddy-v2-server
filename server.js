@@ -56,7 +56,6 @@ connect()
     const { init: initSocket }          = require("@config/socket");
     const { initFirebase, isFirebaseReady } = require("@config/firebase");
     const { scheduleLeaveCredits }      = require("@workers/leaveCreditWorker");
-    const { scheduleClockOutReminders } = require("@workers/clockOutReminderWorker");
     const { scheduleClockInReminders }  = require("@workers/clockInReminderWorker");
     const { initializeCronJobs }        = require("@utils/cronScheduler");
     const { startCapacitySampler }      = require("@services/Analytics/capacityService");
@@ -65,7 +64,8 @@ connect()
     initSocket(server);
     initFirebase();
     scheduleLeaveCredits();
-    scheduleClockOutReminders();
+    // BB-117: the 10-minute "Shift ending soon" push (clockOutReminderWorker) is retired;
+    // the "Clock-Out Reminder" from autoClockOutJob (company-set, in inbox + email) stays.
     scheduleClockInReminders();
     initializeCronJobs();
     const capacitySampling = startCapacitySampler(); // BB-112: on Render (or CAPACITY_SAMPLING=true)

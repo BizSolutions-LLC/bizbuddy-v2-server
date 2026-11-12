@@ -2,55 +2,10 @@
 
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
-const { notifyUser } = require("./socketService");
-const { prefixWithCompanyName } = require("./notificationService");
-
-/**
- * Helper: Persist notification to DB and emit via Socket.io
- */
-async function createNotification({
-  userId,
-  companyId,
-  departmentId,
-  notificationCode,
-  title,
-  message,
-  payload = {},
-}) {
-  try {
-    const [prefixedTitle, prefixedMessage] = await Promise.all([
-      prefixWithCompanyName(companyId, title),
-      prefixWithCompanyName(companyId, message),
-    ]);
-
-    const notification = await prisma.notificationLog.create({
-      data: {
-        userId,
-        companyId,
-        departmentId,
-        notificationCode,
-        title: prefixedTitle,
-        message: prefixedMessage,
-        payload,
-      },
-    });
-
-    notifyUser(userId, {
-      id: notification.id,
-      type: notificationCode,
-      title: prefixedTitle,
-      message: prefixedMessage,
-      payload,
-      createdAt: notification.createdAt,
-      seen: false,
-    });
-
-    return notification;
-  } catch (error) {
-    console.error("❌ Error creating shift notification:", error);
-    throw error;
-  }
-}
+// BB-117: shift and schedule notifications go through the shared sender, so they
+// now reach the phone too (push), get the tap route for the schedule screen, and
+// skip inactive accounts and companies like every other notification.
+const { createNotification } = require("./notificationService");
 
 /**
  * Notify employee about a direct shift assignment

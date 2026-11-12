@@ -41,7 +41,7 @@ async function checkMissedClockIns() {
   try {
     // Get all companies with notification enabled
     const companies = await prisma.company.findMany({
-      where: { notifyEmployeeMissedIn: true },
+      where: { notifyEmployeeMissedIn: true, isActive: true }, // BB-117: inactive companies get nothing
       select: {
         id: true,
         name: true,
@@ -119,32 +119,22 @@ async function checkMissedClockIns() {
             // Employee missed clock-in!
             console.log(`⚠️  Missed clock-in: ${userShift.user.username} (${userShift.shift.shiftName})`);
 
-            // Check if we already sent notification
-            const existingNotification = await prisma.notificationLog.findFirst({
-              where: {
-                userId: userShift.userId,
-                notificationCode: 'MISSED_CLOCK_IN',
-                createdAt: {
-                  gte: now.clone().subtract(2, 'hours').toDate(), // Don't spam
+            // BB-117: sent once per scheduled shift — the dedupe key on the inbox
+            // row replaces the old "anything in the last 2 hours" lookup.
+            await notifyMissedClockIn(
+              {
+                user: userShift.user,
+                shiftDetails: {
+                  userShiftId: userShift.id,
+                  shiftId: userShift.shift.id,
+                  shiftName: userShift.shift.shiftName,
+                  scheduledStart: userShift.assignedDate,
+                  startTime: shiftStartTime.format('h:mm A'),
                 },
               },
-            });
-
-            if (!existingNotification) {
-              await notifyMissedClockIn(
-                {
-                  user: userShift.user,
-                  shiftDetails: {
-                    shiftId: userShift.shift.id,
-                    shiftName: userShift.shift.shiftName,
-                    scheduledStart: userShift.assignedDate,
-                    startTime: shiftStartTime.format('h:mm A'),
-                  },
-                },
-                userShift.shift,
-                company
-              );
-            }
+              userShift.shift,
+              company
+            );
           }
         }
       }

@@ -4,14 +4,20 @@
 // (docs/Sample_Yearly_Total_Hours_Report.xlsx's Summary tab, automated).
 // Admin/supervisor/superadmin only, companyId-scoped the same way as
 // getPayrollExportBatchesByCompany in payrollExportController.js.
+// BB-119: on the shared Excel template — requester ("B. Buddy (CODE)" for support),
+// generated time in the company zone, BizBuddy_YearlyTotalHours_… filename.
 
+const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
+const { resolveRequester } = require("@services/Reports/reportRequester");
 const {
   getYearlyTotalHoursSummary,
   GROUP_BY_KEYS,
   OPTIONAL_COLUMNS,
 } = require("@services/Reports/yearlyTotalHoursReportService");
 const { generateYearlyTotalHoursReportXlsx } = require("@utils/generateYearlyTotalHoursReportXlsx");
+
+const DEFAULT_TZ = "America/Los_Angeles";
 
 function parseList(value) {
   if (!value) return [];
@@ -62,25 +68,40 @@ const getYearlyTotalHoursReport = async (req, res) => {
       return res.status(403).json({ message: "Access denied: insufficient permissions." });
     }
 
-    const company = await prisma.company.findUnique({
-      where: { id: companyId },
-      select: { name: true },
-    });
+    const [company, me] = await Promise.all([
+      prisma.company.findUnique({
+        where: { id: companyId },
+        select: { name: true, timeZone: true },
+      }),
+      prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { email: true, isSystemAgent: true, profile: { select: { firstName: true, lastName: true } } },
+      }),
+    ]);
 
     if (!company) {
       return res.status(404).json({ message: "Company not found." });
     }
 
     const summary = await getYearlyTotalHoursSummary(companyId, year, { groupBy, periods });
-    const buffer = await generateYearlyTotalHoursReportXlsx(summary, company, columns);
+    const tz = company.timeZone || DEFAULT_TZ;
+    const requester = await resolveRequester(req.user, me);
+    const generatedAt = moment().tz(tz);
+    const buffer = await generateYearlyTotalHoursReportXlsx(
+      summary,
+      { company: { name: company.name, timeZone: tz }, requester, generatedAt },
+      columns
+    );
 
-    const filename = `${company.name.replace(/[^a-z0-9]+/gi, "_")}_Yearly_Total_Hours_${year}.xlsx`;
+    const companyPart = company.name.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "");
+    const filename = `BizBuddy_YearlyTotalHours_${companyPart}_${year}_${generatedAt.format("YYYY-MM-DD_HH-mm")}.xlsx`;
 
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", buffer.length);
     return res.status(200).send(buffer);
   } catch (error) {
     console.error("❌ getYearlyTotalHoursReport:", error);

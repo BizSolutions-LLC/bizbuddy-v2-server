@@ -341,12 +341,18 @@ async function loadCompany(companyId) {
   return company;
 }
 
-function buildChecklist(company, facts) {
+// BB-120: steps a viewer can't open are left out of their checklist (and its
+// progress). B. Buddy has no payroll access, so it doesn't see the payroll step.
+const HIDDEN_FOR_SYSTEM_AGENT = new Set(["payroll"]);
+
+function buildChecklist(company, facts, { isSystemAgent = false } = {}) {
   const state = readState(company.setupGuide);
   const skipped = new Set(state.skipped);
   const reviewed = new Set(state.reviewed);
 
-  const applicable = STEPS.filter((def) => !def.appliesTo || def.appliesTo(facts));
+  const applicable = STEPS.filter(
+    (def) => (!def.appliesTo || def.appliesTo(facts)) && !(isSystemAgent && HIDDEN_FOR_SYSTEM_AGENT.has(def.key))
+  );
   const steps = applicable.map((def) => {
     const r = def.check(facts);
     let status = "todo";
@@ -394,10 +400,10 @@ function buildChecklist(company, facts) {
   };
 }
 
-async function getChecklist(companyId) {
+async function getChecklist(companyId, viewer = {}) {
   const company = await loadCompany(companyId);
   const facts = await loadFacts(company);
-  return buildChecklist(company, facts);
+  return buildChecklist(company, facts, viewer);
 }
 
 // ── Actions ─────────────────────────────────────────────────────────────────
@@ -410,8 +416,10 @@ const ACTIONS = ["skip", "unskip", "review", "unreview", "dismiss", "reopen"];
  * @param {string} [key]  step key (not used by dismiss/reopen)
  * @returns the updated checklist
  */
-async function updateGuide(companyId, action, key) {
+async function updateGuide(companyId, action, key, viewer = {}) {
   if (!ACTIONS.includes(action)) throw new SetupGuideError(400, "Unknown action.");
+  if (viewer.isSystemAgent && key && HIDDEN_FOR_SYSTEM_AGENT.has(key))
+    throw new SetupGuideError(403, "This step isn't available to the B. Buddy account.");
   const company = await loadCompany(companyId);
   const state = readState(company.setupGuide);
 
@@ -442,7 +450,7 @@ async function updateGuide(companyId, action, key) {
     select: COMPANY_SELECT,
   });
   const facts = await loadFacts(updated);
-  return buildChecklist(updated, facts);
+  return buildChecklist(updated, facts, viewer);
 }
 
 module.exports = { getChecklist, updateGuide, SetupGuideError, STEPS };

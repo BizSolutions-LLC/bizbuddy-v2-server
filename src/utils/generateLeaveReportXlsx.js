@@ -1,18 +1,26 @@
 // src/utils/generateLeaveReportXlsx.js
 //
-// BB-106: renders buildLeaveTemplateReport() into the docs/LeaveReport_Template.csv
-// layout, one worksheet per leave type. Returns a Buffer, the same convention as
-// generateYearlyTotalHoursReportXlsx.js.
+// BB-106 (design redone for BB-119): renders buildLeaveTemplateReport() into the
+// docs/LeaveReport_Template.csv layout, one worksheet per leave type, on the shared
+// Excel template (utils/xlsx/reportWorkbook.js): title block, watermark, print
+// header/footer. The template's columns, wording and figures are unchanged.
+//
+// Layout (row 8 onward, under the title block):
+//   row 8  # | NAME | DOH | Beginning Balance Y-1 | Total Used Y-1 | Balance Y-1 | Credits | Beginning Balance Y | JAN (merged over its pay dates) … | Total Used Y | Balance Y | Beginning Balance Y+1
+//   row 9          (merged down)                                          |   Y     |      (merged down)      |  9  | 23 …                  |          (merged down)
+//   one row per employee ("Last, First"), then TOTAL HOURS. Zeros print as "-", like
+//   the template; pay-date cells are empty when no leave was used.
 
-const ExcelJS = require("exceljs");
-const { MONTH_KEYS } = require("@services/Reports/leaveTemplateReportService");
+const moment = require("moment-timezone");
+const XL = require("@utils/xlsx/reportWorkbook");
+const { MONTH_KEYS, QUARTER_KEYS } = require("@services/Reports/leaveTemplateReportService");
+
+const { style, keysLabel } = XL;
 
 // Accounting-style: zero prints as "-", like the template.
 const NUM_FMT = '#,##0.00;-#,##0.00;"-"';
 const MONTH_LABELS = MONTH_KEYS.map((m) => m.toUpperCase());
-const THIN = { style: "thin", color: { argb: "FFBFBFBF" } };
-
-const mmddyy = (ymd) => (ymd ? `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}/${ymd.slice(2, 4)}` : "");
+const plural = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
 
 function sheetName(leaveType, used) {
   const base = (String(leaveType || "Leave").replace(/[\\/*?:[\]]/g, " ").trim() || "Leave").slice(0, 31);
@@ -25,13 +33,39 @@ function sheetName(leaveType, used) {
   return name;
 }
 
-function rangeLabel(report) {
-  if (report.groupBy === "year") return `${report.year}`;
-  return `${report.year} (${report.periods.join(", ")})`;
+// "Year 2026 · Months included: Jan – Jun · Department: All departments · 18 employees"
+function settingsLine(report, employees) {
+  const included =
+    report.groupBy === "year"
+      ? "Whole year"
+      : report.groupBy === "quarter"
+        ? `Quarters included: ${keysLabel(report.periods, QUARTER_KEYS)}`
+        : `Months included: ${keysLabel(report.periods, MONTH_KEYS)}`;
+  return [
+    `Year ${report.year}`,
+    included,
+    `Department: ${report.departmentName || "All departments"}`,
+    employees == null ? null : plural(employees, "employee"),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
-function addSheet(workbook, name, report, sheet) {
-  const ws = workbook.addWorksheet(name, { views: [{ state: "frozen", xSplit: 3, ySplit: 4 }] });
+function notes(report) {
+  const Y = report.year;
+  return [
+    report.columnSource === "calendar"
+      ? `No cutoffs are paid in ${Y}, so the columns are calendar months (the last day of each month) instead of pay dates.`
+      : "Each column is a cutoff pay date. A leave day counts in the cutoff that contains it.",
+    report.groupBy === "year"
+      ? `Balance ${Y} is as of the last cutoff of the year.`
+      : `Balance ${Y} is as of the end of the last selected cutoff; Total Used ${Y} covers the selected ${report.groupBy === "quarter" ? "quarters" : "months"} only.`,
+    `Beginning Balance ${Y} = Balance ${Y - 1}. Beginning Balance ${Y + 1} = Balance ${Y} + the ${Y + 1} grant. Credits ${Y} are the hours granted in ${Y}.`,
+    `Hours, by leave date, in ${report.company.timezone} (the company's time zone). DOH = date of hire. "-" means zero.`,
+  ];
+}
+
+function addLeaveSheet(book, name, report, sheet) {
   const Y = report.year;
   const cols = report.columns;
 
@@ -42,123 +76,170 @@ function addSheet(workbook, name, report, sheet) {
   const balanceCol = totalUsedCol + 1;
   const nextBegCol = totalUsedCol + 2;
   const lastCol = nextBegCol;
+  const LEAD = 3;
 
-  // Title rows.
-  ws.mergeCells(1, 1, 1, lastCol);
-  ws.getCell(1, 1).value = report.company.name || "";
-  ws.getCell(1, 1).font = { bold: true, size: 14 };
-  ws.mergeCells(2, 1, 2, lastCol);
-  ws.getCell(2, 1).value =
-    `LEAVE REPORT — ${sheet.leaveType}${sheet.isArchived ? " (archived)" : ""} — ${rangeLabel(report)}` +
-    (report.columnSource === "calendar" ? "  ·  no cutoffs for this year, columns are calendar months" : "");
-  ws.getCell(2, 1).font = { bold: true, size: 12 };
+  const widths = [5, 26, 11, 11, 10, 10, 9, 11];
+  cols.forEach(() => widths.push(7));
+  widths.push(10, 10, 11);
 
-  // Header row 3 (labels / month names) and row 4 (year / pay-date day).
-  const h1 = ws.getRow(3);
-  const h2 = ws.getRow(4);
-  const set = (row, col, v) => { row.getCell(col).value = v; };
-  set(h1, C.name, "NAME");
-  set(h1, C.doh, "DOH");
-  set(h1, C.prevBeg, `Beginning Balance ${Y - 1}`);
-  set(h1, C.prevUsed, `Total Used ${Y - 1}`);
-  set(h1, C.prevBal, `Balance ${Y - 1}`);
-  set(h1, C.credits, "Credits");
-  set(h2, C.credits, `${Y}`);
-  set(h1, C.beg, `Beginning Balance ${Y}`);
-  set(h1, totalUsedCol, `Total Used ${Y}`);
-  set(h1, balanceCol, `Balance ${Y}`);
-  set(h1, nextBegCol, `Beginning Balance ${Y + 1}`);
+  const { ws, startRow } = XL.addCustomSheet(book, {
+    name,
+    title: `Leave Report — ${sheet.leaveType}${sheet.isArchived ? " (archived)" : ""}`,
+    subtitle: settingsLine(report, sheet.rows.length),
+    lastCol: Math.min(lastCol, firstPay + 7),
+    freezeRows: 2,
+    freezeColumns: LEAD,
+    widths,
+  });
+  const r1 = startRow;
+  const r2 = startRow + 1;
 
-  // Month header spans its pay-date columns.
+  const mergedHeader = (col, label, align = "center") => {
+    ws.mergeCells(r1, col, r2, col);
+    const c = ws.getCell(r1, col);
+    c.value = label;
+    style.header(c, { align });
+  };
+
+  // ── Header rows (template wording) ──
+  mergedHeader(C.no, "#");
+  mergedHeader(C.name, "NAME", "left");
+  mergedHeader(C.doh, "DOH");
+  mergedHeader(C.prevBeg, `Beginning Balance ${Y - 1}`);
+  mergedHeader(C.prevUsed, `Total Used ${Y - 1}`);
+  mergedHeader(C.prevBal, `Balance ${Y - 1}`);
+  ws.getCell(r1, C.credits).value = "Credits";
+  style.header(ws.getCell(r1, C.credits));
+  ws.getCell(r2, C.credits).value = `${Y}`;
+  style.subHeader(ws.getCell(r2, C.credits));
+  mergedHeader(C.beg, `Beginning Balance ${Y}`);
+
+  // Month header spans its pay-date columns; the pay day sits under it.
+  const groupStarts = [];
   let i = 0;
   while (i < cols.length) {
     let j = i;
-    while (j + 1 < cols.length && cols[j + 1].month === cols[i].month && cols[j + 1].paymentDate.slice(0, 4) === cols[i].paymentDate.slice(0, 4)) j++;
-    if (j > i) ws.mergeCells(3, firstPay + i, 3, firstPay + j);
-    set(h1, firstPay + i, MONTH_LABELS[cols[i].month]);
+    while (
+      j + 1 < cols.length &&
+      cols[j + 1].month === cols[i].month &&
+      cols[j + 1].paymentDate.slice(0, 4) === cols[i].paymentDate.slice(0, 4)
+    ) j++;
+    if (j > i) ws.mergeCells(r1, firstPay + i, r1, firstPay + j);
+    const c = ws.getCell(r1, firstPay + i);
+    c.value = MONTH_LABELS[cols[i].month];
+    style.header(c);
+    groupStarts.push(firstPay + i);
     i = j + 1;
   }
-  cols.forEach((c, k) => set(h2, firstPay + k, c.day));
+  cols.forEach((c, k) => {
+    const s = ws.getCell(r2, firstPay + k);
+    s.value = c.day;
+    style.subHeader(s);
+  });
+  groupStarts.forEach((col) => style.groupEdge(ws.getCell(r2, col)));
 
-  for (const r of [h1, h2]) {
-    r.font = { bold: true };
-    r.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-  }
-  h1.height = 32;
+  mergedHeader(totalUsedCol, `Total Used ${Y}`);
+  mergedHeader(balanceCol, `Balance ${Y}`);
+  mergedHeader(nextBegCol, `Beginning Balance ${Y + 1}`);
+  ws.getRow(r1).height = 30;
+  ws.getRow(r2).height = 16;
 
-  // Employee rows.
+  // ── Employee rows ──
+  const setNum = (row, col, v, { striped, blankZero = false, total = false } = {}) => {
+    const c = ws.getCell(row, col);
+    c.value = blankZero && !v ? null : v ?? 0;
+    if (total) style.total(c, { numeric: true });
+    else style.body(c, { striped, numeric: true });
+    c.numFmt = NUM_FMT;
+  };
+
+  let row = r2 + 1;
   sheet.rows.forEach((r, idx) => {
-    const values = [];
-    values[C.no] = idx + 1;
-    values[C.name] = r.employee.name;
-    values[C.doh] = mmddyy(r.employee.hireDate);
-    values[C.prevBeg] = r.prevBeg;
-    values[C.prevUsed] = r.prevUsed;
-    values[C.prevBal] = r.prevBal;
-    values[C.credits] = r.credits;
-    values[C.beg] = r.beg;
-    r.cells.forEach((h, k) => { values[firstPay + k] = h ? h : null; }); // empty, like the template
-    values[totalUsedCol] = r.totalUsed;
-    values[balanceCol] = r.balance;
-    values[nextBegCol] = r.nextBeg;
-    ws.addRow(values);
+    const striped = idx % 2 === 1;
+    const no = ws.getCell(row, C.no);
+    no.value = idx + 1;
+    style.body(no, { striped });
+    no.alignment = { vertical: "middle", horizontal: "center" };
+
+    const nm = ws.getCell(row, C.name);
+    nm.value = r.employee.name || null;
+    style.body(nm, { striped });
+
+    const doh = ws.getCell(row, C.doh);
+    doh.value = XL.wallClock(r.employee.hireDate);
+    style.body(doh, { striped });
+    doh.numFmt = XL.FMT.date;
+    doh.alignment = { vertical: "middle", horizontal: "center" };
+
+    setNum(row, C.prevBeg, r.prevBeg, { striped });
+    setNum(row, C.prevUsed, r.prevUsed, { striped });
+    setNum(row, C.prevBal, r.prevBal, { striped });
+    setNum(row, C.credits, r.credits, { striped });
+    setNum(row, C.beg, r.beg, { striped });
+    r.cells.forEach((h, k) => setNum(row, firstPay + k, h, { striped, blankZero: true })); // empty, like the template
+    setNum(row, totalUsedCol, r.totalUsed, { striped });
+    setNum(row, balanceCol, r.balance, { striped });
+    setNum(row, nextBegCol, r.nextBeg, { striped });
+    ws.getCell(row, balanceCol).font = { ...ws.getCell(row, balanceCol).font, bold: true };
+    groupStarts.forEach((col) => style.groupEdge(ws.getCell(row, col)));
+    row += 1;
   });
 
-  // TOTAL HOURS row.
+  // ── TOTAL HOURS row ──
   const t = sheet.totals;
-  const tv = [];
-  tv[C.name] = "TOTAL HOURS";
-  tv[C.prevBeg] = t.prevBeg;
-  tv[C.prevUsed] = t.prevUsed;
-  tv[C.prevBal] = t.prevBal;
-  tv[C.credits] = t.credits;
-  tv[C.beg] = t.beg;
-  t.cells.forEach((h, k) => { tv[firstPay + k] = h; });
-  tv[totalUsedCol] = t.totalUsed;
-  tv[balanceCol] = t.balance;
-  tv[nextBegCol] = t.nextBeg;
-  const totalRow = ws.addRow(tv);
-  totalRow.font = { bold: true };
+  for (let col = 1; col <= lastCol; col++) style.total(ws.getCell(row, col));
+  ws.getCell(row, C.name).value = "TOTAL HOURS";
+  setNum(row, C.prevBeg, t.prevBeg, { total: true });
+  setNum(row, C.prevUsed, t.prevUsed, { total: true });
+  setNum(row, C.prevBal, t.prevBal, { total: true });
+  setNum(row, C.credits, t.credits, { total: true });
+  setNum(row, C.beg, t.beg, { total: true });
+  t.cells.forEach((h, k) => setNum(row, firstPay + k, h, { total: true }));
+  setNum(row, totalUsedCol, t.totalUsed, { total: true });
+  setNum(row, balanceCol, t.balance, { total: true });
+  setNum(row, nextBegCol, t.nextBeg, { total: true });
+  row += 2;
 
-  // Formats, widths, borders.
-  ws.getColumn(C.no).width = 5;
-  ws.getColumn(C.name).width = 28;
-  ws.getColumn(C.doh).width = 10;
-  for (let col = C.prevBeg; col <= lastCol; col++) {
-    const isPay = col >= firstPay && col < totalUsedCol;
-    ws.getColumn(col).width = isPay ? 7 : 12;
-  }
-  for (let rowNo = 3; rowNo <= ws.rowCount; rowNo++) {
-    for (let col = 1; col <= lastCol; col++) {
-      const cell = ws.getCell(rowNo, col);
-      cell.border = { top: THIN, left: THIN, bottom: THIN, right: THIN };
-      // Hours format on data + total rows only (row 4 holds plain day numbers).
-      if (rowNo >= 5 && col >= C.prevBeg) cell.numFmt = NUM_FMT;
-    }
-  }
-  ws.getColumn(C.doh).alignment = { horizontal: "center" };
+  // ── Notes and footer ──
+  const noteCols = Math.min(lastCol, firstPay + 7);
+  notes(report).forEach((text) => {
+    style.note(ws, row, noteCols, text);
+    row += 1;
+  });
+  style.footer(ws, row + 1, noteCols, book);
 }
 
 /**
  * @param {object} report  buildLeaveTemplateReport() result
  * @returns {Promise<Buffer>}
  */
-async function generateLeaveReportXlsx(report) {
-  const workbook = new ExcelJS.Workbook();
-  workbook.created = new Date(report.generatedAt);
+function generateLeaveReportXlsx(report) {
+  const tz = report.company.timezone;
+  const book = XL.createWorkbook({
+    company: report.company.name,
+    reportName: "Leave Report",
+    tag: "client",
+    requester: report.requester,
+    generatedLabel: moment(report.generatedAt).tz(tz).format("MMM D, YYYY, h:mm A z"),
+    timeZone: tz,
+  });
 
   if (!report.sheets.length) {
-    const ws = workbook.addWorksheet("Leave Report");
-    ws.getCell(1, 1).value = report.company.name || "";
-    ws.getCell(1, 1).font = { bold: true, size: 14 };
-    ws.getCell(2, 1).value = `LEAVE REPORT — ${rangeLabel(report)}`;
-    ws.getCell(3, 1).value = "No employees or leave types match the selected filters.";
-    return workbook.xlsx.writeBuffer();
+    const { ws, startRow } = XL.addCustomSheet(book, {
+      name: "Leave Report",
+      title: "Leave Report",
+      subtitle: settingsLine(report, null),
+      lastCol: 8,
+      widths: [5, 26, 11, 11, 10, 10, 9, 11],
+    });
+    style.note(ws, startRow, 8, "No employees or leave types match the selected filters.");
+    style.footer(ws, startRow + 2, 8, book);
+    return XL.finish(book);
   }
 
   const used = new Set();
-  for (const sheet of report.sheets) addSheet(workbook, sheetName(sheet.leaveType, used), report, sheet);
-  return workbook.xlsx.writeBuffer();
+  for (const sheet of report.sheets) addLeaveSheet(book, sheetName(sheet.leaveType, used), report, sheet);
+  return XL.finish(book);
 }
 
 module.exports = { generateLeaveReportXlsx };

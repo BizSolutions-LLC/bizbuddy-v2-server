@@ -33,6 +33,7 @@
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { COMPANY_CREDIT_SELECT, isTracked } = require("@services/Leave/leaveCreditService");
+const { resolveRequester } = require("@services/Reports/reportRequester");
 const {
   ReportError,
   BALANCE_TYPES,
@@ -150,13 +151,27 @@ async function buildLeaveTemplateReport(actor, query) {
   const { departmentId, employees, policies } = await resolveScope(actor, f);
   const Y = f.year;
 
+  // BB-119: who asked and which department, for the workbook's title block (read-only).
+  const [me, department] = await Promise.all([
+    prisma.user.findUnique({
+      where:  { id: actor.id },
+      select: { email: true, isSystemAgent: true, profile: { select: { firstName: true, lastName: true } } },
+    }),
+    departmentId
+      ? prisma.department.findUnique({ where: { id: departmentId }, select: { name: true } })
+      : null,
+  ]);
+
   const header = {
     company:     { id: company.id, name: company.name, timezone: tz },
     generatedAt: new Date().toISOString(),
+    requester:   await resolveRequester(actor, me),
     year:        Y,
     groupBy:     f.groupBy,
     periods:     f.periods,
     departmentId,
+    departmentName: department?.name || null,
+    employeeCount:  employees.size,
   };
   if (!employees.size || !policies.length) return { ...header, columnSource: null, sheets: [] };
 

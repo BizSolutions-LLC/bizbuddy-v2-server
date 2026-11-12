@@ -189,7 +189,6 @@
             <th>Department</th>
             <th>Scheduled</th>
             <th>Status</th>
-            <th>Supervisor</th>
           </tr>
         </thead>
         <tbody>
@@ -199,7 +198,6 @@
             <td>{{this.department}}</td>
             <td>{{this.scheduledTime}}</td>
             <td><span class="badge badge-late">{{this.minutesLate}} min late</span></td>
-            <td>{{this.supervisor}}</td>
           </tr>
           {{/each}}
         </tbody>
@@ -236,6 +234,7 @@
     </div>
 
     <div class="footer">
+      Confidential &mdash; {{companyName}}. Times are in {{timeZone}} (the company's time zone).<br>
       This is an automated daily report from BizBuddy. Please do not reply to this email.
       &copy; {{currentYear}} BizBuddy LLC.
     </div>

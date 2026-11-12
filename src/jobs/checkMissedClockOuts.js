@@ -44,7 +44,7 @@ async function checkMissedClockOuts() {
   try {
     // Get all companies with notification enabled
     const companies = await prisma.company.findMany({
-      where: { notifyEmployeeMissedOut: true },
+      where: { notifyEmployeeMissedOut: true, isActive: true }, // BB-117: inactive companies get nothing
       select: {
         id: true,
         name: true,
@@ -119,57 +119,34 @@ async function checkMissedClockOuts() {
           if (minutesPastShiftEnd >= gracePeriod) {
             console.log(`⚠️  Missed clock-out: ${timeLog.user.username}`);
 
-            // Check if we already sent notification (don't spam)
-            const existingNotification = await prisma.notificationLog.findFirst({
-              where: {
-                userId: timeLog.userId,
-                notificationCode: 'MISSED_CLOCK_OUT',
-                createdAt: {
-                  gte: now.clone().subtract(2, 'hours').toDate(),
-                },
+            // BB-117: sent once per punch (dedupe key on the inbox row).
+            await notifyMissedClockOut(
+              { user: timeLog.user },
+              {
+                id: timeLog.id,
+                timeIn: timeLog.timeIn,
+                expectedClockOut: shiftEndTime.toDate(),
+                hoursWorked: (timeSinceClockIn / 60).toFixed(2),
               },
-            });
-
-            if (!existingNotification) {
-              await notifyMissedClockOut(
-                { user: timeLog.user },
-                {
-                  id: timeLog.id,
-                  timeIn: timeLog.timeIn,
-                  expectedClockOut: shiftEndTime.toDate(),
-                  hoursWorked: (timeSinceClockIn / 60).toFixed(2),
-                },
-                company
-              );
-            }
+              company
+            );
           }
         } else {
           // No shift found, but they've been clocked in for more than 12 hours
           if (timeSinceClockIn >= 720) {
             console.log(`⚠️  Long clock-in without shift: ${timeLog.user.username}`);
 
-            const existingNotification = await prisma.notificationLog.findFirst({
-              where: {
-                userId: timeLog.userId,
-                notificationCode: 'MISSED_CLOCK_OUT',
-                createdAt: {
-                  gte: now.clone().subtract(2, 'hours').toDate(),
-                },
+            // BB-117: sent once per punch (dedupe key on the inbox row).
+            await notifyMissedClockOut(
+              { user: timeLog.user },
+              {
+                id: timeLog.id,
+                timeIn: timeLog.timeIn,
+                expectedClockOut: now.toDate(),
+                hoursWorked: (timeSinceClockIn / 60).toFixed(2),
               },
-            });
-
-            if (!existingNotification) {
-              await notifyMissedClockOut(
-                { user: timeLog.user },
-                {
-                  id: timeLog.id,
-                  timeIn: timeLog.timeIn,
-                  expectedClockOut: now.toDate(),
-                  hoursWorked: (timeSinceClockIn / 60).toFixed(2),
-                },
-                company
-              );
-            }
+              company
+            );
           }
         }
       }

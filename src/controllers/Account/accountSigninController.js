@@ -543,9 +543,23 @@ const changePassword = async (req, res) => {
   }
 };
 
+// BB-117: with a login header the signed-in user is used and any userId in the
+// body is ignored (so a request can't reach another account). Without it, the
+// old body/query userId still works for now (logged in accountRoutes).
+function deviceTokenUserId(req) {
+  const claimed = req.body?.userId || req.query?.userId || null;
+  if (req.user) {
+    if (claimed && claimed !== req.user.id) {
+      console.warn(`[BB-117] device-token userId ${claimed} ignored; using the signed-in user ${req.user.id}`);
+    }
+    return req.user.id;
+  }
+  return claimed;
+}
+
 const getDeviceToken = async (req, res) => {
   try {
-    const { userId } = req.body;
+    const userId = deviceTokenUserId(req);
     if (!userId) {
       return res.status(400).json({ message: "User ID is required." });
     }
@@ -568,14 +582,15 @@ const getDeviceToken = async (req, res) => {
 
 const updateDeviceToken = async (req, res) => {
   try {
-    const { userId, deviceToken } = req.body;
+    const userId = deviceTokenUserId(req);
+    const deviceToken = typeof req.body?.deviceToken === "string" ? req.body.deviceToken.trim() : "";
     if (!userId) {
       return res.status(400).json({ message: "User ID is required." });
     }
     if (!deviceToken) {
       return res.status(400).json({ message: "Device token is required." });
     }
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, isSystemAgent: true } });
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
@@ -586,10 +601,23 @@ const updateDeviceToken = async (req, res) => {
         data: { deviceToken: null },
       });
     }
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: { deviceToken: deviceToken.trim(), updatedAt: new Date() },
-    });
+    // BB-117: one FCM token belongs to one phone, and a phone pushes only for the
+    // account signed in on it. Remove this token from any other account first
+    // (e.g. the person's account in another company), then save it here.
+    const [released, updatedUser] = await prisma.$transaction([
+      prisma.user.updateMany({
+        where: { deviceToken, id: { not: userId } },
+        data: { deviceToken: null },
+      }),
+      prisma.user.update({
+        where: { id: userId },
+        data: { deviceToken, updatedAt: new Date() },
+        select: { deviceToken: true },
+      }),
+    ]);
+    if (released.count) {
+      console.log(`[BB-117] device token moved to ${userId}; removed from ${released.count} other account(s)`);
+    }
     return res.status(200).json({
       message: "Device token updated successfully.",
       data: { deviceToken: updatedUser.deviceToken },
