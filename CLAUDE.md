@@ -55,9 +55,11 @@ The rules above are backed by actual tool permissions, not just instructions:
 
 Architecture, stack, routes, and module conventions are documented separately in `docs/CLAUDE.md`. This file is about *how we work*; that one is about *what the system is*.
 
-## Current state (as of 2026-11-12)
+## Current state (as of 2026-11-13)
 
 **v2.11.7: pushed 2026-11-12 on branch `release/v2.11.7`** (commit a73be23) with BB-119 (closed), BB-117 (complete) and BB-120 (pushed before the user's test). Changelog: `docs/changelog-v2.11.7.md`. Client hand-offs: `docs/client-update-BB-119.md`, `docs/client-update-BB-120.md`. The two test PDFs in `docs/` stay uncommitted.
+
+**v2.11.9: pushed 2026-11-13 on branch `release/v2.11.9`** with BB-124 (data fix + Payroll Grid SL rule). Changelog: `docs/changelog-v2.11.9.md`. BB-125 scripts, the Nov 12 report files in `docs/`, `docs/Screenshots/` and the test PDFs stay uncommitted.
 
 **v2.11.8: pushed 2026-11-12 on branch `release/v2.11.8`** with BB-122 (complete), BB-123 (server side, awaiting test) and BB-114 (planning docs only). Changelog: `docs/changelog-v2.11.8.md`, which ends with every open question for the mobile developer (on leave). Client hand-off: `docs/client-update-BB-123.md`. `docs/Screenshots/` and the two test PDFs stay uncommitted.
 
@@ -68,5 +70,11 @@ Open follow-ups:
 - BB-114 (Improvement of API Endpoints): **OPEN, do not close.** Plan of record: `docs/BB-114-endpoint-plan.md`; mobile questions: `docs/BB-114-mobile-questionnaire.md` (written 2026-11-12, user sends it). Batch 1 (shared Prisma client, checklist cache, timelogs count, leaves N+1) is planned only, no code yet; release right after BB-113 Period 1 ends (~2026-11-28). On resume, read the plan file first and follow it unless the user changes it.
 - BB-123 (Employee Page update; the punch-logs table is done on the client): contest dialog bug. The server rejects backwards or 24h+ requested times in submit + approve; read-only `scripts/check-bb123-contest-requested-times.js` for the user to run. Contest check run (no corrupted logs; reject 4 pending in the UI); Contests blocked on locked/processed cutoffs (CUTOFF_LOCKED); Robert Ramirez data confirmed fine. Ownership check in submit held for the mobile dev (on leave); questions in the changelog. Client hand-off `docs/client-update-BB-123.md` (dialog + approver page), applied by the client-side session. Uncommitted, awaiting the user's test. Logged in `docs/changelog-v2.11.8.md`.
 - BB-122 (Carlo Corcuera / BizSolutions LLC early auto clock-out): COMPLETE 2026-11-12. `liveUserService.createLiveUser` now honours `Shift.timeZone`; logged in `docs/changelog-v2.11.8.md`, uncommitted (push with the next ticket). OT in `timeLogComputeService` still reads shifts in the company zone (declined for now); bad logs fixed via appeals.
+
+- BB-124 (Josie Soriano Nov 9, DA punch vs approved sick leave): data fix COMPLETE 2026-11-13 (`scripts/fix-bb124-josie-nov9-exclude-punch.js` applied: punch excluded, leave kept, cutoff re-locked; backup JSON git-ignored, kept locally). Payroll Grid change (all-excluded days don't block SL) awaiting the user's test. Pushed in v2.11.9 (`docs/changelog-v2.11.9.md`). Declined for now:
+  - `resolveConflict` isn't segment-aware for DA, and the BB-073 leave lookup still fails silently.
+  - The cutoff review page still skips the leave row on a day with only excluded punches (Josie shows 72h there; the payroll export counts the 8h).
+  - Conflict rows show the leave policy id instead of its name.
+- BB-125 (Marites Fernandez, 10-30): she worked the full shift and the punch was auto-honored, but her 5.5h sick leave was never cancelled or refunded (BB-073). `scripts/check-bb125-marites-oct30.js` (read-only) confirmed it. `scripts/fix-bb125-marites-oct30-cancel-leave.js` (dry run / --apply, uses `creditLeaveOnConflict`, balance 13 → 18.5) passed its dry run. `--apply` is held until PadPro confirms she worked; it must be settled before cutoff `cmvlr4bcu0i5psm4zuanq41xx` is set to processed. Uncommitted. Afterwards: discuss the accuracy and intended behaviour of the "Automatically Resolve Punch-vs-Leave Conflicts" setting.
 
 Remove or update this section as tickets close.
