@@ -157,7 +157,7 @@ function generatePayrollGridXlsx(grid) {
     "TR - Training · SL - Sick Leave · OT - Overtime. Driving Hrs = Driver Aide AM + PM. Training hours show under Regular on each day and in TR in the totals.",
     `Dates are in ${tz} (the company's time zone). ${basis === "preliminary" ? "Live punches: hours can still change in cutoff review." : "Locked or processed cutoffs show the reviewed, paid hours."}`,
     "Fixed-hours employees (marked \"(fixed hours)\"): Regular = their fixed hours minus sick leave; daily cells show the hours worked, capped at one shift; Total adds their approved off-day overtime.",
-    "SL is approved, paid sick leave in the range (on locked cutoffs, leave days with no punch). OT is the approved overtime recorded in cutoff review.",
+    "SL is approved, paid sick leave in the range (on locked cutoffs, leave days with no punch, or whose punch was excluded in cutoff review). OT is the approved overtime recorded in cutoff review.",
   ].forEach((t) => {
     style.note(ws, row, noteCols, t);
     row += 1;

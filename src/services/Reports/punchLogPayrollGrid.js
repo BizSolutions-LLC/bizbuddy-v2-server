@@ -76,9 +76,11 @@ async function loadSickLeaves(userIds, from, to) {
 
 /**
  * Sick-leave hours per user.
- *  - Locked/processed cutoff (mirrors getCutoffApprovals' standalone leave rows): each
- *    leave day inside the cutoff with NO punch that day — the paid LeaveDay hours, or for
- *    a legacy leave without LeaveDay rows, the scheduled hours when the leave is paid.
+ *  - Locked/processed cutoff (based on getCutoffApprovals' standalone leave rows): each
+ *    leave day inside the cutoff with no counted punch that day — the paid LeaveDay hours,
+ *    or for a legacy leave without LeaveDay rows, the scheduled hours when the leave is
+ *    paid. BB-124: a day whose punches were all excluded counts as no punch (the cutoff
+ *    review page still treats it as punched).
  *  - Live data: the paid sick hours inside the report range — LeaveDay rows when present,
  *    otherwise the old browser rule (paid hours × overlapping days / leave days).
  */
@@ -103,7 +105,14 @@ async function sickLeaveHours(report, employees, defaultShiftHours) {
   for (const [periodId, users] of lockedByPeriod) {
     const p = report.periods.find((x) => x.id === periodId);
     if (!p) continue;
-    const punched = new Set(report.rows.filter((r) => r.cutoffPeriodId === periodId).map((r) => `${r.userId}|${r.date}`));
+    // BB-124: a day whose punches were all excluded in cutoff review (e.g. "Honor
+    // Leave") isn't a worked day — its paid leave still counts. Only days with an
+    // approved or pending punch block the leave.
+    const punched = new Set(
+      report.rows
+        .filter((r) => r.cutoffPeriodId === periodId && r.cutoffStatus !== "Excluded")
+        .map((r) => `${r.userId}|${r.date}`)
+    );
     for (const leave of await loadSickLeaves([...users], p.start, p.end)) {
       const start = calYmd(leave.startDate);
       const end = calYmd(leave.endDate);
