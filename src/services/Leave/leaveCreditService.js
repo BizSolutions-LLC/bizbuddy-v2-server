@@ -306,6 +306,9 @@ async function restoreToLots(tx, company, { userId, policyId, hours, balanceBefo
     where:   { leaveId, credit: { userId, policyId } },
     orderBy: { createdAt: "asc" },
   });
+  // BB-125: a single reverted day returns only part of the leave, so each usage
+  // row is reduced by what goes back and removed only once it's fully returned.
+  // A full refund returns every usage in full, so it still clears them all.
   for (const u of usages) {
     const back = r2(Math.min(num(u.hours), left));
     if (back > 0) {
@@ -315,9 +318,12 @@ async function restoreToLots(tx, company, { userId, policyId, hours, balanceBefo
       });
       left = r2(left - back);
     }
-  }
-  if (usages.length) {
-    await tx.leaveCreditUsage.deleteMany({ where: { id: { in: usages.map((u) => u.id) } } });
+    const rest = r2(num(u.hours) - Math.max(0, back));
+    if (rest <= 0) {
+      await tx.leaveCreditUsage.delete({ where: { id: u.id } });
+    } else if (back > 0) {
+      await tx.leaveCreditUsage.update({ where: { id: u.id }, data: { hours: rest } });
+    }
   }
   if (left > 0) {
     await addToLots(tx, company, { userId, policyId, hours: left, balanceBefore: 0 });

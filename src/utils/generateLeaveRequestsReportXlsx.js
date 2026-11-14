@@ -84,6 +84,7 @@ function generateLeaveRequestsReportXlsx(report) {
       { label: "Approved", value: s.approved },
       { label: "Rejected", value: s.rejected },
       { label: "Cancelled", value: s.cancelled },
+      { label: "Reverted", value: s.reverted, note: s.partlyReverted ? `${s.partlyReverted} more partly reverted` : undefined }, // BB-125
       { label: "Paid hours", value: s.paidHours },
       { label: "Unpaid hours", value: s.unpaidHours },
     ],

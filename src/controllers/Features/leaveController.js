@@ -86,10 +86,10 @@ async function _attachPolicyNames(leaves) {
 async function _attachTransactions(leaves) {
   const leaveIds = leaves.map((l) => l.id).filter(Boolean);
   if (!leaveIds.length)
-    return leaves.map((l) => ({ ...l, transaction: null, cancelledAt: null, cancellation: null }));
+    return leaves.map((l) => ({ ...l, transaction: null, cancelledAt: null, cancellation: null, reversion: null }));
 
   const txns = await prisma.leaveTransaction.findMany({
-    where: { leaveId: { in: leaveIds }, type: { in: ["deduction", "cancelled"] } },
+    where: { leaveId: { in: leaveIds }, type: { in: ["deduction", "cancelled", "reverted"] } },
     select: {
       id:            true,
       leaveId:       true,
@@ -121,6 +121,16 @@ async function _attachTransactions(leaves) {
   const deductionMap  = Object.fromEntries(txns.filter((t) => t.type === "deduction").map((t) => [t.leaveId ?? "", t]));
   const cancelledMap  = Object.fromEntries(txns.filter((t) => t.type === "cancelled").map((t) => [t.leaveId ?? "", t]));
 
+  // BB-125: reverted days per leave (a punch on that day was honored over the leave).
+  const revertedTxns = txns
+    .filter((t) => t.type === "reverted")
+    .sort((a, b) => a.createdAt - b.createdAt);
+  const revertedDayRows = await prisma.leaveDay.findMany({
+    where:  { leaveId: { in: leaveIds }, revertedAt: { not: null } },
+    select: { leaveId: true, date: true, hours: true, isPaid: true, revertedAt: true },
+    orderBy: { date: "asc" },
+  });
+
   return leaves.map((l) => {
     const t = deductionMap[l.id] ?? null;
     const c = cancelledMap[l.id] ?? null;
@@ -142,6 +152,23 @@ async function _attachTransactions(leaves) {
       cancellation: c
         ? { performedBy: _resolvePerformedBy(c), note: c.note ?? null }
         : null,
+      // BB-125: null when no day was reverted. status "reverted" = every day;
+      // "approved" with reversion = partly reverted (client shows "Partly reverted").
+      reversion: (() => {
+        const days = revertedDayRows.filter((d) => d.leaveId === l.id);
+        if (!days.length) return null;
+        const events = revertedTxns.filter((t) => t.leaveId === l.id);
+        const last = events[events.length - 1];
+        const dates = [...new Set(days.map((d) => d.date.toISOString().slice(0, 10)))];
+        return {
+          dates,
+          returnedHours: +days.filter((d) => d.isPaid).reduce((sum, d) => sum + Number(d.hours), 0).toFixed(2),
+          revertedAt:    last?.createdAt ? last.createdAt.toISOString() : days[days.length - 1].revertedAt.toISOString(),
+          automatic:     events.length ? events.every((t) => !t.performedBy) : true,
+          performedBy:   last ? _resolvePerformedBy(last) : null,
+          note:          last?.note ?? null,
+        };
+      })(),
     };
   });
 }
@@ -791,6 +818,10 @@ const getLeaveDays = async (req, res) => {
       date:   d.date.toISOString().slice(0, 10),
       isPaid: d.isPaid,
       hours:  Number(d.hours),
+      // BB-125: true when a punch on this day was honored over the leave — the
+      // hours were returned to the balance and the day no longer counts as leave.
+      reverted:   d.revertedAt != null,
+      revertedAt: d.revertedAt ? d.revertedAt.toISOString() : null,
     })),
   });
 };
@@ -982,7 +1013,7 @@ const getLeavesForApprover = async (req, res) => {
   const offset = parseInt(req.query.offset) || 0;
   const isManagement = ["admin", "superadmin", "supervisor"].includes(req.user.role);
 
-  const validStatuses = ["pending", "pending_secondary", "approved", "rejected", "cancelled"];
+  const validStatuses = ["pending", "pending_secondary", "approved", "rejected", "cancelled", "reverted"]; // BB-125: filter only
   if (status && !validStatuses.includes(status.toLowerCase()))
     return res.status(400).json({ message: "Invalid status filter." });
 

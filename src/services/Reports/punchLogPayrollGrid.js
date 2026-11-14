@@ -63,7 +63,7 @@ async function loadSickLeaves(userIds, from, to) {
     select: {
       id: true, userId: true, leaveType: true, policyId: true, startDate: true, endDate: true, status: true,
       isPaid: true, actualPaidHours: true, actualUnpaidHours: true, excludedShiftIds: true, includeWeekends: true,
-      days: { select: { date: true, isPaid: true, hours: true } },
+      days: { where: { revertedAt: null }, select: { date: true, isPaid: true, hours: true } }, // BB-125: reverted days aren't leave
     },
   });
   const policyIds = [...new Set(leaves.map((l) => l.policyId || l.leaveType).filter(Boolean))];

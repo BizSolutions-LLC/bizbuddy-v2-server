@@ -40,7 +40,7 @@ const {
 const REPORT_TYPES       = ["summary", "activity", "expiration", "requests", "ledger"];
 const GROUP_BYS          = ["month", "quarter", "year"];
 const BASES              = ["calendar", "fiscal"];
-const REQUEST_STATUSES   = ["pending", "pending_secondary", "approved", "rejected", "cancelled"];
+const REQUEST_STATUSES   = ["pending", "pending_secondary", "approved", "rejected", "cancelled", "reverted"]; // BB-125: reverted
 const BALANCE_TYPES      = ["accrual", "deduction", "adjustment", "expired"];
 const MAX_RANGE_YEARS    = 5;
 const DEFAULT_TZ         = "America/Los_Angeles";
@@ -401,6 +401,7 @@ async function activityReport(ctx) {
     prisma.leaveDay.findMany({
       where: {
         isPaid: false,
+        revertedAt: null, // BB-125
         date:   { gte: new Date(`${f.from}T00:00:00.000Z`), lte: new Date(`${f.to}T00:00:00.000Z`) },
         leave:  { status: "approved", userId: { in: userIds } },
       },
@@ -545,7 +546,8 @@ async function requestsReport(ctx) {
     },
     orderBy: { startDate: "asc" },
     include: {
-      days:         { select: { hours: true } },
+      days:         { where: { revertedAt: null }, select: { hours: true } }, // BB-125: counted days only
+      _count:       { select: { days: { where: { revertedAt: { not: null } } } } }, // BB-125: reverted days
       creditUsages: { select: { hours: true, credit: { select: { fiscalYear: true } } } },
       approver:     { select: { email: true, profile: { select: { firstName: true, lastName: true } } } },
       decidedBy:    { select: { email: true, profile: { select: { firstName: true, lastName: true } } } },
@@ -585,7 +587,10 @@ async function requestsReport(ctx) {
       isPaid:            l.isPaid,
       // LeaveDay rows exist once a leave is decided; pending requests → null.
       requestedHours:    l.days.length ? r2(l.days.reduce((s, d) => s + num(d.hours), 0)) : null,
-      dayCount:          l.days.length || null, // BB-119: leave days actually counted (null until decided)
+      // BB-119: leave days actually counted (null until decided). BB-125: a fully
+      // reverted leave is decided with 0 counted days.
+      dayCount:          l.days.length || (l.status === "reverted" ? 0 : null),
+      revertedDays:      l._count?.days ?? 0, // BB-125: days reverted because a punch on them was honored
       paidHours:         decided ? r2(l.actualPaidHours) : null,
       unpaidHours:       decided ? r2(l.actualUnpaidHours) : null,
       reason:            l.leaveReason ?? null,

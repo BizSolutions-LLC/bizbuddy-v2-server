@@ -68,7 +68,7 @@ async function buildLeaveCalendarReport(actor, query = {}) {
   const [leaveDays, leaveMeta] = ids.length
     ? await Promise.all([
         prisma.leaveDay.findMany({
-          where: { leaveId: { in: ids }, date: { gte: first.toDate(), lte: last.toDate() } },
+          where: { leaveId: { in: ids }, revertedAt: null, date: { gte: first.toDate(), lte: last.toDate() } }, // BB-125
           select: { leaveId: true, date: true, hours: true },
         }),
         prisma.leave.findMany({ where: { id: { in: ids } }, select: { id: true, includeWeekends: true } }),

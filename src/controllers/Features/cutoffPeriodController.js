@@ -1209,6 +1209,19 @@ const getCutoffApprovals = async (req, res) => {
       return looksLikeId ? (leavePolicyMap[rawType] || "Leave") : rawType;
     };
 
+    // BB-125: leave days already reverted (a punch on them was honored) are no
+    // longer leave — they never raise a conflict or a standalone leave row again.
+    const approvedLeaveIdsForRevert = leaveRecords.filter((l) => l.status === "approved").map((l) => l.id);
+    const revertedDayRows = approvedLeaveIdsForRevert.length
+      ? await prisma.leaveDay.findMany({
+          where:  { leaveId: { in: approvedLeaveIdsForRevert }, revertedAt: { not: null } },
+          select: { leaveId: true, date: true },
+        })
+      : [];
+    const revertedLeaveDates = new Set(
+      revertedDayRows.map((d) => `${d.leaveId}_${d.date.toISOString().slice(0, 10)}`)
+    );
+
     // ✅ Attach pending leave warnings to matching punch records
     // ✅ Attach conflict flag when approved leave overlaps same day as punch
     const leaveContextDraft = normalized.map((approval) => {
@@ -1230,7 +1243,8 @@ const getCutoffApprovals = async (req, res) => {
         const leaveEnd = (leave.endDate instanceof Date
           ? leave.endDate.toISOString()
           : String(leave.endDate)).split("T")[0];
-        return punchDate >= leaveStart && punchDate <= leaveEnd;
+        return punchDate >= leaveStart && punchDate <= leaveEnd
+          && !revertedLeaveDates.has(`${leave.id}_${punchDate}`);
       });
 
       const approvedLeave = dayLeaves.find((l) => l.status === "approved");
@@ -1303,7 +1317,7 @@ const getCutoffApprovals = async (req, res) => {
         leaveRecord:      approvedLeave
           ? {
               id:                approvedLeave.id,
-              leaveType:         approvedLeave.leaveType,
+              leaveType:         resolveLeaveType(approvedLeave.leaveType),
               status:            "approved",
               isPaid:            approvedLeave.isPaid,
               actualPaidHours:   approvedLeave.actualPaidHours,
@@ -1313,7 +1327,7 @@ const getCutoffApprovals = async (req, res) => {
         pendingLeave: pendingLeave
           ? {
               id:        pendingLeave.id,
-              leaveType: pendingLeave.leaveType,
+              leaveType: resolveLeaveType(pendingLeave.leaveType),
               status:    "pending",
               isPaid:    pendingLeave.isPaid,
             }
@@ -1323,15 +1337,16 @@ const getCutoffApprovals = async (req, res) => {
 
     // BB-051: company-level toggle — when on, a detected punch-vs-leave conflict
     // auto-resolves in favor of the punch instead of waiting for manual review.
-    // Reuses resolveConflict's existing mechanics unchanged (whole-leave cancel,
-    // flat 8h refund, no ledger entry) — only the trigger (automatic vs. an
-    // admin's manual PATCH) is new. userId is null (approvedBy) since no human
-    // acted — same nullable field a manual resolution would populate.
+    // BB-125: the punch is approved and only that day of the leave is reverted
+    // (hours returned to the balance; the leave becomes "reverted" once every day
+    // is). The in-memory response reflects what actually happened — never a
+    // revert that didn't. userId is null (approvedBy) since no human acted.
+    // Note: this runs when the cutoff's approvals are loaded (Cutoff Review).
     if (company?.leaveConflictAutoRevert) {
       const autoResolvable = withLeaveContext.filter((a) => a.hasLeaveConflict && a.status === "pending");
       for (const a of autoResolvable) {
         try {
-          await getApprovalStrategy(companyId).resolveConflict(a.id, {
+          const result = await getApprovalStrategy(companyId).resolveConflict(a.id, {
             cutoffPeriodId: id,
             choice: "punch",
             userId: null,
@@ -1339,13 +1354,17 @@ const getCutoffApprovals = async (req, res) => {
           });
           a.status = "approved";
           a.hasLeaveConflict = false;
-          if (a.leaveRecord) {
-            a.leaveRecord.status = "cancelled";
-            // Keep leaveRecords in sync — the "standalone leave rows" pass below
-            // reads it directly and would otherwise still treat this leave as
-            // approved on its other (unpunched) days in the same range.
-            const staleLeave = leaveRecords.find((l) => l.id === a.leaveRecord.id);
-            if (staleLeave) staleLeave.status = "cancelled";
+          if (a.leaveRecord && result?.data?.leaveReverted) {
+            const punchDate = moment.tz(a.timeLog.timeIn, companyTimezone).format("YYYY-MM-DD");
+            revertedLeaveDates.add(`${a.leaveRecord.id}_${punchDate}`);
+            if (result.data.leaveStatus === "reverted") {
+              a.leaveRecord.status = "reverted";
+              // Keep leaveRecords in sync for the standalone leave rows below.
+              const staleLeave = leaveRecords.find((l) => l.id === a.leaveRecord.id);
+              if (staleLeave) staleLeave.status = "reverted";
+            }
+          } else if (a.leaveRecord) {
+            console.warn("[⚠️ BB-125] Punch honored but leave day not reverted for approval", a.id, result?.message);
           }
         } catch (autoErr) {
           console.warn("[⚠️ BB-051] Auto-revert failed for approval", a.id, autoErr.message);
@@ -1369,7 +1388,7 @@ const getCutoffApprovals = async (req, res) => {
       .map((leave) => leave.id);
 
     const leaveDayRows = approvedLeaveIds.length
-      ? await prisma.leaveDay.findMany({ where: { leaveId: { in: approvedLeaveIds } } })
+      ? await prisma.leaveDay.findMany({ where: { leaveId: { in: approvedLeaveIds }, revertedAt: null } })
       : [];
 
     const payableByLeaveDate = new Map(); // `${leaveId}_${YYYY-MM-DD}` -> paid hours
@@ -1412,7 +1431,8 @@ const getCutoffApprovals = async (req, res) => {
             // Only add if this day is within cutoff AND no punch exists
             // BB-116: compare calendar-date strings — independent of server timezone.
             const inCutoff = dateStr >= periodStartStr && dateStr <= periodEndStr;
-            if (inCutoff && !punchUserDates.has(key)) {
+            // BB-125: a reverted day isn't leave any more.
+            if (inCutoff && !punchUserDates.has(key) && !revertedLeaveDates.has(`${leave.id}_${dateStr}`)) {
               // Legacy fallback: leaves approved before LeaveDay existed have no rows here —
               // fall back to leave.isPaid deciding full scheduled hours vs. 0, so we don't
               // silently zero out pre-existing paid leave.
