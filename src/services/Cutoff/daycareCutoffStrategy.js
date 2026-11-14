@@ -784,6 +784,11 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     console.error(`[daycareCutoffStrategy] computeTimeLogSummary failed for ${timeLog.id}:`, err.message);
   }
 
+  // BB-125 (v2.11.11): actualHours is what the payroll export pays. It was never
+  // set here, so every honored regular punch exported 0h. Same rule as the normal
+  // Approve (approveSingle REGULAR): hours of the approved window.
+  const actualHours = finalClockOut ? calculateHours(finalClockIn, finalClockOut) : null;
+
   await prisma.timeLogApproval.update({
     where: { id: approvalId },
     data: {
@@ -793,9 +798,14 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
       approvedClockIn:  finalClockIn,
       approvedClockOut: finalClockOut,
       scheduledHours:   scheduledHours != null ? parseFloat(scheduledHours.toFixed(2)) : null,
+      actualHours:      actualHours    != null ? parseFloat(actualHours.toFixed(2))    : null,
       notes:            "Conflict resolved — punch takes precedence",
     },
   });
+
+  syncApprovedRegularToTimeLog(timeLog.id, actualHours != null ? parseFloat(actualHours.toFixed(2)) : null).catch((e) =>
+    console.error("[sync-back] failed for regular punch after conflict resolve:", e.message)
+  );
 
   recomputeOtForTimeLog(timeLog.id, cutoffPeriodId, companyId).catch((e) =>
     console.error("[OT] recompute failed after conflict resolve:", e.message)
