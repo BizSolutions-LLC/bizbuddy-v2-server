@@ -59,6 +59,8 @@ Architecture, stack, routes, and module conventions are documented separately in
 
 **v2.11.7: pushed 2026-11-12 on branch `release/v2.11.7`** (commit a73be23) with BB-119 (closed), BB-117 (complete) and BB-120 (pushed before the user's test). Changelog: `docs/changelog-v2.11.7.md`. Client hand-offs: `docs/client-update-BB-119.md`, `docs/client-update-BB-120.md`. The two test PDFs in `docs/` stay uncommitted.
 
+**v2.11.11: pushed 2026-11-14 on branch `release/v2.11.11`** with the BB-125 follow-up: the regular daycare Honor Punch sets `actualHours`, plus the audit + audit correction scripts. Changelog: `docs/changelog-v2.11.11.md`. Applied SQL `scripts/bb125-leave-revert.sql` deleted.
+
 **v2.11.10: pushed 2026-11-14 on branch `release/v2.11.10`** with BB-125 (punch-vs-leave revert). Changelog: `docs/changelog-v2.11.10.md`. Client hand-off: `docs/client-update-BB-125.md`. Must be deployed: live v2.11.9 can't read the `reverted` status, which the data scripts already wrote.
 
 **v2.11.9: pushed 2026-11-13 on branch `release/v2.11.9`** with BB-124 (data fix + Payroll Grid SL rule). Changelog: `docs/changelog-v2.11.9.md`. BB-125 scripts, the Nov 12 report files in `docs/`, `docs/Screenshots/` and the test PDFs stay uncommitted.
@@ -78,5 +80,13 @@ Open follow-ups:
   - The cutoff review page still skips the leave row on a day with only excluded punches (Josie shows 72h there; the payroll export counts the 8h).
   - Conflict rows show the leave policy id instead of its name.
 - BB-125 (Punch-vs-leave revert; started from Marites Fernandez 10-30): BUILT 2026-11-14, uncommitted, awaiting the user's test. Honor Punch (auto or manual) now reverts only the punched leave day (new status `reverted`, `LeaveDay.revertedAt`), matches leaves by calendar date, and handles Driver/Aide per segment (Raw). Changelog `docs/changelog-v2.11.10.md`; client hand-off `docs/client-update-BB-125.md` (incl. settings copy + mobile questions). Order: user runs `scripts/bb125-leave-revert.sql` + `prisma generate` → deploy → client → client. SQL + `prisma generate` done; client update sent. Marites's revert APPLIED 2026-11-14 (leave reverted, balance 13 → 18.5; the first try timed out and rolled back, so the scripts now use a 2-min transaction timeout). Relabel APPLIED 2026-11-14: 5 leaves cancelled → reverted (WWW Uncles Sammies, Albert Dalere, Violeta Ardevela, Evelyn Garnace ×2); backup `scripts/backup-bb125-relabel-reverted-leaves.json`, `--revert` undoes it. Pushed as v2.11.10. Multi-day leaves reverted whole under the old rule (Violeta Ardevela, Evelyn Garnace, Albert Dalere) were not re-checked per day; the user can decide.
+
+- BB-125 audit correction (2026-11-14). Read-only audit: `scripts/check-bb125-punch-wins-history.js` (+ `.sql`). User decisions: already-paid dates stay as paid; Albert's excluded segments are trusted, no change; Evelyn's leaves are already `reverted` (relabel), nothing to return.
+  - DONE: Elizabeth Pabilona 8-07 leave day reverted, +5.5h, balance 9 (`scripts/fix-bb125-elizabeth-aug07-revert-leave.js`); ledger notes reworded to "(BB-125 audit correction)" (`scripts/fix-bb125-ledger-note-wording.js`).
+  - DONE: Josie Soriano's excluded Nov 9 TimeLog deleted (`scripts/fix-bb124-josie-nov9-delete-punch.js`; backup `scripts/backup-bb124-josie-nov9-delete-punch.json`, `--restore`). Nov 9 is now a plain 8h Sick Leave day. The old exclude-punch `--revert` no longer applies.
+  - DONE: Robert Ramirez 9-04 segments corrected, AM 1.25 + Regular 5.5 = 6.75h, PM excluded, clock-in back to 6:38 (`scripts/fix-bb125-robert-sep04-segments.js`, backup + `--revert`). His unpaid Sick Leave stays Approved (user: fine, no pay impact).
+  - DONE: Elizabeth Pabilona 8-25 leave day reverted, +5.5h, balance 14.5 (`scripts/fix-bb125-elizabeth-aug25-revert-leave.js`).
+  - Code fix pushed in v2.11.11 (`docs/changelog-v2.11.11.md`): the regular daycare Honor Punch now sets `actualHours` and syncs `netWorkedHours`; before this it exported 0h. Already-paid past records are not backfilled (user decision).
+  - Open: proposed feature to block leave on an already-punched day (label TBD, not BB-124).
 
 Remove or update this section as tickets close.
