@@ -1391,6 +1391,10 @@ model LeaveDay {
   isPaid    Boolean
   hours     Decimal  @db.Decimal(6, 2)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
+  // BB-125: set when a punch on this day was honored over the leave — the day's
+  // hours were returned to the balance and it no longer counts as leave anywhere.
+  revertedAt        DateTime? @db.Timestamptz(6)
+  revertedTimeLogId String?
   leave     Leave    @relation(fields: [leaveId], references: [id], onDelete: Cascade)
 
   // BB-045: a day where the balance runs out partway through now splits into
@@ -1651,6 +1655,7 @@ enum leaveStatus {
   approved
   rejected
   cancelled
+  reverted   // BB-125: approved, but the employee punched in that day — punch honored, leave hours returned
 }
 
 enum LeaveTransactionType {
@@ -1663,6 +1668,7 @@ enum LeaveTransactionType {
   rejected
   cancelled
   expired
+  reverted   // BB-125: a leave day reverted because a punch on it was honored
 }
 
 enum PresenceStatus {

@@ -36,12 +36,14 @@ const STATUS_LABEL = {
   approved: "Approved",
   rejected: "Rejected",
   cancelled: "Cancelled",
+  reverted: "Reverted", // BB-125: approved, but the employee punched in — leave hours returned
 };
 const PAY_LABEL = { paid: "Paid", unpaid: "Unpaid", partial: "Partially paid" };
 
 // Same rule as the client's resolveLeavePayOutcome: the actual split once decided.
 function payOutcome(r) {
   if (r.isPaid == null) return null;
+  if (r.status === "reverted") return null; // BB-125: nothing paid as leave — every day was worked
   if (r.status === "approved" && (r.paidHours != null || r.unpaidHours != null)) {
     const paid = Number(r.paidHours || 0);
     const unpaid = Number(r.unpaidHours || 0);
@@ -112,7 +114,8 @@ async function buildLeaveRequestsReport(actor, query = {}) {
         employeeName: r.employee?.name || r.employee?.email || "Unknown",
         email: r.employee?.email || null,
         department: r.employee?.department || null,
-        statusLabel: STATUS_LABEL[r.status] || r.status,
+        // BB-125: an approved leave with some days reverted reads "Partly reverted".
+        statusLabel: r.status === "approved" && r.revertedDays > 0 ? "Partly reverted" : STATUS_LABEL[r.status] || r.status,
         pay,
         payLabel: pay ? PAY_LABEL[pay] : null,
         days: decided ? r.dayCount : calendarDays(r.startDate, r.endDate),
@@ -159,6 +162,8 @@ async function buildLeaveRequestsReport(actor, query = {}) {
       approved: count((r) => r.status === "approved"),
       rejected: count((r) => r.status === "rejected"),
       cancelled: count((r) => r.status === "cancelled"),
+      reverted: count((r) => r.status === "reverted"),
+      partlyReverted: count((r) => r.status === "approved" && r.revertedDays > 0),
       paidHours: r2(rows.reduce((t, r) => t + (r.paidHours ?? 0), 0)),
       unpaidHours: r2(rows.reduce((t, r) => t + (r.unpaidHours ?? 0), 0)),
       employees: new Set(rows.map((r) => r.employee?.userId)).size,

@@ -15,7 +15,7 @@ const { recomputeOtForTimeLog,
 const { combineDateTime,
         fetchScheduleForDate }   = require("./shiftLookupUtils");
 const { isDriverSegmentPunchType, lastDriverSegment } = require("@utils/punchTypeUtils");
-const { creditLeaveOnConflict } = require("./leaveConflictCredit");
+const { revertLeaveForPunch, honorPunchResult } = require("./leaveConflictCredit");
 
 // ── Strategy-level HTTP error ─────────────────────────────────────────────────
 class StrategyError extends Error {
@@ -190,84 +190,9 @@ async function approveSingle(approvalId, {
   // Covers DRIVER_AIDE (full day, 3 segments) and DRIVER_AIDE_AM/PM (single-route
   // day, 2 segments — see DRIVER_SEGMENT_MAP in punchTypeUtils.js).
   if (isDriverSegmentPunchType(timeLog.punchType)) {
-    try { await computeTimeLogSummary(timeLog.id); } catch (_) {}
-
-    const fresh = await prisma.timeLog.findUnique({
-      where:  { id: timeLog.id },
-      select: { driverAmSegmentHours: true, regularSegmentHours: true, driverPmSegmentHours: true },
+    return approveDriverSegment(approval, {
+      approvalMode, userId, notes, cutoffPeriodId, companyId, company, graceMs,
     });
-    const segHoursMap = {
-      driver_am: fresh?.driverAmSegmentHours,
-      regular:   fresh?.regularSegmentHours,
-      driver_pm: fresh?.driverPmSegmentHours,
-    };
-    const segHours = segHoursMap[approval.segmentType];
-
-    // "schedule" → snap clock-in to segment window start (full window credited).
-    // "raw"      → use max(actual punch-in, segmentStart) — never go before the segment
-    //              begins (the global clock-in precedes PM/Regular windows).
-    const approvedIn  = approvalMode === "schedule" && approval.segmentStart
-      ? new Date(approval.segmentStart)
-      : approval.segmentStart
-        ? new Date(Math.max(new Date(timeLog.timeIn).getTime(), new Date(approval.segmentStart).getTime()))
-        : new Date(timeLog.timeIn);
-    // The chronologically-last segment for this punch type — Raw pays through actual
-    // clock-out (no subsequent segment to capture that time). For DRIVER_AIDE that's
-    // driver_pm; for DRIVER_AIDE_AM (no PM route that day) it's regular instead.
-    // Earlier segments still cap at segmentEnd to avoid double-counting.
-    const isLastSegment = approval.segmentType === lastDriverSegment(timeLog.punchType);
-    const approvedOut = (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
-      ? new Date(timeLog.timeOut)
-      : approval.segmentEnd
-        ? new Date(approval.segmentEnd)
-        : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
-
-    // Raw mode: grace-period snap affects the hours computation only — approvedIn
-    // (displayed/stored clock-in) stays the actual punch. If the punch falls within
-    // the company's grace window of the segment start, hours are still credited
-    // from segmentStart, matching the REGULAR-punch raw behavior below.
-    let creditedIn = approvedIn;
-    if (approvalMode !== "schedule" && approval.segmentStart) {
-      const segStart = new Date(approval.segmentStart);
-      const lateMs   = new Date(timeLog.timeIn).getTime() - segStart.getTime();
-      if (lateMs > 0 && lateMs <= graceMs) creditedIn = segStart;
-    }
-
-    // Recalculate hours from the credited approved window (raw in → segment end may differ).
-    // BB-092: lunch inside the credited window is unpaid in both Schedule and Raw mode.
-    // (The stored segHours fallback already has lunch subtracted by computeTimeLogSummary.)
-    const rawSegHours = creditedIn && approvedOut
-      ? Math.max(0, calculateHours(creditedIn, approvedOut) - lunchOverlapMs(timeLog.lunchBreak, creditedIn, approvedOut) / 3600000)
-      : (segHours != null ? parseFloat(segHours.toString()) : null);
-
-    // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
-    // Driving segments (driver_am, driver_pm) use actual elapsed time.
-    const defaultShiftHours   = parseFloat((company?.defaultShiftHours ?? 8).toString());
-    const approvedSegHours    = (approval.segmentType === "regular" && rawSegHours != null)
-      ? Math.min(rawSegHours, defaultShiftHours)
-      : rawSegHours;
-
-    const updated = await prisma.timeLogApproval.update({
-      where: { id: approvalId },
-      data: {
-        status:           "approved",
-        approvedBy:       userId,
-        approvedAt:       new Date(),
-        approvedClockIn:  approvedIn,
-        approvedClockOut: approvedOut,
-        scheduledHours:   approvedSegHours != null ? parseFloat(approvedSegHours.toFixed(2)) : null,
-        actualHours:      approvedSegHours != null ? parseFloat(approvedSegHours.toFixed(2)) : null,
-        ...(notes && { notes }),
-      },
-    });
-    recomputeOtForTimeLog(timeLog.id, cutoffPeriodId, companyId).catch((e) =>
-      console.error("[OT] recompute failed after segment approve:", e.message)
-    );
-    syncApprovedSegmentsToTimeLog(timeLog.id, cutoffPeriodId).catch((e) =>
-      console.error("[sync-back] failed after segment approve:", e.message)
-    );
-    console.log("[✅ DayCare] Segment approved", approvalId, approval.segmentType, approvalMode === "schedule" ? "(segment window)" : "(raw times)");
-    return { message: "Segment approved successfully.", data: updated };
   }
 
   // ── REGULAR ───────────────────────────────────────────────────────────────
@@ -658,6 +583,93 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
   };
 }
 
+// ── Driver/Aide segment approval ──────────────────────────────────────────────
+// Shared by approveSingle and (BB-125) resolveConflict's "honor punch" path, so a
+// Driver/Aide punch on a leave day is approved per segment — each segment keeps
+// its own window and hours — instead of being snapped to a single shift.
+async function approveDriverSegment(approval, { approvalMode, userId, notes, cutoffPeriodId, companyId, company, graceMs }) {
+  const timeLog = approval.timeLog;
+  const approvalId = approval.id;
+  try { await computeTimeLogSummary(timeLog.id); } catch (_) {}
+
+  const fresh = await prisma.timeLog.findUnique({
+    where:  { id: timeLog.id },
+    select: { driverAmSegmentHours: true, regularSegmentHours: true, driverPmSegmentHours: true },
+  });
+  const segHoursMap = {
+    driver_am: fresh?.driverAmSegmentHours,
+    regular:   fresh?.regularSegmentHours,
+    driver_pm: fresh?.driverPmSegmentHours,
+  };
+  const segHours = segHoursMap[approval.segmentType];
+
+  // "schedule" → snap clock-in to segment window start (full window credited).
+  // "raw"      → use max(actual punch-in, segmentStart) — never go before the segment
+  //              begins (the global clock-in precedes PM/Regular windows).
+  const approvedIn  = approvalMode === "schedule" && approval.segmentStart
+    ? new Date(approval.segmentStart)
+    : approval.segmentStart
+      ? new Date(Math.max(new Date(timeLog.timeIn).getTime(), new Date(approval.segmentStart).getTime()))
+      : new Date(timeLog.timeIn);
+  // The chronologically-last segment for this punch type — Raw pays through actual
+  // clock-out (no subsequent segment to capture that time). For DRIVER_AIDE that's
+  // driver_pm; for DRIVER_AIDE_AM (no PM route that day) it's regular instead.
+  // Earlier segments still cap at segmentEnd to avoid double-counting.
+  const isLastSegment = approval.segmentType === lastDriverSegment(timeLog.punchType);
+  const approvedOut = (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
+    ? new Date(timeLog.timeOut)
+    : approval.segmentEnd
+      ? new Date(approval.segmentEnd)
+      : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
+
+  // Raw mode: grace-period snap affects the hours computation only — approvedIn
+  // (displayed/stored clock-in) stays the actual punch. If the punch falls within
+  // the company's grace window of the segment start, hours are still credited
+  // from segmentStart, matching the REGULAR-punch raw behavior below.
+  let creditedIn = approvedIn;
+  if (approvalMode !== "schedule" && approval.segmentStart) {
+    const segStart = new Date(approval.segmentStart);
+    const lateMs   = new Date(timeLog.timeIn).getTime() - segStart.getTime();
+    if (lateMs > 0 && lateMs <= graceMs) creditedIn = segStart;
+  }
+
+  // Recalculate hours from the credited approved window (raw in → segment end may differ).
+  // BB-092: lunch inside the credited window is unpaid in both Schedule and Raw mode.
+  // (The stored segHours fallback already has lunch subtracted by computeTimeLogSummary.)
+  const rawSegHours = creditedIn && approvedOut
+    ? Math.max(0, calculateHours(creditedIn, approvedOut) - lunchOverlapMs(timeLog.lunchBreak, creditedIn, approvedOut) / 3600000)
+    : (segHours != null ? parseFloat(segHours.toString()) : null);
+
+  // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
+  // Driving segments (driver_am, driver_pm) use actual elapsed time.
+  const defaultShiftHours   = parseFloat((company?.defaultShiftHours ?? 8).toString());
+  const approvedSegHours    = (approval.segmentType === "regular" && rawSegHours != null)
+    ? Math.min(rawSegHours, defaultShiftHours)
+    : rawSegHours;
+
+  const updated = await prisma.timeLogApproval.update({
+    where: { id: approvalId },
+    data: {
+      status:           "approved",
+      approvedBy:       userId,
+      approvedAt:       new Date(),
+      approvedClockIn:  approvedIn,
+      approvedClockOut: approvedOut,
+      scheduledHours:   approvedSegHours != null ? parseFloat(approvedSegHours.toFixed(2)) : null,
+      actualHours:      approvedSegHours != null ? parseFloat(approvedSegHours.toFixed(2)) : null,
+      ...(notes && { notes }),
+    },
+  });
+  recomputeOtForTimeLog(timeLog.id, cutoffPeriodId, companyId).catch((e) =>
+    console.error("[OT] recompute failed after segment approve:", e.message)
+  );
+  syncApprovedSegmentsToTimeLog(timeLog.id, cutoffPeriodId).catch((e) =>
+    console.error("[sync-back] failed after segment approve:", e.message)
+  );
+  console.log("[✅ DayCare] Segment approved", approvalId, approval.segmentType, approvalMode === "schedule" ? "(segment window)" : "(raw times)");
+  return { message: "Segment approved successfully.", data: updated };
+}
+
 // ── resolveConflict ───────────────────────────────────────────────────────────
 
 async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, companyId }) {
@@ -677,7 +689,7 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
 
   const company = await prisma.company.findUnique({
     where:  { id: companyId },
-    select: { gracePeriodMinutes: true, timeZone: true },
+    select: { gracePeriodMinutes: true, timeZone: true, defaultShiftHours: true },
   });
   const gracePeriodMinutes = company?.gracePeriodMinutes ?? 15;
   const graceMs            = (gracePeriodMinutes * 60 + 59) * 1000;
@@ -701,8 +713,28 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     };
   }
 
-  // ── Honor punch: snap + recompute + cancel leave ──────────────────────────
-  const localDateStr        = moment.tz(timeLog.timeIn, companyTz).format("YYYY-MM-DD");
+  const localDateStr = moment.tz(timeLog.timeIn, companyTz).format("YYYY-MM-DD");
+
+  // ── Honor punch, Driver/Aide (BB-125): approve this segment through the normal
+  // segment path in Raw mode (actual punch, grace credited). The TimeLog's times
+  // are never rewritten, each segment keeps its own window and hours. The leave
+  // day is reverted once — the sibling segments find it already reverted.
+  if (isDriverSegmentPunchType(timeLog.punchType)) {
+    await approveDriverSegment(approval, {
+      approvalMode: "raw",
+      userId,
+      notes:        "Conflict resolved — punch takes precedence",
+      cutoffPeriodId,
+      companyId,
+      company,
+      graceMs,
+    });
+    const leaveResult = await revertLeaveForPunch(timeLog, localDateStr, userId);
+    console.log("[✅ DayCare] Conflict resolved — Driver/Aide punch honored", approvalId, approval.segmentType);
+    return honorPunchResult(choice, leaveResult);
+  }
+
+  // ── Honor punch: snap + recompute + revert the leave day ─────────────────
   const dateOnlyForSchedule = moment.tz(timeLog.timeIn, companyTz).startOf("day").toDate();
 
   const userShift = await fetchScheduleForDate(
@@ -769,37 +801,9 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     console.error("[OT] recompute failed after conflict resolve:", e.message)
   );
 
-  // Cancel leave + return real credit (best-effort — don't fail the whole
-  // operation; a leave-cancellation failure shouldn't roll back the punch
-  // approval that already happened above).
-  let leaveCancelled = false;
-  try {
-    const leave = await prisma.leave.findFirst({
-      where: {
-        userId:    timeLog.userId,
-        status:    "approved",
-        startDate: { lte: new Date(timeLog.timeIn) },
-        endDate:   { gte: new Date(timeLog.timeIn) },
-      },
-    });
-
-    if (leave) {
-      leaveCancelled = await prisma.$transaction((tx) =>
-        creditLeaveOnConflict(tx, { leave, userId })
-      );
-      if (leaveCancelled) console.log("[✅ DayCare] Leave cancelled and credit reconciled", leave.id);
-    }
-  } catch (leaveErr) {
-    console.error("[⚠️  DayCare] Could not cancel leave record:", leaveErr.message);
-  }
-
+  const leaveResult = await revertLeaveForPunch(timeLog, localDateStr, userId);
   console.log("[✅ DayCare] Conflict resolved — punch honored", approvalId);
-  return {
-    message: leaveCancelled
-      ? "Punch honored. Leave credit returned to employee balance."
-      : "Punch honored. Note: leave record could not be automatically cancelled — please review manually.",
-    data: { choice, punchApproved: true, leaveCancelled },
-  };
+  return honorPunchResult(choice, leaveResult);
 }
 
 module.exports = { approveSingle, approveBulk, resolveConflict, StrategyError, syncApprovedSegmentsToTimeLog, syncApprovedRegularToTimeLog };

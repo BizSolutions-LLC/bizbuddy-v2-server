@@ -60,6 +60,7 @@ async function generatePayrollExportForCutoffPeriod(cutoffPeriod) {
     where: {
       date:   { gte: cutoffPeriod.periodStart, lte: cutoffPeriod.periodEnd },
       isPaid: true,
+      revertedAt: null, // BB-125: a reverted day was worked, not taken as leave
       leave: {
         status: "approved",
         User: {

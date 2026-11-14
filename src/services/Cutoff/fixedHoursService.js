@@ -200,6 +200,7 @@ async function getPaidLeaveHoursByUser(userIds, periodStart, periodEnd) {
     where: {
       date:   { gte: periodStart, lte: periodEnd },
       isPaid: true,
+      revertedAt: null, // BB-125
       leave:  { status: "approved", userId: { in: userIds } },
     },
     select: { hours: true, leave: { select: { userId: true } } },

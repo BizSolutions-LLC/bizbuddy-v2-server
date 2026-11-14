@@ -14,6 +14,7 @@ const STATUS_PILL = {
   approved: { label: "Approved", ...PILL.ok },
   rejected: { label: "Rejected", ...PILL.bad },
   cancelled: { label: "Cancelled", ...PILL.neutral },
+  reverted: { label: "Reverted", ...PILL.neutral }, // BB-125
 };
 const PAY_PILL = {
   paid: { label: "Paid", ...PILL.ok },
@@ -65,7 +66,7 @@ function generateLeaveRequestsReportPDF(report) {
       { label: "Requests", value: String(s.total), sub: `${plural(s.employees, "employee")}` },
       { label: "Pending", value: String(s.pending), sub: s.pendingFinal ? `${s.pendingFinal} awaiting final approval` : "Awaiting an approver" },
       { label: "Approved", value: String(s.approved), sub: `${hrs(s.paidHours)} paid · ${hrs(s.unpaidHours)} unpaid` },
-      { label: "Rejected", value: String(s.rejected), sub: s.cancelled ? `${s.cancelled} cancelled` : "None cancelled" },
+      { label: "Rejected", value: String(s.rejected), sub: [s.cancelled ? `${s.cancelled} cancelled` : "None cancelled", s.reverted ? `${s.reverted} reverted` : null].filter(Boolean).join(" · ") },
       { label: "Leave hours", value: hrs(s.paidHours + s.unpaidHours), sub: "Decided requests only" },
     ]);
 
@@ -110,7 +111,7 @@ function generateLeaveRequestsReportPDF(report) {
           { label: "Decided by", width: 60, cell: (r) => txt(r.decidedBy) },
           { label: "Decided", width: 50, cell: (r) => txt(fmtDate(r.decidedOn)) },
           { label: "Submitted", width: 50, cell: (r) => txt(fmtDate(r.submittedOn)) },
-          { label: "Status", width: 64, cell: (r) => ({ pill: STATUS_PILL[r.status] || { label: r.statusLabel, ...PILL.neutral } }) },
+          { label: "Status", width: 64, cell: (r) => ({ pill: r.statusLabel === "Partly reverted" ? { label: "Partly reverted", ...PILL.ok } : STATUS_PILL[r.status] || { label: r.statusLabel, ...PILL.neutral } }) },
         ],
         rows,
         { striped: true }
@@ -121,6 +122,7 @@ function generateLeaveRequestsReportPDF(report) {
       "Days and Hours are the leave days actually counted once a request is decided (weekends and days without shifts can be excluded). For pending requests, Days is the calendar span shown in grey and Hours is \"—\" until the leave is decided.",
       "Pay shows the actual paid/unpaid outcome once approved. Balance now is today's available hours for that leave type, not the balance when the leave was taken.",
       "Approver shows \"first / second\" when the request needs two approvals. The CSV export adds the reason and the credits used by fiscal year.",
+      "Reverted: the leave was approved, but the employee punched in on that day. The punch was paid and the leave hours were returned to their balance. Partly reverted: only some days of the request were reverted; Days and Hours count the remaining days.",
     ]);
     return L.finish(w);
   } catch (error) {

@@ -21,7 +21,7 @@ const { StrategyError }                  = require("./daycareCutoffStrategy");
 const { fetchScheduleForDate }           = require("./shiftLookupUtils");
 const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff }        = require("./cutoffOtService");
-const { creditLeaveOnConflict }          = require("./leaveConflictCredit");
+const { revertLeaveForPunch, honorPunchResult } = require("./leaveConflictCredit");
 
 // ── Raw-mode grace credit ──────────────────────────────────────────────────────
 // Raw approval preserves the actual punch (TimeLog.timeIn/timeOut untouched), but
@@ -423,37 +423,14 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
     },
   });
 
-  // Cancel leave + return real credit (best-effort — don't fail the whole
-  // operation; a leave-cancellation failure shouldn't roll back the punch
-  // approval that already happened above).
-  let leaveCancelled = false;
-  try {
-    const leave = await prisma.leave.findFirst({
-      where: {
-        userId:    timeLog.userId,
-        status:    "approved",
-        startDate: { lte: new Date(timeLog.timeIn) },
-        endDate:   { gte: new Date(timeLog.timeIn) },
-      },
-    });
-
-    if (leave) {
-      leaveCancelled = await prisma.$transaction((tx) =>
-        creditLeaveOnConflict(tx, { leave, userId })
-      );
-      if (leaveCancelled) console.log("[✅ B&C] Leave cancelled and credit reconciled", leave.id);
-    }
-  } catch (leaveErr) {
-    console.error("[⚠️  B&C] Could not cancel leave record:", leaveErr.message);
-  }
+  // BB-125: revert only the punched day of the approved leave, matched by calendar
+  // date in the company zone (the old timestamp lookup missed noon-stored leaves).
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timeZone: true } });
+  const localDateStr = moment.tz(timeLog.timeIn, company?.timeZone || "America/Los_Angeles").format("YYYY-MM-DD");
+  const leaveResult  = await revertLeaveForPunch(timeLog, localDateStr, userId);
 
   console.log("[✅ B&C] Conflict resolved — punch honored", approvalId);
-  return {
-    message: leaveCancelled
-      ? "Punch honored. Leave credit returned to employee balance."
-      : "Punch honored. Note: leave record could not be automatically cancelled — please review manually.",
-    data: { choice, punchApproved: true, leaveCancelled },
-  };
+  return honorPunchResult(choice, leaveResult);
 }
 
 module.exports = { approveSingle, approveBulk, resolveConflict };

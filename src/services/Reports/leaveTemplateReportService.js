@@ -219,6 +219,7 @@ async function buildLeaveTemplateReport(actor, query) {
     prisma.leaveDay.findMany({
       where: {
         isPaid: true,
+        revertedAt: null, // BB-125
         date:   { gte: new Date(`${prevStart}T00:00:00.000Z`), lte: new Date(`${currEnd}T00:00:00.000Z`) },
         leave:  { status: "approved", userId: { in: userIds } },
       },
