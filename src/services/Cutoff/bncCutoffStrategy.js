@@ -17,7 +17,7 @@ const { prisma }                         = require("@config/connection");
 const moment                             = require("moment-timezone");
 const { computeTimeLogSummary }          = require("@services/timeLogComputeService");
 const { combineDateWithTimeTz }          = require("@services/timeLogComputeUtils");
-const { StrategyError }                  = require("./daycareCutoffStrategy");
+const { StrategyError, buildExcludeNote } = require("./daycareCutoffStrategy");
 const { fetchScheduleForDate }           = require("./shiftLookupUtils");
 const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff }        = require("./cutoffOtService");
@@ -107,7 +107,7 @@ async function approveSingle(approvalId, {
         status:     "excluded",
         approvedBy: userId,
         approvedAt: new Date(),
-        notes:      reason || notes || (action === "reject" ? "Rejected by supervisor" : null),
+        notes:      buildExcludeNote(reason, notes, action),
       },
     });
     console.log("[✅ B&C] Record excluded", approvalId);

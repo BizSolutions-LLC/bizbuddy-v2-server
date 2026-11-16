@@ -732,6 +732,9 @@ model Company {
   ettEnabled Boolean @default(true)
   suiEnabled Boolean @default(true)
 
+  // BB-121: which cutoff page the company's web users see — "list" | "calendar"
+  cutoffPageView String @default("list")
+
   LiveUser LiveUser[]
 
   companyCutoffSettings CompanyCutoffSettings?

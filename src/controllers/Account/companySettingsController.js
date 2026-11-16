@@ -98,6 +98,7 @@ exports.getSettings = async (req, res) => {
         autoCoffeeEnabled:            true,
         ettEnabled:                   true,
         suiEnabled:                   true,
+        cutoffPageView:               true,
         ...COMPANY_CREDIT_SELECT,
       },
     });
@@ -133,7 +134,15 @@ exports.getSettings = async (req, res) => {
 
 exports.updateSettings = async (req, res) => {
   try {
-    if (!["admin", "superadmin"].includes(req.user.role))
+    // BB-121 (during development): a supervisor may change the cutoff page type,
+    // but only when the request carries nothing else. Every other setting stays
+    // admin/superadmin only.
+    const bodyKeys = Object.keys(req.body || {});
+    const isCutoffPageViewOnly = bodyKeys.length === 1 && bodyKeys[0] === "cutoffPageView";
+    const canUpdate =
+      ["admin", "superadmin"].includes(req.user.role) ||
+      (req.user.role === "supervisor" && isCutoffPageViewOnly);
+    if (!canUpdate)
       return res.status(403).json({ error: "Forbidden" });
 
     if (req.body.timezone && !req.body.timeZone) {
@@ -168,9 +177,16 @@ exports.updateSettings = async (req, res) => {
       autoCoffeeEnabled,
       ettEnabled,
       suiEnabled,
+      cutoffPageView,
     } = req.body;
 
     const VALID_OT_BASES = ["daily", "weekly", "cutoff"];
+
+    // BB-121: reject unknown values instead of defaulting, so a client bug
+    // can't silently switch the whole company's cutoff page.
+    const VALID_CUTOFF_PAGE_VIEWS = ["list", "calendar"];
+    if (cutoffPageView !== undefined && !VALID_CUTOFF_PAGE_VIEWS.includes(cutoffPageView))
+      return res.status(400).json({ error: `cutoffPageView must be one of: ${VALID_CUTOFF_PAGE_VIEWS.join(", ")}` });
 
     const leaveCredits = await _leaveCreditUpdate(req.user.companyId, req.body);
     if (leaveCredits.error) return res.status(400).json({ error: leaveCredits.error });
@@ -272,6 +288,8 @@ exports.updateSettings = async (req, res) => {
         // ── Employer ETT / SUI ───────────────────────────────────────────────
         ...(ettEnabled !== undefined && { ettEnabled: Boolean(ettEnabled) }),
         ...(suiEnabled !== undefined && { suiEnabled: Boolean(suiEnabled) }),
+        // ── BB-121 cutoff page type ──────────────────────────────────────────
+        ...(cutoffPageView !== undefined && { cutoffPageView }),
         // ── BB-098 leave credits ─────────────────────────────────────────────
         ...leaveCredits.data,
         // ─────────────────────────────────────────────────────────────────────
@@ -305,6 +323,7 @@ exports.updateSettings = async (req, res) => {
         autoCoffeeEnabled:             true,
         ettEnabled:                    true,
         suiEnabled:                    true,
+        cutoffPageView:                true,
         ...COMPANY_CREDIT_SELECT,
       },
     });
