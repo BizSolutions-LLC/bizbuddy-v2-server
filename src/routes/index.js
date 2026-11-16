@@ -55,6 +55,7 @@ const contestReportRoutes = require("@routes/Reports/contestReportRoutes"); // B
 const punchLogReportRoutes = require("@routes/Reports/punchLogReportRoutes"); // BB-119
 const setupGuideRoutes = require("@routes/Company/setupGuideRoutes");
 const dailyTaskReportRoutes = require("@routes/Features/dailyTaskReportRoutes"); // BB-129
+const employeeMapRoutes = require("@routes/Features/employeeMapRoutes"); // BB-128
 
 const testRoutes = require("@routes/testRoutes");
 
@@ -70,6 +71,7 @@ router.use("/task-reports", dailyTaskReportRoutes); // BB-129
 router.use("/presence", userPresenceRoutes);
 router.use("/leaves", leavesRoutes);
 router.use("/location", locationRoutes);
+router.use("/employee-map", employeeMapRoutes); // BB-128
 router.use("/payroll", blockSystemAgentArea, payrollRoutes); // BB-120: no B. Buddy
 router.use("/shifts", shiftRoutes);
 router.use("/shift-assignments", shiftAssignmentRoutes);

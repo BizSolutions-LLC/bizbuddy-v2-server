@@ -307,7 +307,7 @@ Cron jobs are pure functions registered via `src/utils/cronScheduler.js` using `
 | Script | Command |
 |---|---|
 | `npm run dev` | `PORT=5001 nodemon server.js` |
-| `npm start` | `npm run prisma:sync && node server.js` |
+| `npm start` | `node server.js` (Render: schema sync moved to the Pre-Deploy Command `npx prisma db push`; `NODE_OPTIONS=--max-old-space-size=384`, 2026-11-16) |
 | `npm run seed` | `node src/prisma/seed.js` |
 | `npm run prisma:sync` | `prisma db push --accept-data-loss && prisma generate` |
 
