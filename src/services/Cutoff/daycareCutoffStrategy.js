@@ -26,6 +26,18 @@ class StrategyError extends Error {
   }
 }
 
+// ── Exclude note (BB-121) ─────────────────────────────────────────────────────
+// TimeLogApproval has one `notes` column. Keep both the reason and the free-text
+// note when both are sent ("reason — note"); before this, the note was dropped.
+// Shared with the B&C strategy.
+function buildExcludeNote(reason, notes, action) {
+  const r = typeof reason === "string" ? reason.trim() : "";
+  const n = typeof notes  === "string" ? notes.trim()  : "";
+  if (r && n) return r === n ? r : `${r} — ${n}`;
+  if (r || n) return r || n;
+  return action === "reject" ? "Rejected by supervisor" : null;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -142,7 +154,7 @@ async function approveSingle(approvalId, {
         status:     "excluded",
         approvedBy: userId,
         approvedAt: new Date(),
-        notes:      reason || notes || (action === "reject" ? "Rejected by supervisor" : null),
+        notes:      buildExcludeNote(reason, notes, action),
       },
     });
     console.log("[✅ DayCare] Record excluded", approvalId);
@@ -816,4 +828,4 @@ async function resolveConflict(approvalId, { cutoffPeriodId, choice, userId, com
   return honorPunchResult(choice, leaveResult);
 }
 
-module.exports = { approveSingle, approveBulk, resolveConflict, StrategyError, syncApprovedSegmentsToTimeLog, syncApprovedRegularToTimeLog };
+module.exports = { approveSingle, approveBulk, resolveConflict, StrategyError, buildExcludeNote, syncApprovedSegmentsToTimeLog, syncApprovedRegularToTimeLog };
