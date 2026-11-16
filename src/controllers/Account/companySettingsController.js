@@ -99,6 +99,7 @@ exports.getSettings = async (req, res) => {
         ettEnabled:                   true,
         suiEnabled:                   true,
         cutoffPageView:               true,
+        taskReportEnabled:            true, // BB-129
         ...COMPANY_CREDIT_SELECT,
       },
     });
@@ -178,6 +179,7 @@ exports.updateSettings = async (req, res) => {
       ettEnabled,
       suiEnabled,
       cutoffPageView,
+      taskReportEnabled,
     } = req.body;
 
     const VALID_OT_BASES = ["daily", "weekly", "cutoff"];
@@ -290,6 +292,8 @@ exports.updateSettings = async (req, res) => {
         ...(suiEnabled !== undefined && { suiEnabled: Boolean(suiEnabled) }),
         // ── BB-121 cutoff page type ──────────────────────────────────────────
         ...(cutoffPageView !== undefined && { cutoffPageView }),
+        // ── BB-129 clock-out documentation (trial) ─────────────────────────────
+        ...(taskReportEnabled !== undefined && { taskReportEnabled: Boolean(taskReportEnabled) }),
         // ── BB-098 leave credits ─────────────────────────────────────────────
         ...leaveCredits.data,
         // ─────────────────────────────────────────────────────────────────────
@@ -324,6 +328,7 @@ exports.updateSettings = async (req, res) => {
         ettEnabled:                    true,
         suiEnabled:                    true,
         cutoffPageView:                true,
+        taskReportEnabled:             true, // BB-129
         ...COMPANY_CREDIT_SELECT,
       },
     });
