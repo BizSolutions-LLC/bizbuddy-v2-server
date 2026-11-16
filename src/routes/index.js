@@ -54,6 +54,7 @@ const departmentReportRoutes = require("@routes/Reports/departmentReportRoutes")
 const contestReportRoutes = require("@routes/Reports/contestReportRoutes"); // BB-119
 const punchLogReportRoutes = require("@routes/Reports/punchLogReportRoutes"); // BB-119
 const setupGuideRoutes = require("@routes/Company/setupGuideRoutes");
+const dailyTaskReportRoutes = require("@routes/Features/dailyTaskReportRoutes"); // BB-129
 
 const testRoutes = require("@routes/testRoutes");
 
@@ -65,6 +66,7 @@ router.use("/subscription-plans", subscriptionPlansRoutes);
 router.use("/subscriptions", subscriptionsRoutes);
 router.use("/employee", employeeRoutes);
 router.use("/timelogs", timeLogsRoutes);
+router.use("/task-reports", dailyTaskReportRoutes); // BB-129
 router.use("/presence", userPresenceRoutes);
 router.use("/leaves", leavesRoutes);
 router.use("/location", locationRoutes);

@@ -552,6 +552,7 @@ model User {
   feedbacks                Feedback[]
   tokenVersion             Int      @default(0)
   liveUser                 LiveUser?
+  dailyTaskReports         DailyTaskReport[]        // BB-129
   // BB-089: this employee is on fixed hours — only takes effect while their
   // department's fixedHoursEnabled master switch is also on.
   fixedHoursEnabled        Boolean  @default(false)
@@ -734,6 +735,10 @@ model Company {
 
   // BB-121: which cutoff page the company's web users see — "list" | "calendar"
   cutoffPageView String @default("list")
+
+  // BB-129: clock-out documentation (Daily Task Report), trial mode — off by default
+  taskReportEnabled Boolean @default(false)
+  dailyTaskReports  DailyTaskReport[]
 
   LiveUser LiveUser[]
 
@@ -1115,6 +1120,28 @@ model LiveUser {
   @@index([companyId])
   @@index([warnAt])
   @@index([closeAt])
+}
+
+// BB-129: clock-out documentation. One report per employee per day; reportDate
+// is the company-zone calendar date of the day's punches. tasks is a JSON list
+// of { title, note }. status "draft" | "submitted" — only submitted reports are
+// visible to supervisors/admins and have a PDF. No edit deadline (trial mode).
+model DailyTaskReport {
+  id          String    @id @default(cuid())
+  companyId   String
+  userId      String
+  reportDate  DateTime  @db.Date
+  tasks       Json      @default("[]")
+  status      String    @default("draft")
+  submittedAt DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, reportDate])
+  @@index([companyId, reportDate])
 }
 
 model CutoffPeriod {
