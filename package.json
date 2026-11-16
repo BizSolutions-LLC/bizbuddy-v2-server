@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "dev": "PORT=8000 nodemon server.js",
-    "start": "npm run prisma:sync && node server.js",
+    "start": "node server.js",
     "seed": "node src/prisma/seed.js",
     "prisma:sync": "prisma db push --accept-data-loss && prisma generate",
     "postinstall": "prisma generate",
