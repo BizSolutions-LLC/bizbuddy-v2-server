@@ -61,4 +61,9 @@ router.post("/provision-company/check", verifySystemAdmin, checkProvision);
 router.post("/provision-company", verifySystemAdmin, provisionCompany);
 router.get("/subscription-plans", verifySystemAdmin, listPlans);
 
+// BB-132: Subscription plans showcase (read-only, any system admin). /overview before /:id.
+const planOverview = require("@controllers/Analytics/subscriptionPlanOverviewController");
+router.get("/subscription-plans/overview", verifySystemAdmin, planOverview.getPlansOverview);
+router.get("/subscription-plans/:id", verifySystemAdmin, planOverview.getPlanDetail);
+
 module.exports = router;
