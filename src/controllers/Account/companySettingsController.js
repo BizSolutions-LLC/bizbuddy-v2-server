@@ -100,6 +100,8 @@ exports.getSettings = async (req, res) => {
         suiEnabled:                   true,
         cutoffPageView:               true,
         taskReportEnabled:            true, // BB-129
+        taskReportMode:               true, // BB-129 phase 1
+        taskReportFormWindowHours:    true, // BB-129 phase 2
         ...COMPANY_CREDIT_SELECT,
       },
     });
@@ -180,6 +182,8 @@ exports.updateSettings = async (req, res) => {
       suiEnabled,
       cutoffPageView,
       taskReportEnabled,
+      taskReportMode,
+      taskReportFormWindowHours,
     } = req.body;
 
     const VALID_OT_BASES = ["daily", "weekly", "cutoff"];
@@ -189,6 +193,18 @@ exports.updateSettings = async (req, res) => {
     const VALID_CUTOFF_PAGE_VIEWS = ["list", "calendar"];
     if (cutoffPageView !== undefined && !VALID_CUTOFF_PAGE_VIEWS.includes(cutoffPageView))
       return res.status(400).json({ error: `cutoffPageView must be one of: ${VALID_CUTOFF_PAGE_VIEWS.join(", ")}` });
+
+    // BB-129 phase 1: same rule — unknown documentation modes are rejected.
+    const VALID_TASK_REPORT_MODES = ["freeform", "forms"];
+    if (taskReportMode !== undefined && !VALID_TASK_REPORT_MODES.includes(taskReportMode))
+      return res.status(400).json({ error: `taskReportMode must be one of: ${VALID_TASK_REPORT_MODES.join(", ")}` });
+
+    // BB-129 phase 2: questionnaire answer window, whole hours, 1 hour to 90 days.
+    if (
+      taskReportFormWindowHours !== undefined &&
+      !(Number.isInteger(taskReportFormWindowHours) && taskReportFormWindowHours >= 1 && taskReportFormWindowHours <= 2160)
+    )
+      return res.status(400).json({ error: "taskReportFormWindowHours must be a whole number of hours from 1 to 2160 (90 days)." });
 
     const leaveCredits = await _leaveCreditUpdate(req.user.companyId, req.body);
     if (leaveCredits.error) return res.status(400).json({ error: leaveCredits.error });
@@ -294,6 +310,8 @@ exports.updateSettings = async (req, res) => {
         ...(cutoffPageView !== undefined && { cutoffPageView }),
         // ── BB-129 clock-out documentation (trial) ─────────────────────────────
         ...(taskReportEnabled !== undefined && { taskReportEnabled: Boolean(taskReportEnabled) }),
+        ...(taskReportMode !== undefined && { taskReportMode }),
+        ...(taskReportFormWindowHours !== undefined && { taskReportFormWindowHours }),
         // ── BB-098 leave credits ─────────────────────────────────────────────
         ...leaveCredits.data,
         // ─────────────────────────────────────────────────────────────────────
@@ -329,6 +347,8 @@ exports.updateSettings = async (req, res) => {
         suiEnabled:                    true,
         cutoffPageView:                true,
         taskReportEnabled:             true, // BB-129
+        taskReportMode:                true, // BB-129 phase 1
+        taskReportFormWindowHours:     true, // BB-129 phase 2
         ...COMPANY_CREDIT_SELECT,
       },
     });

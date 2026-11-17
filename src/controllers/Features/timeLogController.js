@@ -6,6 +6,7 @@ const { getIO } = require("@config/socket");
 const { computeTimeLogSummary } = require("@services/timeLogComputeService");
 const { createLiveUser, removeLiveUser } = require("@services/liveUserService");
 const { applyAutoBreaks } = require("@services/autoBreakService");
+const { clockOutPrompt } = require("@services/Features/taskReportFormResponseService"); // BB-129 phase 2
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 const { matchShiftToWindow } = require("@services/timeLogComputeUtils");
 const moment = require("moment-timezone");
@@ -312,9 +313,16 @@ const timeOut = async (req, res) => {
       .to(userId)
       .emit("timeLogUpdated", { type: "timeOut", data: updatedTimeLog });
 
+    // ── BB-129 phase 2: questionnaire prompt ─────────────────────────────────
+    // { timeLogId, form: { id, name }, shiftName, closesAt } when this punch has a
+    // custom form to answer, else null. Added field only — older apps ignore it.
+    // Never fails the clock-out (clockOutPrompt catches its own errors).
+    const taskReportForm = await clockOutPrompt(userId, updatedTimeLog);
+
     return res.status(200).json({
       message: "Time out recorded successfully.",
       data: updatedTimeLog,
+      taskReportForm,
     });
   } catch (err) {
     console.error("Error in timeOut:", err);

@@ -23,7 +23,9 @@ router.get("/admin", authenticate, authorizeRoles("admin", "superadmin"), getAdm
 router.get("/super", authenticate, authorizeRoles("superadmin"), getSuperAdminAnalytics);
 router.get("/employee", authenticate, authorizeRoles("employee", "admin", "superadmin", "supervisor"), getEmployeeAnalytics);
 router.get("/admin-dashboard", authenticate, authorizeRoles("admin", "supervisor", "superadmin"), getAdminAnalyticsDashboard);
-router.get("/super-dashboard", authenticate, authorizeRoles("admin", "supervisor", "superadmin"), getSuperadminAnalyticsDashboard);
+// BB-133: platform-wide data (MRR, every company) — superadmin only at the route,
+// not just inside the handler.
+router.get("/super-dashboard", authenticate, authorizeRoles("superadmin"), getSuperadminAnalyticsDashboard);
 
 // ========== NEW SYSTEM ANALYTICS ROUTES (System Admin only) ==========
 // All system analytics require system admin authentication

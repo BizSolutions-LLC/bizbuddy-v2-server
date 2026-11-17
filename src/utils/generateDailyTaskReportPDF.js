@@ -154,4 +154,5 @@ function drawSignature(w, name, line) {
   w.y += mm(5);
 }
 
-module.exports = { generateDailyTaskReportPDF };
+// drawSignature is reused by the questionnaire PDF (BB-129 phase 2).
+module.exports = { generateDailyTaskReportPDF, drawSignature };

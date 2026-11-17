@@ -2,6 +2,7 @@
 
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
+const A = require("@services/Analytics/attendanceAnalyticsService"); // BB-133
 
 const ym = (d) => new Date(d).toISOString().slice(0, 7);
 
@@ -72,7 +73,7 @@ module.exports.getSuperAdminAnalytics = async (req, res) => {
 
     const totalActiveUsers = activeUsersSet.size;
     const mrr = payments.reduce((s, p) => s + Number(p.amount), 0).toFixed(2);
-    const serverUptime = 99.95;
+    const serverUptime = null; // BB-133: was a hard-coded 99.95 — real health is under System Admin → Server
 
     const activeByCompany = {};
     activeUsersSet.forEach((uid) => {
@@ -132,82 +133,26 @@ module.exports.getSuperAdminAnalytics = async (req, res) => {
 
 module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
   try {
-    const { period = 'this_month', startDate, endDate } = req.query;
     
     // Verify superadmin role
     if (req.user.role !== 'superadmin') {
       return res.status(403).json({ message: "Access denied: Superadmin only" });
     }
 
-    // Calculate date range
-    let rangeStart, rangeEnd, rangeLabel;
+    // BB-133: platform view buckets days in UTC (companies are in different
+    // zones); same periods and validation as the company Overview, end clamped
+    // to today.
     const now = new Date();
-
-    switch (period) {
-      case 'last_7_days':
-        rangeEnd = new Date(now);
-        rangeStart = new Date(now);
-        rangeStart.setDate(rangeStart.getDate() - 6);
-        rangeLabel = 'Last 7 days';
-        break;
-
-      case 'last_14_days':
-        rangeEnd = new Date(now);
-        rangeStart = new Date(now);
-        rangeStart.setDate(rangeStart.getDate() - 13);
-        rangeLabel = 'Last 14 days';
-        break;
-
-      case 'last_28_days':
-        rangeEnd = new Date(now);
-        rangeStart = new Date(now);
-        rangeStart.setDate(rangeStart.getDate() - 27);
-        rangeLabel = 'Last 28 days';
-        break;
-
-      case 'last_30_days':
-        rangeEnd = new Date(now);
-        rangeStart = new Date(now);
-        rangeStart.setDate(rangeStart.getDate() - 29);
-        rangeLabel = 'Last 30 days';
-        break;
-
-      case 'last_month':
-        rangeEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-        rangeStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        rangeLabel = rangeStart.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-        break;
-
-      case 'this_month':
-      default:
-        rangeStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        rangeEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        rangeLabel = rangeStart.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-        break;
-
-      case 'custom':
-        if (!startDate || !endDate) {
-          return res.status(400).json({ message: "startDate and endDate required for custom period" });
-        }
-        rangeStart = new Date(startDate);
-        rangeEnd = new Date(endDate);
-        
-        if (rangeStart > rangeEnd) {
-          return res.status(400).json({ message: "startDate must be before endDate" });
-        }
-        
-        rangeLabel = `${rangeStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${rangeEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-        break;
+    let range;
+    try {
+      range = A.resolveRange(req.query, "UTC", { maxCustomDays: 365 });
+    } catch (e) {
+      if (e instanceof A.AnalyticsRangeError) return res.status(400).json({ message: e.message });
+      throw e;
     }
-
-    rangeStart.setHours(0, 0, 0, 0);
-    rangeEnd.setHours(23, 59, 59, 999);
-
-    const daysDiff = Math.ceil((rangeEnd - rangeStart) / (1000 * 60 * 60 * 24));
-
-    if (period === 'custom' && daysDiff > 365) {
-      return res.status(400).json({ message: "Date range cannot exceed 365 days for superadmin view" });
-    }
+    const rangeStart = range.startUtc;
+    const rangeEnd = range.endUtc;
+    const daysDiff = range.days.length;
 
     // Helper functions
     const monthKey = (date) => new Date(date).toISOString().slice(0, 7);
@@ -296,6 +241,7 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
           userId: true,
           timeIn: true,
           timeOut: true,
+          netWorkedHours: true,
           user: {
             select: {
               companyId: true,
@@ -308,10 +254,9 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
       // Leave requests in period
       prisma.leave.count({
         where: {
-          OR: [
-            { startDate: { gte: rangeStart, lte: rangeEnd } },
-            { endDate: { gte: rangeStart, lte: rangeEnd } },
-          ],
+          // BB-133: any overlap with the range (also leaves that span all of it)
+          startDate: { lte: rangeEnd },
+          endDate: { gte: rangeStart },
         },
       }),
     ]);
@@ -394,11 +339,12 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
       .slice(0, 10);
 
     // 8. Total Hours Tracked Platform-Wide
-    const totalHours = timelogs.reduce((sum, log) => {
-      if (!log.timeOut) return sum;
-      const hours = (new Date(log.timeOut) - new Date(log.timeIn)) / 36e5;
-      return sum + hours;
-    }, 0);
+    // BB-133: net worked hours (breaks deducted), same as Punch Logs.
+    const logHours = (log) =>
+      log.netWorkedHours != null
+        ? Number(log.netWorkedHours)
+        : log.timeOut ? (new Date(log.timeOut) - new Date(log.timeIn)) / 36e5 : 0;
+    const totalHours = timelogs.reduce((sum, log) => sum + logHours(log), 0);
 
     // 9. Average Hours per Active User
     const avgHoursPerUser = activeUsers.length > 0 
@@ -413,10 +359,8 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
     // 11. Companies by Hours Tracked (Top Performers)
     const hoursByCompany = {};
     timelogs.forEach(log => {
-      if (!log.timeOut) return;
       const company = log.user?.company?.name || 'Unknown';
-      const hours = (new Date(log.timeOut) - new Date(log.timeIn)) / 36e5;
-      hoursByCompany[company] = (hoursByCompany[company] || 0) + hours;
+      hoursByCompany[company] = (hoursByCompany[company] || 0) + logHours(log);
     });
     const topCompaniesByHours = Object.entries(hoursByCompany)
       .map(([company, hours]) => ({ company, hours: Number(hours.toFixed(1)) }))
@@ -424,8 +368,10 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
       .slice(0, 10);
 
     // 12. Platform Health Metrics
-    const serverUptime = 99.9; // Replace with actual monitoring data
-    const avgResponseTime = 245; // Replace with actual monitoring data (ms)
+    // BB-133: these were hard-coded (99.9 / 245 ms). null until sourced from real
+    // monitoring — System Admin → Server already shows live health.
+    const serverUptime = null;
+    const avgResponseTime = null;
 
     // === RESPONSE ===
     return res.status(200).json({
@@ -470,12 +416,8 @@ module.exports.getSuperadminAnalyticsDashboard = async (req, res) => {
             daysAgo: Math.floor((now - new Date(c.createdAt)) / (1000 * 60 * 60 * 24)),
           })),
         },
-        dateRange: {
-          start: rangeStart.toISOString().split('T')[0],
-          end: rangeEnd.toISOString().split('T')[0],
-          label: rangeLabel,
-          period: period,
-        },
+        timeZone: "UTC",
+        dateRange: A.dateRangeOf(range),
       },
     });
   } catch (e) {
