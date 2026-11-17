@@ -528,6 +528,7 @@ model User {
   department               Department?              @relation("DepartmentUsers", fields: [departmentId], references: [id])
   UserActivity             UserActivity[]
   presence                 UserPresence?
+  taskReportFormResponses  TaskReportFormResponse[] // BB-129 phase 2
   profile                  UserProfile?
   UserRate                 UserRate[]
   UserShift                UserShift[]
@@ -739,6 +740,15 @@ model Company {
   // BB-129: clock-out documentation (Daily Task Report), trial mode — off by default
   taskReportEnabled Boolean @default(false)
   dailyTaskReports  DailyTaskReport[]
+
+  // BB-129 phase 1: "freeform" (Daily Task Report) | "forms" (custom forms)
+  taskReportMode    String  @default("freeform")
+  taskReportForms   TaskReportForm[]
+
+  // BB-129 phase 2: hours after clock-out a questionnaire stays open (336 = 14 days)
+  taskReportFormWindowHours Int @default(336)
+  taskReportFormAssignments TaskReportFormAssignment[]
+  taskReportFormResponses   TaskReportFormResponse[]
 
   LiveUser LiveUser[]
 
@@ -1090,6 +1100,7 @@ model TimeLog {
   // ─────────────────────────────────────────────────────────────────────────────
 
   liveUser              LiveUser?
+  taskReportFormResponse TaskReportFormResponse? // BB-129 phase 2
 
   @@index([isApproved])
   @@index([timeIn, isApproved])
@@ -1142,6 +1153,81 @@ model DailyTaskReport {
 
   @@unique([userId, reportDate])
   @@index([companyId, reportDate])
+}
+
+// BB-129 phase 1: custom clock-out documentation forms (Google Forms style),
+// built by admins. questions is a JSON list of
+// { id, type, label, helpText, required, options } — validated in
+// services/Features/taskReportFormService.js. status "active" | "archived".
+// Phase 1 only builds forms; answering + per-shift assignment come later.
+model TaskReportForm {
+  id          String    @id @default(cuid())
+  companyId   String
+  name        String
+  description String?
+  questions   Json      @default("[]")
+  status      String    @default("active")
+  archivedAt  DateTime? @db.Timestamptz(6)
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company     Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignments TaskReportFormAssignment[]
+
+  @@index([companyId, status])
+}
+
+// BB-129 phase 2: which form goes to whom. scope "all" | "department" |
+// "employee" | "shift"; targetId = department / user / shift id, "*" for "all".
+// One form per target. Most specific wins: shift → employee → department → all.
+model TaskReportFormAssignment {
+  id          String   @id @default(cuid())
+  companyId   String
+  formId      String
+  scope       String
+  targetId    String
+  createdById String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  form    TaskReportForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, scope, targetId])
+  @@index([formId])
+}
+
+// BB-129 phase 2: one answer set per punch. form = snapshot { id, name,
+// description, questions } as answered; answers = { questionId: value }.
+// status "draft" | "submitted"; a draft past closesAt reads as "incomplete".
+// formId has no relation on purpose (the snapshot keeps answers readable).
+model TaskReportFormResponse {
+  id          String    @id @default(cuid())
+  companyId   String
+  userId      String
+  timeLogId   String    @unique
+  punchDate   DateTime  @db.Date
+  formId      String
+  form        Json
+  assignedVia String
+  shiftId     String?
+  shiftName   String?
+  answers     Json      @default("{}")
+  status      String    @default("draft")
+  closesAt    DateTime  @db.Timestamptz(6)
+  submittedAt DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timeLog TimeLog @relation(fields: [timeLogId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, punchDate])
+  @@index([userId, punchDate])
+  @@index([formId])
 }
 
 model CutoffPeriod {

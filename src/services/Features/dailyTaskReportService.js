@@ -20,6 +20,7 @@ const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { resolveShiftForTimeLog } = require("@services/timeLogComputeService");
+const formResponses = require("@services/Features/taskReportFormResponseService"); // BB-129 phase 2
 
 const DEFAULT_TZ = "America/Los_Angeles";
 const MANAGER_ROLES = ["admin", "superadmin"];
@@ -81,7 +82,7 @@ function cleanTasks(tasks, { submit }) {
 async function loadCompany(companyId) {
   const company = await prisma.company.findUnique({
     where: { id: companyId },
-    select: { id: true, name: true, timeZone: true, taskReportEnabled: true },
+    select: { id: true, name: true, timeZone: true, taskReportEnabled: true, taskReportMode: true },
   });
   if (!company) throw new TaskReportError(404, "Company not found.");
   return company;
@@ -172,9 +173,10 @@ async function getMine(actor, date) {
   ]);
   return {
     enabled: company.taskReportEnabled,
+    mode: company.taskReportMode, // BB-129 phase 2: "forms" = free-form is read-only
     timeZone: tz,
     reportDate: ymd,
-    canEdit: company.taskReportEnabled && attendance.punchCount > 0,
+    canEdit: company.taskReportEnabled && company.taskReportMode !== "forms" && attendance.punchCount > 0,
     attendance,
     report: shape(report),
   };
@@ -185,6 +187,9 @@ async function saveMine(actor, date, body = {}) {
   const company = await loadCompany(actor.companyId);
   if (!company.taskReportEnabled)
     throw new TaskReportError(403, "Clock-out documentation is turned off for your company.", "TASK_REPORT_DISABLED");
+  // BB-129 phase 2: the modes are exclusive — in "forms" mode only questionnaires are written.
+  if (company.taskReportMode === "forms")
+    throw new TaskReportError(403, "Your company uses questionnaires instead of the daily task report.", "TASK_REPORT_MODE_FORMS");
   const tz = zoneOf(company);
   const ymd = parseDate(date, tz);
 
@@ -234,7 +239,12 @@ async function teamUserWhere(actor) {
   throw new TaskReportError(403, "Only supervisors and admins can view team reports.");
 }
 
-/** GET /team?from&to&userId&departmentId — submitted reports in scope. */
+/**
+ * GET /team?from&to&userId&departmentId&include=forms — submitted reports in scope.
+ * Every row has kind "freeform". With include=forms (BB-129 phase 2) the list also
+ * has questionnaire rows (kind "form": submitted + incomplete), newest first.
+ * Without it the response is unchanged, so the current client keeps working.
+ */
 async function listTeam(actor, query) {
   const company = await loadCompany(actor.companyId);
   const tz = zoneOf(company);
@@ -265,16 +275,12 @@ async function listTeam(actor, query) {
     orderBy: [{ reportDate: "desc" }, { submittedAt: "desc" }],
   });
 
-  return {
-    enabled: company.taskReportEnabled,
-    timeZone: tz,
-    from,
-    to,
-    reports: rows.map((r) => {
+  const freeform = rows.map((r) => {
       const s = shape(r);
       delete s.tasks;
       return {
         ...s,
+        kind: "freeform",
         employee: {
           id: r.user.id,
           name: personName(r.user),
@@ -282,7 +288,29 @@ async function listTeam(actor, query) {
           department: r.user.department?.name ?? null,
         },
       };
-    }),
+    });
+
+  const includeForms = String(query.include || "").split(",").map((x) => x.trim()).includes("forms");
+  let reports = freeform;
+  if (includeForms) {
+    const forms = await formResponses.listTeamRows(
+      actor,
+      { from, to, userId: query.userId, departmentId: query.departmentId },
+      userWhere
+    );
+    const at = (row) => new Date(row.submittedAt || row.closesAt || 0).getTime();
+    reports = [...freeform, ...forms].sort((a, b) =>
+      a.reportDate === b.reportDate ? at(b) - at(a) : a.reportDate < b.reportDate ? 1 : -1
+    );
+  }
+
+  return {
+    enabled: company.taskReportEnabled,
+    mode: company.taskReportMode,
+    timeZone: tz,
+    from,
+    to,
+    reports,
   };
 }
 
