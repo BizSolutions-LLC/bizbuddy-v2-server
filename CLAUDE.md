@@ -15,6 +15,7 @@ There is no external ticket tracker (no GitHub Issues, Linear, Jira). A "ticket 
 Classify every task into one of these before starting, and follow its steps.
 
 ### 1. Fix a ticket
+0. Sync with master (below).
 1. Ask for the concern and a ticket number if not already given.
 2. Investigate and discuss the affected files/modules first. Do **not** edit anything yet.
 3. Report what's damaged/included, a rough effort/impact estimate, and flag any client-side impact.
@@ -24,7 +25,7 @@ Classify every task into one of these before starting, and follow its steps.
 7. If the user reports something failed, return to step 2 with their findings. Only treat the ticket as complete once the user confirms.
 
 ### 2. Create or redo a module
-Same gate as above (discuss → estimate → wait for go-ahead → change → summarize), but before estimating, explicitly consider the overall concept on **both** server and client sides — this usually has a bigger footprint than a single fix. Call out any cross-repo contract changes clearly in the estimate.
+Sync with master first (below), then the same gate as above (discuss → estimate → wait for go-ahead → change → summarize), but before estimating, explicitly consider the overall concept on **both** server and client sides — this usually has a bigger footprint than a single fix. Call out any cross-repo contract changes clearly in the estimate.
 
 ### 3. Script writing (database)
 - Never run scripts against the database. Never execute migrations, seeders, or queries directly.
@@ -51,29 +52,42 @@ The rules above are backed by actual tool permissions, not just instructions:
 - Hard `deny` (zero exceptions, not even prompted): all `prisma migrate`/`db push`/`db seed`/`generate` variants, `node scripts/*`, `node src/prisma/seed.js`, `npm run seed`/`prisma:sync`/`start`, `npm start`, `psql`, `pg_dump`, `pg_restore`.
 - `npm run dev` and `npm test`/`npm run test` are intentionally **not** hard-denied — only gated by `defaultMode: plan` — so the user can still explicitly ask for a test run per workflow 4. Never run these on your own initiative.
 
+## Sync with master before starting
+
+To avoid PR conflicts, every fix (workflow 1) and module (workflow 2) starts from the latest `master`:
+- `git fetch origin`. If no uncommitted tracked work is in progress: `git switch master && git pull --ff-only origin master`.
+- If uncommitted tracked work exists, or the pull isn't a fast-forward, stop and ask. Untracked files (test PDFs, screenshots, SQL) can stay.
+- These are read-only/sync git commands. Never `reset --hard`, force, or discard work to make a pull succeed.
+
+## Versioning & releases (`/push`)
+
+**A version is a push, not a ticket.** Everything ready at push time ships as ONE version, whether that's one ticket or five. The number is chosen when the push is prepared (`/push`), never while a ticket is being built. Avoid what happened on 2026-11-16: v2.11.12, .13 and .14 in one day should have been one v2.11.12.
+
+- **Number:** `v2.MINOR.PATCH`. Each push raises PATCH by 1 and never skips a number. MINOR goes up only when the user decides (a large batch or a new module), and then PATCH resets to 0. A second push the same day, after the first is merged, is simply the next PATCH. A fix for a pushed branch that isn't merged yet goes on that same branch and version.
+- **Branch:** `release/vX.Y.Z`, created from the latest `origin/master` and merged into `master` through a PR. Never commit directly to `master`. Remote stays `biz-admin-carlo/bizbuddy-v2-server`.
+- **Commit:** `<type>: vX.Y.Z — BB-### short, BB-### short`, listing every ticket in the push.
+- **Changelog:** one `docs/changelog-vX.Y.Z.md` per version.
+  - **Header:** branch + push date, every ticket with its status, schema change yes/no, client and mobile impact.
+  - **Body:** one section per ticket.
+  - The header is final at push time, never left saying "uncommitted".
+- **Version field:** `"version"` in `package.json` and `package-lock.json` = `X.Y.Z` on every push, edited by hand in the release commit. Never `npm version`. No git tags.
+- **Client hand-off:** stays per ticket (`docs/client-update-BB-###.md`). The changelog links to it.
+- **Never committed:** test/report PDFs and xlsx in `docs/`, `docs/Screenshots/`, schema SQL the user runs by hand (`scripts/add-*.sql`), and git-ignored backups. Add files by name, never `git add -A`.
+- **DB order** when a push has a schema change: the user runs the SQL → `prisma generate` → deploy → only then data scripts (old Prisma clients break on unknown enum values).
+- `/push` (`.claude/commands/push.md`) does all of this with one approval checkpoint before commit + push. It never merges the PR, deploys, or runs tests, Prisma or SQL.
+
 ## Related reference
 
 Architecture, stack, routes, and module conventions are documented separately in `docs/CLAUDE.md`. This file is about *how we work*; that one is about *what the system is*.
 
-## Current state (as of 2026-11-16)
+## Current state (as of 2026-11-17)
 
-**v2.11.7: pushed 2026-11-12 on branch `release/v2.11.7`** (commit a73be23) with BB-119 (closed), BB-117 (complete) and BB-120 (pushed before the user's test). Changelog: `docs/changelog-v2.11.7.md`. Client hand-offs: `docs/client-update-BB-119.md`, `docs/client-update-BB-120.md`. The two test PDFs in `docs/` stay uncommitted.
+Release history lives in `docs/changelog-v*.md`. This section holds only the latest push and the open tickets.
 
-**v2.11.14: pushed 2026-11-16 on branch `release/v2.11.14`** (stacked on v2.11.13) with BB-128 part 1 (Employee Map, complete). Changelog: `docs/changelog-v2.11.14.md`. Client hand-off `docs/client-update-BB-128.md` (not sent yet). No schema change.
-
-**v2.11.13: pushed 2026-11-16 on branch `release/v2.11.13`** (stacked on v2.11.12) with BB-129 (Daily Task Report trial, complete). Changelog: `docs/changelog-v2.11.13.md`. Client hand-off `docs/client-update-BB-129.md` (not sent yet). `scripts/add-daily-task-report.sql` stays uncommitted (run it on every database before deploying).
-
-**v2.11.12: pushed 2026-11-16 on branch `release/v2.11.12`** with BB-121 (Company.cutoffPageView) + the exclude-note fix. Changelog: `docs/changelog-v2.11.12.md`. Client hand-off `docs/client-update-BB-121.md`. `scripts/add-company-cutoff-page-view.sql` stays uncommitted. The template PDF `docs/BizBuddy_DailyTaskReport_John_Doe_2026-11-16.pdf`, the test PDFs and `docs/Screenshots/` stay uncommitted.
-
-**v2.11.11: pushed 2026-11-14 on branch `release/v2.11.11`** with the BB-125 follow-up: the regular daycare Honor Punch sets `actualHours`, plus the audit + audit correction scripts. Changelog: `docs/changelog-v2.11.11.md`. Applied SQL `scripts/bb125-leave-revert.sql` deleted.
-
-**v2.11.10: pushed 2026-11-14 on branch `release/v2.11.10`** with BB-125 (punch-vs-leave revert). Changelog: `docs/changelog-v2.11.10.md`. Client hand-off: `docs/client-update-BB-125.md`. Must be deployed: live v2.11.9 can't read the `reverted` status, which the data scripts already wrote.
-
-**v2.11.9: pushed 2026-11-13 on branch `release/v2.11.9`** with BB-124 (data fix + Payroll Grid SL rule). Changelog: `docs/changelog-v2.11.9.md`. BB-125 scripts, the Nov 12 report files in `docs/`, `docs/Screenshots/` and the test PDFs stay uncommitted.
-
-**v2.11.8: pushed 2026-11-12 on branch `release/v2.11.8`** with BB-122 (complete), BB-123 (server side, awaiting test) and BB-114 (planning docs only). Changelog: `docs/changelog-v2.11.8.md`, which ends with every open question for the mobile developer (on leave). Client hand-off: `docs/client-update-BB-123.md`. `docs/Screenshots/` and the two test PDFs stay uncommitted.
+**Latest push: 2026-11-17, v2.11.15** on branch `release/v2.11.15` (from `origin/master` after PR #126): BB-132 Subscription Plans showcase (complete) + the release workflow (`/push`, versioning section, sync-with-master step). First push under the one-version-per-push rule; `package.json` version now tracks releases. Changelog: `docs/changelog-v2.11.15.md`. No schema change. Uncommitted on purpose: `scripts/add-company-cutoff-page-view.sql`, `scripts/add-daily-task-report.sql`, the test PDFs/xlsx and `docs/Screenshots/`.
 
 Open follow-ups:
+- BB-132 (Subscription Plans in System Admin Dashboard): COMPLETE 2026-11-17 (user confirmed), pushed in v2.11.15 (`docs/changelog-v2.11.15.md`). Read-only showcase (no edit): `GET /api/system-admin/subscription-plans/overview` + `/:id[?includeRetired=true]`; active companies only (retired counted separately), human active employees. No schema change. Client hand-off `docs/client-update-BB-132.md` (send after deploy).
 - BB-128 (GPS Breadcrumbs): part 1 Employee Map COMPLETE 2026-11-16 (user confirmed), pushed in v2.11.14 (`docs/changelog-v2.11.14.md`), no schema change. `GET /api/employee-map` (date or from/to ≤ 31 days, type in|out|both, department, employee; SV team / admin company) reads existing `TimeLog.location.start/end`: heat bins + points + work sites + without-location counts. Client hand-off `docs/client-update-BB-128.md` written but NOT sent (user informs the client after). Part 2 breadcrumbs waits for the mobile dev; response already has `layers.breadcrumbs: null`.
 - BB-129 (Clock-out documentation / Daily Task Report, TRIAL): COMPLETE 2026-11-16 (user confirmed), pushed in v2.11.13 (`docs/changelog-v2.11.13.md`). One report per employee per day (company-zone clock-in date), optional, no deadline, past days allowed; draft → submitted, PDF only after submit (on request, template `docs/BizBuddy_DailyTaskReport_John_Doe_2026-11-16.pdf`); SV/admin view submitted only. Setting `Company.taskReportEnabled` (default false). Endpoints `/api/task-reports`. Web only; mobile untouched. Order: user runs `scripts/add-daily-task-report.sql` → `prisma generate` → deploy. Client hand-off `docs/client-update-BB-129.md` written but NOT sent (user wants server first). Later: deadline (shift end/clock-out + grace), mobile.
 - BB-120: the user's test (client applies the hand-off).
