@@ -560,6 +560,7 @@ model User {
   // BB-110: B. Buddy support account — company-panel-only admin, hidden from
   // lists/counts/reports/notifications. Never an employee.
   isSystemAgent            Boolean  @default(false)
+  locationBreadcrumbs      LocationBreadcrumb[]
 
   @@unique([companyId, email])
   @@index([companyId, status])
@@ -765,6 +766,12 @@ model Company {
   // BB-117: company-zone date the morning / evening attendance email last went out (once per day).
   morningReportSentOn DateTime? @db.Date
   eveningReportSentOn DateTime? @db.Date
+
+  // Present in production. Keep these so db push does not drop them.
+  punchDeviceProofEnabled   Boolean @default(false)
+  breadcrumbsEnabled        Boolean @default(false)
+  breadcrumbIntervalMinutes Int     @default(5)
+  locationBreadcrumbs       LocationBreadcrumb[]
 
 }
 
@@ -1101,12 +1108,41 @@ model TimeLog {
 
   liveUser              LiveUser?
   taskReportFormResponse TaskReportFormResponse? // BB-129 phase 2
+  locationBreadcrumbs    LocationBreadcrumb[]
 
   @@index([isApproved])
   @@index([timeIn, isApproved])
   @@index([userId, isApproved])
   @@index([userId, timeIn])
   @@index([userId, timeOut])
+}
+
+// Location samples taken during a punch. Present in production; do not drop.
+model LocationBreadcrumb {
+  id           String   @id
+  companyId    String
+  userId       String
+  timeLogId    String
+  recordedAt   DateTime @db.Timestamptz(6)
+  receivedAt   DateTime @default(now()) @db.Timestamptz(6)
+  latitude     Float
+  longitude    Float
+  accuracy     Float?
+  altitude     Float?
+  speed        Float?
+  heading      Float?
+  batteryLevel Float?
+  isMocked     Boolean  @default(false)
+  source       String?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timeLog TimeLog @relation(fields: [timeLogId], references: [id], onDelete: Cascade)
+
+  @@unique([timeLogId, recordedAt])
+  @@index([companyId, recordedAt])
+  @@index([userId, recordedAt])
+  @@index([recordedAt])
 }
 
 // ── Live clock-in presence table ─────────────────────────────────────────────
