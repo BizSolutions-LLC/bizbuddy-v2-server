@@ -6,7 +6,7 @@ const { getIO } = require("@config/socket");
 const { computeTimeLogSummary } = require("@services/timeLogComputeService");
 const { createLiveUser, removeLiveUser } = require("@services/liveUserService");
 const { applyAutoBreaks } = require("@services/autoBreakService");
-const { clockOutPrompt } = require("@services/Features/taskReportFormResponseService"); // BB-129 phase 2
+const { clockOutPrompt, prepareClockOutTaskReport, TaskReportFormResponseError } = require("@services/Features/taskReportFormResponseService"); // BB-129 phase 2
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 const { matchShiftToWindow } = require("@services/timeLogComputeUtils");
 const moment = require("moment-timezone");
@@ -242,7 +242,17 @@ const timeOut = async (req, res) => {
     if (!activeLog)
       return res.status(400).json({ message: "No active time log found." });
 
-    const { localTimestamp, deviceInfo, location, punchType, reason, autoLunchApplied, autoLunchMinutes } = req.body;
+    const isMultipart = Boolean(req.is("multipart/form-data"));
+    const readJson = (value) => {
+      if (typeof value !== "string") return value;
+      try { return JSON.parse(value); } catch { return value; }
+    };
+    let { localTimestamp, deviceInfo, location, punchType, reason, autoLunchApplied, autoLunchMinutes, answers } = req.body || {};
+    deviceInfo = readJson(deviceInfo);
+    location = readJson(location);
+    if (typeof autoLunchApplied === "string") autoLunchApplied = autoLunchApplied === "true";
+    if (typeof autoLunchMinutes === "string" && autoLunchMinutes !== "") autoLunchMinutes = Number(autoLunchMinutes);
+
     const actualTimeOut = localTimestamp ? new Date(localTimestamp) : new Date();
 
     const locCheck = await verifyLocationRestriction(
@@ -277,10 +287,45 @@ const timeOut = async (req, res) => {
       updateData.autoLunchDeductionMinutes = autoLunchMinutes;
     }
 
-    const updatedTimeLog = await prisma.timeLog.update({
-      where: { id: activeLog.id },
-      data:  updateData,
-    });
+    let prepared;
+    try {
+      prepared = await prepareClockOutTaskReport(req.user, activeLog, {
+        isMultipart,
+        answersRaw: answers,
+        file: req.file,
+      });
+    } catch (formErr) {
+      if (formErr instanceof TaskReportFormResponseError) {
+        return res.status(formErr.status).json({ message: formErr.message, ...(formErr.code && { code: formErr.code }) });
+      }
+      throw formErr;
+    }
+
+    let updatedTimeLog;
+    let savedReport = false;
+    try {
+      if (prepared.apply) {
+        const [log] = await prisma.$transaction([
+          prisma.timeLog.update({ where: { id: activeLog.id }, data: updateData }),
+          prisma.taskReportFormResponse.create({ data: prepared.response }),
+        ]);
+        updatedTimeLog = log;
+        savedReport = true;
+      } else {
+        updatedTimeLog = await prisma.timeLog.update({
+          where: { id: activeLog.id },
+          data: updateData,
+        });
+      }
+    } catch (writeErr) {
+      if (writeErr?.code === "P2002") {
+        return res.status(409).json({
+          message: "This questionnaire was just saved elsewhere. Reload and try again.",
+          code: "RESPONSE_CONFLICT",
+        });
+      }
+      throw writeErr;
+    }
 
     // Remove from LiveUser table (self clock-out — non-fatal)
     removeLiveUser(userId).catch(() => {});
@@ -317,7 +362,7 @@ const timeOut = async (req, res) => {
     // { timeLogId, form: { id, name }, shiftName, closesAt } when this punch has a
     // custom form to answer, else null. Added field only — older apps ignore it.
     // Never fails the clock-out (clockOutPrompt catches its own errors).
-    const taskReportForm = await clockOutPrompt(userId, updatedTimeLog);
+    const taskReportForm = savedReport ? null : await clockOutPrompt(userId, updatedTimeLog);
 
     return res.status(200).json({
       message: "Time out recorded successfully.",
