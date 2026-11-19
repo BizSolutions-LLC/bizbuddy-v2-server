@@ -1218,6 +1218,9 @@ model TaskReportFormResponse {
   status      String    @default("draft")
   closesAt    DateTime  @db.Timestamptz(6)
   submittedAt DateTime? @db.Timestamptz(6)
+  facePhotoFileName String?
+  facePhotoMimeType String?
+  facePhotoBytes    Bytes?
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 

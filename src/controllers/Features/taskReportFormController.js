@@ -64,10 +64,13 @@ const myPending = handle("myPending", async (req, res) => res.json({ data: await
 const myOpen = handle("myOpen", async (req, res) =>
   res.json({ data: await responseSvc.openForPunch(req.user, req.params.timeLogId) })
 );
+const myOpenActive = handle("myOpenActive", async (req, res) =>
+  res.json({ data: await responseSvc.openForActivePunch(req.user) })
+);
 const mySave = handle("mySave", async (req, res) =>
   res.json({
-    message: req.body?.submit === true ? "Questionnaire submitted." : "Questionnaire saved.",
-    data: await responseSvc.saveForPunch(req.user, req.params.timeLogId, req.body),
+    message: req.body?.submit === true || req.body?.submit === "true" ? "Questionnaire submitted." : "Questionnaire saved.",
+    data: await responseSvc.saveForPunch(req.user, req.params.timeLogId, req.body, req.file),
   })
 );
 const myResponses = handle("myResponses", async (req, res) =>
@@ -94,6 +97,6 @@ const getResponsePdf = handle("getResponsePdf", async (req, res) => {
 module.exports = {
   list, getOne, create, update, duplicate, archive, restore, remove,
   listAssignments, setAssignment, removeAssignment,
-  myPending, myOpen, mySave, myResponses,
+  myPending, myOpen, myOpenActive, mySave, myResponses,
   getResponse, getResponsePdf,
 };
