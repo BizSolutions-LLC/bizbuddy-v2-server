@@ -88,13 +88,14 @@ function buildRecipientPlan({
 
     const user = usersById.get(String(employeeId));
     if (!user) {
-      const issue = {
+      issues.push({
         severity: "BLOCKING",
         code: "EMPLOYEE_NOT_IN_COMPANY",
         message: "Employee is missing or does not belong to this company.",
-      };
-      issues.push(issue);
-      blockingIssues.push({ ...issue, employeeId, index });
+      });
+      issues.forEach((issue) => {
+        blockingIssues.push({ ...issue, employeeId, index });
+      });
       return;
     }
 

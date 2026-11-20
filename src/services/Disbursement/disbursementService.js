@@ -729,6 +729,9 @@ function createDisbursementService({ prisma, provider } = {}) {
         data: {
           status: BATCH_STATUSES.CANCELLED,
           activePayrollRunKey: null,
+          // idempotencyKey is unique. Release the stable key so a new batch
+          // can be created for this payroll run after cancel.
+          idempotencyKey: `${batch.idempotencyKey}:cancelled:${batch.id}`,
         },
         include: batchInclude,
       });
