@@ -210,34 +210,19 @@ async function provisionCompany(body = {}) {
 
 // Never fails the request — the company already exists by now.
 async function sendWelcome({ ownerFirstName, companyName, ownerEmail, ownerPassword, ownerId, companyId }) {
-  const log = (status, errorMessage = null) =>
-    prisma.emailNotificationLog
-      .create({
-        data: {
-          notificationType: "WELCOME_EMAIL",
-          recipientEmail: ownerEmail,
-          recipientUserId: ownerId,
-          companyId,
-          subject: WELCOME_SUBJECT,
-          body: JSON.stringify({ firstName: ownerFirstName, companyName }),
-          status,
-          errorMessage,
-        },
-      })
-      .catch(() => {});
-
+  // BB-140: logged centrally by sendMail (sent or failed); the password is hidden
+  // in the stored copy.
   try {
     await sendMail({
       to: ownerEmail,
       subject: WELCOME_SUBJECT,
       html: renderWelcome({ firstName: ownerFirstName, companyName, email: ownerEmail, password: ownerPassword }),
       text: `Hi ${ownerFirstName}, your BizBuddy admin account for ${companyName} has been created.\nEmail: ${ownerEmail}\nPassword: ${ownerPassword}`,
+      log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId, userId: ownerId, triggeredBy: "system-admin:provision-company", redact: [ownerPassword] },
     });
-    await log("sent");
     return "sent";
   } catch (error) {
     console.error("[provisionCompany] Failed to send welcome email:", error.message);
-    await log("failed", error.message);
     return "failed";
   }
 }

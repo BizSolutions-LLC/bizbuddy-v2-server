@@ -2,7 +2,7 @@
 
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
-const nodemailer = require("nodemailer");
+const { sendMail } = require("@utils/mailer"); // BB-140
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 
@@ -10,18 +10,8 @@ const { HUMAN_ONLY } = require("@utils/systemAgent");
 // Mailer
 // ---------------------------------------------------------------------------
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.dreamhost.com",
-  port: "587",
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-});
+// BB-140: emails go through utils/mailer.sendMail (same SMTP account), so they are logged.
+
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -143,7 +133,7 @@ const sendResetPasswordEmail = async (email, rawToken, userName, companyName) =>
 </html>`,
     };
 
-    await transporter.sendMail(mailOptions);
+    await sendMail({ ...mailOptions, log: { type: "PASSWORD_RESET", redact: [rawToken, resetUrl] } }); // BB-140: link hidden in the stored copy
     console.log(`Reset password email sent to: ${email}`);
     return true;
   } catch (error) {
@@ -233,7 +223,7 @@ const sendPasswordChangedEmail = async (email, userName, companyName) => {
 </html>`,
     };
 
-    await transporter.sendMail(mailOptions);
+    await sendMail({ ...mailOptions, log: { type: "PASSWORD_CHANGED" } }); // BB-140
     console.log(`Password changed alert email sent to: ${email}`);
     return true;
   } catch (error) {
@@ -504,4 +494,7 @@ module.exports = {
   requestPasswordReset,
   verifyResetToken,
   resetPassword,
+  // BB-140: System Admin test sends (services/Analytics/emailTemplateCatalog.js)
+  sendResetPasswordEmail,
+  sendPasswordChangedEmail,
 };

@@ -11,6 +11,33 @@ const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 const { matchShiftToWindow } = require("@services/timeLogComputeUtils");
 const moment = require("moment-timezone");
 const { resolvePunchType, punchTypeFromReason } = require("@utils/punchTypeUtils");
+const { resolvePunchProof, withPunchProof } = require("@utils/punchDeviceProof"); // BB-134
+const facePhotos = require("@services/Features/punchFacePhotoService"); // BB-141
+const { punchDisplay } = require("@services/TimeLogs/punchDisplay"); // BB-126
+
+// Multipart punches (BB-141 face photo) send object fields as JSON strings.
+const readJson = (value) => {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value); } catch { return value; }
+};
+
+// BB-141: refused punch (web while face capture applies, missing/unreadable photo,
+// upload failure) → its status + code; anything else is rethrown.
+function sendFacePhotoError(res, e) {
+  if (e instanceof facePhotos.FacePhotoError)
+    return res.status(e.status).json({ message: e.message, ...(e.code && { code: e.code }) });
+  throw e;
+}
+
+// BB-134: never lets the proof lookup fail a punch.
+async function safePunchProof(req, userId) {
+  try {
+    return await resolvePunchProof(prisma, req, userId);
+  } catch (err) {
+    console.error("[BB-134] punch proof skipped:", err.message);
+    return null;
+  }
+}
 
 function calculateDistanceKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -169,7 +196,10 @@ const timeIn = async (req, res) => {
       return res.status(400).json({ message: "User already timed in." });
 
     // ✅ FIX: destructure `remarks` from request body
-    const { localTimestamp, deviceInfo, location, punchType, reason, remarks } = req.body;
+    let { localTimestamp, deviceInfo, location, punchType, reason, remarks } = req.body || {};
+    deviceInfo = readJson(deviceInfo);
+    location = readJson(location);
+    remarks = readJson(remarks);
 
     const actualTimeIn = localTimestamp ? new Date(localTimestamp) : new Date();
 
@@ -195,22 +225,44 @@ const timeIn = async (req, res) => {
     if (!locCheck.allowed)
       return res.status(400).json({ message: locCheck.reason });
 
+    // BB-141: face capture (web refused, photo required when the company asks).
+    let photoIn = null;
+    try {
+      const face = await facePhotos.checkPunch(req, "in");
+      if (face.required) {
+        photoIn = await facePhotos.uploadPhoto({ req, kind: "in", capturedAt: actualTimeIn, location, deviceInfo });
+      }
+    } catch (faceErr) {
+      return sendFacePhotoError(res, faceErr);
+    }
+
     const lateHours = await calculateLateHoursForUser(userId, actualTimeIn);
 
-    const newTimeLog = await prisma.timeLog.create({
-      data: {
-        userId,
-        timeIn:    actualTimeIn,
-        lateHours,
-        punchType: resolvedPunchType,
-        // ✅ FIX: save remarks — stores [{type, message, timestamp}] or []
-        remarks:   resolvedRemarks,
-        deviceInfo: { start: deviceInfo ?? null, end: null },
-        location:   { start: location   ?? null, end: null },
-        coffeeBreaks: [],
-        lunchBreak:   null,
-      },
-    });
+    // BB-134: server-written device proof, only when the company has it on.
+    const proofIn = await safePunchProof(req, userId);
+
+    let newTimeLog;
+    try {
+      newTimeLog = await prisma.timeLog.create({
+        data: {
+          userId,
+          timeIn:    actualTimeIn,
+          lateHours,
+          punchType: resolvedPunchType,
+          // ✅ FIX: save remarks — stores [{type, message, timestamp}] or []
+          remarks:   resolvedRemarks,
+          deviceInfo: { start: withPunchProof(deviceInfo, proofIn), end: null },
+          location:   { start: location   ?? null, end: null },
+          coffeeBreaks: [],
+          lunchBreak:   null,
+          // BB-141: the punch and its photo row are written together
+          ...(photoIn && { facePhotos: { create: photoIn.data } }),
+        },
+      });
+    } catch (writeErr) {
+      if (photoIn) facePhotos.discard(photoIn.key);
+      throw writeErr;
+    }
 
     let collectUntil = null;
     try {
@@ -230,7 +282,7 @@ const timeIn = async (req, res) => {
 
     return res.status(201).json({
       message: "Time in recorded successfully.",
-      data: { ...newTimeLog, collectUntil },
+      data: { ...newTimeLog, collectUntil, facePhotoId: photoIn?.data.id ?? null },
     });
   } catch (err) {
     console.error("Error in timeIn:", err);
@@ -252,11 +304,6 @@ const timeOut = async (req, res) => {
     if (!activeLog)
       return res.status(400).json({ message: "No active time log found." });
 
-    const isMultipart = Boolean(req.is("multipart/form-data"));
-    const readJson = (value) => {
-      if (typeof value !== "string") return value;
-      try { return JSON.parse(value); } catch { return value; }
-    };
     let { localTimestamp, deviceInfo, location, punchType, reason, autoLunchApplied, autoLunchMinutes, answers } = req.body || {};
     deviceInfo = readJson(deviceInfo);
     location = readJson(location);
@@ -273,12 +320,15 @@ const timeOut = async (req, res) => {
     if (!locCheck.allowed)
       return res.status(400).json({ message: locCheck.reason });
 
+    // BB-134: server-written device proof, only when the company has it on.
+    const proofOut = await safePunchProof(req, userId);
+
     const updateData = {
       timeOut: actualTimeOut,
       status:  false,
       deviceInfo: {
         start: activeLog.deviceInfo?.start ?? null,
-        end:   deviceInfo ?? null,
+        end:   withPunchProof(deviceInfo, proofOut),
       },
       location: {
         start: activeLog.location?.start ?? null,
@@ -297,18 +347,33 @@ const timeOut = async (req, res) => {
       updateData.autoLunchDeductionMinutes = autoLunchMinutes;
     }
 
+    // BB-141: face capture check first (web refused, photo required when on).
+    let face;
+    try {
+      face = await facePhotos.checkPunch(req, "out");
+    } catch (faceErr) {
+      return sendFacePhotoError(res, faceErr);
+    }
+
     let prepared;
     try {
-      prepared = await prepareClockOutTaskReport(req.user, activeLog, {
-        isMultipart,
-        answersRaw: answers,
-        file: req.file,
-      });
+      prepared = await prepareClockOutTaskReport(req.user, activeLog, { answersRaw: answers });
     } catch (formErr) {
       if (formErr instanceof TaskReportFormResponseError) {
         return res.status(formErr.status).json({ message: formErr.message, ...(formErr.code && { code: formErr.code }) });
       }
       throw formErr;
+    }
+
+    // BB-141: upload only after every check passed; the row is written with the punch.
+    let photoOut = null;
+    if (face.required) {
+      try {
+        photoOut = await facePhotos.uploadPhoto({ req, kind: "out", capturedAt: actualTimeOut, location, deviceInfo });
+      } catch (faceErr) {
+        return sendFacePhotoError(res, faceErr);
+      }
+      updateData.facePhotos = { create: photoOut.data };
     }
 
     let updatedTimeLog;
@@ -328,6 +393,7 @@ const timeOut = async (req, res) => {
         });
       }
     } catch (writeErr) {
+      if (photoOut) facePhotos.discard(photoOut.key);
       if (writeErr?.code === "P2002") {
         return res.status(409).json({
           message: "This questionnaire was just saved elsewhere. Reload and try again.",
@@ -376,7 +442,7 @@ const timeOut = async (req, res) => {
 
     return res.status(200).json({
       message: "Time out recorded successfully.",
-      data: updatedTimeLog,
+      data: { ...updatedTimeLog, facePhotoId: photoOut?.data.id ?? null },
       taskReportForm,
     });
   } catch (err) {
@@ -765,16 +831,51 @@ const getCompanyTimeLogs = async (req, res) => {
     // stored in UTC are not cut off at UTC midnight.
     const company = await prisma.company.findUnique({
       where:  { id: companyId },
-      select: { timeZone: true, dailyOtThresholdHours: true, otBasis: true },
+      select: { timeZone: true, dailyOtThresholdHours: true, otBasis: true, defaultShiftHours: true },
     });
     const tz   = company?.timeZone || "UTC";
-    const from = req.query.from ? moment.tz(req.query.from, "YYYY-MM-DD", tz).startOf("day").toDate() : null;
-    const to   = req.query.to   ? moment.tz(req.query.to,   "YYYY-MM-DD", tz).endOf("day").toDate()   : null;
+
+    // ── BB-126: cutoff periods (same meaning as the report). A selected period that is
+    // locked/processed shows its punches' reviewed (approved) values. Without from/to,
+    // the range is the periods' span.
+    const listParam = (v) => (v ? String(v).split(",").map((x) => x.trim()).filter(Boolean) : []);
+    const cutoffPeriodIds = listParam(req.query.cutoffPeriodIds);
+    let selectedPeriods = [];
+    if (cutoffPeriodIds.length) {
+      selectedPeriods = await prisma.cutoffPeriod.findMany({
+        where:  { id: { in: cutoffPeriodIds }, OR: [{ companyId }, { creator: { companyId } }] },
+        select: { id: true, periodStart: true, periodEnd: true, status: true },
+      });
+      if (selectedPeriods.length !== new Set(cutoffPeriodIds).size)
+        return res.status(404).json({ message: "One or more cutoff periods weren't found." });
+    }
+    const lockedPeriodIds = new Set(selectedPeriods.filter((p) => ["locked", "processed"].includes(p.status)).map((p) => p.id));
+    const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+    const fromYmd = req.query.from || (selectedPeriods.length ? selectedPeriods.map((p) => ymd(p.periodStart)).sort()[0] : null);
+    const toYmd   = req.query.to   || (selectedPeriods.length ? selectedPeriods.map((p) => ymd(p.periodEnd)).sort().slice(-1)[0] : null);
+    const from = fromYmd ? moment.tz(fromYmd, "YYYY-MM-DD", tz).startOf("day").toDate() : null;
+    const to   = toYmd   ? moment.tz(toYmd,   "YYYY-MM-DD", tz).endOf("day").toDate()   : null;
+
+    // BB-126: the client's own filters, now on the server so totals cover every page.
+    const employeeIds = listParam(req.query.employeeIds);
+    const search = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
 
     // ── Prisma where clause ───────────────────────────────────────────────────
     const where = { user: { companyId } };
     if (employeeId)   where.userId    = employeeId;
+    else if (employeeIds.length) where.userId = { in: employeeIds };
     if (departmentId) where.user      = { companyId, departmentId };
+    if (search) {
+      where.user = {
+        ...where.user,
+        OR: [
+          { email: { contains: search, mode: "insensitive" } },
+          { employeeId: { contains: search, mode: "insensitive" } },
+          { profile: { firstName: { contains: search, mode: "insensitive" } } },
+          { profile: { lastName: { contains: search, mode: "insensitive" } } },
+        ],
+      };
+    }
     if (punchType)    where.punchType = punchType;
     if (req.query.status === "active")    where.status = true;
     if (req.query.status === "completed") where.status = false;
@@ -789,6 +890,7 @@ const getCompanyTimeLogs = async (req, res) => {
     if (from)         summaryConditions.push(Prisma.sql`t."timeIn" >= ${from}`);
     if (to)           summaryConditions.push(Prisma.sql`t."timeIn" <= ${to}`);
     if (employeeId)   summaryConditions.push(Prisma.sql`t."userId" = ${employeeId}`);
+    else if (employeeIds.length) summaryConditions.push(Prisma.sql`t."userId" IN (${Prisma.join(employeeIds)})`);
     if (departmentId) summaryConditions.push(Prisma.sql`u."departmentId" = ${departmentId}`);
     if (punchType)    summaryConditions.push(Prisma.sql`t."punchType"::text = ${punchType}`);
 
@@ -840,6 +942,9 @@ const getCompanyTimeLogs = async (req, res) => {
               actualHours: true,
               approvedClockIn:  true,
               approvedClockOut: true,
+              segmentStart:     true, // BB-126: Driver/Aide payable hours
+              segmentEnd:       true,
+              cutoffPeriodId:   true,
               cutoffPeriod: {
                 select: { id: true, periodStart: true, periodEnd: true, status: true },
               },
@@ -891,8 +996,8 @@ const getCompanyTimeLogs = async (req, res) => {
       const otBlockWhere = { cutoffPeriod: { companyId } };
       if (from || to) {
         otBlockWhere.date = {};
-        if (from) otBlockWhere.date.gte = new Date(req.query.from);
-        if (to)   otBlockWhere.date.lte = new Date(req.query.to);
+        if (from) otBlockWhere.date.gte = new Date(fromYmd); // BB-126: also when the range comes from cutoffPeriodIds
+        if (to)   otBlockWhere.date.lte = new Date(toYmd);
       }
       if (employeeId)   otBlockWhere.userId = employeeId;
       if (departmentId) otBlockWhere.user   = { departmentId };
@@ -954,6 +1059,9 @@ const getCompanyTimeLogs = async (req, res) => {
       // device / location
       deviceIn:             l.deviceInfo?.start ?? null,
       deviceOut:            l.deviceInfo?.end   ?? null,
+      // BB-134: server-written proof (null when the company had it off)
+      proofIn:              l.deviceInfo?.start?.proof ?? null,
+      proofOut:             l.deviceInfo?.end?.proof   ?? null,
       locIn:                l.location?.start   ?? null,
       locOut:               l.location?.end     ?? null,
       // auto clock-out
@@ -1052,18 +1160,24 @@ const getCompanyTimeLogs = async (req, res) => {
         });
 
       } else {
-        // DayCare: original behavior — query today's shifts unchanged.
-        const dayStart  = moment().tz(tz).startOf("day").toDate();
-        const dayEnd    = moment().tz(tz).endOf("day").toDate();
+        // BB-126 fix: DayCare also loads the shifts of each PUNCH'S date (it loaded
+        // today's for every row, so older punches showed today's shift or none).
+        // assignedDate is @db.Date: compare by the punch's company-zone calendar date.
+        const punchDates = rows.map((r) => moment(r.timeIn).tz(tz).format("YYYY-MM-DD")).sort();
         const shiftRows = await prisma.userShift.findMany({
-          where: { userId: { in: userIds }, assignedDate: { gte: dayStart, lte: dayEnd } },
+          where: {
+            userId:       { in: userIds },
+            assignedDate: { gte: new Date(`${punchDates[0]}T00:00:00.000Z`), lte: new Date(`${punchDates[punchDates.length - 1]}T23:59:59.999Z`) },
+            status:       { not: "cancelled" },
+          },
           include: { shift: true },
         });
         const shiftMap = {};
         shiftRows.forEach((s) => {
-          if (!shiftMap[s.userId]) shiftMap[s.userId] = [];
-          if (s.shift?.id && shiftMap[s.userId].some((x) => x.shift.id === s.shift.id)) return;
-          shiftMap[s.userId].push({
+          const key = `${s.userId}:${s.assignedDate.toISOString().slice(0, 10)}`;
+          if (!shiftMap[key]) shiftMap[key] = [];
+          if (s.shift?.id && shiftMap[key].some((x) => x.shift.id === s.shift.id)) return;
+          shiftMap[key].push({
             id:           s.id,
             assignedDate: s.assignedDate.toISOString().slice(0, 10),
             shift: {
@@ -1075,10 +1189,11 @@ const getCompanyTimeLogs = async (req, res) => {
           });
         });
         rows.forEach((r) => {
-          const shifts  = shiftMap[r.userId] ?? [];
+          const shifts  = shiftMap[`${r.userId}:${moment(r.timeIn).tz(tz).format("YYYY-MM-DD")}`] ?? [];
           r.shiftToday  = shifts.map((s) => s.shift.shiftName).filter(Boolean).join(", ") || "—";
           r.userShifts  = shifts;
-          r.userShift   = shifts[0] ?? null;
+          // Driver/Aide days have several shifts: the regular one is the punch's shift.
+          r.userShift   = shifts.find((s) => /regular/i.test(s.shift.shiftName || "")) ?? shifts[0] ?? null;
         });
       }
     }
@@ -1120,6 +1235,91 @@ const getCompanyTimeLogs = async (req, res) => {
       }
     }
 
+    // ── BB-126: server-computed display values, the SAME maths as the punch-log
+    // report (services/TimeLogs/punchDisplay.js). The client only shows them.
+    const blockByDay = new Map((otBlocks || []).map((b) => [`${b.userId}|${b.date}`, b]));
+    const isReviewedLog = (l) => (l.approvals || []).some((a) => a.cutoffPeriodId && lockedPeriodIds.has(a.cutoffPeriodId));
+    const defaultShiftHours = Number(company?.defaultShiftHours ?? 8) || 8;
+    const cutoffBasisOt = !isBnC && company?.otBasis === "cutoff";
+    const displayOf = (l) =>
+      punchDisplay({ ...l, userId: l.userId ?? l.user?.id }, { tz, isBnC, otBasis: company?.otBasis, blockByDay, reviewed: isReviewedLog(l) });
+    const nowMs = Date.now();
+    rows.forEach((r, i) => {
+      const l = logs[i];
+      const d = displayOf(l);
+      r.display = {
+        basis:          d.basis, // "live" | "decided" (all approvals decided, cutoff open) | "reviewed" (locked cutoff selected)
+        clockIn:        d.clockIn,
+        clockOut:       d.clockOut,
+        clockAdjusted:  d.clockAdjusted,
+        workedHours:    d.worked,
+        grossHours:     d.gross,
+        scheduledHours: d.scheduled,
+        isScheduled:    d.isScheduled,
+        lateHours:      d.late,
+        undertimeHours: d.undertime,
+        coffeeMinutes:  d.coffeeMinutes,
+        lunchMinutes:   d.lunchMinutes,
+        lunchAuto:      d.lunchAuto,
+        otHours:        d.otHours,
+        otStatus:       cutoffBasisOt ? (r.otStatus ?? "-") : d.otStatus,
+        segments:       d.am != null || d.regular != null || d.pm != null ? { am: d.am, regular: d.regular, pm: d.pm } : null,
+        cutoffStatus:   d.cutoffStatus,
+        deviceIn:       d.deviceIn,
+        deviceOut:      d.deviceOut,
+        locationIn:     d.locationIn,
+        locationOut:    d.locationOut,
+        schedule:       r.userShifts ?? [],
+        matchedShiftId: r.userShift?.shift?.id ?? null,
+        missingClockOut: l.status === true && nowMs > new Date(l.timeIn).getTime() + defaultShiftHours * 3600000,
+      };
+    });
+
+    // ── BB-126: meta.summary covers the WHOLE filtered set (every page), with the
+    // same display rules. Computed from a light read; skipped above SUMMARY_CAP rows.
+    const SUMMARY_CAP = 10000;
+    let meta = { total, basis: "live", summary: null };
+    if (total <= SUMMARY_CAP) {
+      const light = await prisma.timeLog.findMany({
+        where,
+        select: {
+          userId: true, timeIn: true, timeOut: true, status: true, punchType: true,
+          netWorkedHours: true, grossHours: true, scheduledHours: true,
+          regularSegmentHours: true, driverAmSegmentHours: true, driverPmSegmentHours: true,
+          approvals: {
+            select: { status: true, segmentType: true, actualHours: true, approvedClockIn: true, approvedClockOut: true, segmentStart: true, segmentEnd: true, cutoffPeriodId: true },
+            orderBy: { createdAt: "desc" },
+          },
+        },
+      });
+      let active = 0, completed = 0, scheduled = 0, reviewedRows = 0, decidedRows = 0;
+      let workedSum = 0, scheduledSum = 0;
+      for (const l of light) {
+        const d = displayOf(l);
+        if (l.status === true) active += 1; else { completed += 1; workedSum += d.worked || 0; }
+        if (d.isScheduled) { scheduled += 1; scheduledSum += Number(l.scheduledHours) || 0; }
+        if (d.basis === "reviewed") reviewedRows += 1;
+        if (d.basis === "decided") decidedRows += 1;
+      }
+      const round2 = (v) => Math.round(v * 100) / 100;
+      meta = {
+        total,
+        basis: reviewedRows === 0 ? "live" : reviewedRows === light.length ? "reviewed" : "partial",
+        summary: {
+          active,
+          completed,
+          scheduled,
+          decided: decidedRows,
+          reviewed: reviewedRows,
+          avgWorkedHours: completed ? round2(workedSum / completed) : 0,
+          totalWorkedHours: round2(workedSum),
+          totalScheduledHours: round2(scheduledSum),
+        },
+      };
+    } else {
+      meta.summaryNote = `Too many punches (${total}) to total; narrow the dates or filters.`;
+    }
+
     return res.status(200).json({
       message:     "Time logs retrieved.",
       companyType: isBnC ? "BNC" : "DAYCARE",
@@ -1140,6 +1340,7 @@ const getCompanyTimeLogs = async (req, res) => {
         completed:  completedCount,
         totalHours: parseFloat(totalHours.toFixed(2)),
       },
+      meta, // BB-126: whole filtered set, display rules (legacy `summary` above kept as is)
     });
   } catch (err) {
     console.error("Error fetching company logs:", err);

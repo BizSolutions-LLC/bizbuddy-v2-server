@@ -244,27 +244,14 @@ async function sendEmailNotification({
       }
     }
 
-    // Send email
+    // Send email. BB-140: logged centrally by utils/mailer.sendMail (summary row +
+    // redacted copy in S3), sent or failed.
     const result = await sendEmail({
       to,
       subject,
       templateName,
       context,
-    });
-
-    // Log email sent
-    await prisma.emailNotificationLog.create({
-      data: {
-        notificationType,
-        recipientEmail: to,
-        recipientUserId,
-        companyId,
-        subject,
-        body: JSON.stringify(context),
-        status: result.success ? "sent" : "failed",
-        errorMessage: result.error || null,
-        metadata,
-      },
+      log: { type: notificationType, notificationType, companyId, userId: recipientUserId, metadata },
     });
 
     return result;

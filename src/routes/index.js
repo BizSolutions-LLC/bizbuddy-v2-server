@@ -57,6 +57,8 @@ const setupGuideRoutes = require("@routes/Company/setupGuideRoutes");
 const dailyTaskReportRoutes = require("@routes/Features/dailyTaskReportRoutes"); // BB-129
 const taskReportFormRoutes = require("@routes/Features/taskReportFormRoutes"); // BB-129 phase 1
 const employeeMapRoutes = require("@routes/Features/employeeMapRoutes"); // BB-128
+const punchFacePhotoRoutes = require("@routes/Features/punchFacePhotoRoutes"); // BB-141
+const employeeLoginRoutes = require("@routes/Security/employeeLoginRoutes"); // BB-137
 
 const testRoutes = require("@routes/testRoutes");
 
@@ -74,6 +76,8 @@ router.use("/presence", userPresenceRoutes);
 router.use("/leaves", leavesRoutes);
 router.use("/location", locationRoutes);
 router.use("/employee-map", employeeMapRoutes); // BB-128
+router.use("/face-photos", punchFacePhotoRoutes); // BB-141
+router.use("/employee-logins", employeeLoginRoutes); // BB-137 (admins only, 404 otherwise)
 router.use("/payroll", blockSystemAgentArea, payrollRoutes); // BB-120: no B. Buddy
 router.use("/shifts", shiftRoutes);
 router.use("/shift-assignments", shiftAssignmentRoutes);

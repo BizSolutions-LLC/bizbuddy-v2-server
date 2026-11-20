@@ -61,6 +61,17 @@ router.post("/provision-company/check", verifySystemAdmin, checkProvision);
 router.post("/provision-company", verifySystemAdmin, provisionCompany);
 router.get("/subscription-plans", verifySystemAdmin, listPlans);
 
+// BB-140: every email the server sends (read-only) + template test sends. /templates and /test before /:id.
+const emailLog = require("@controllers/Analytics/emailLogController");
+router.get("/emails", verifySystemAdmin, emailLog.getEmails);
+router.get("/emails/templates", verifySystemAdmin, emailLog.getEmailTemplates);
+router.post("/emails/test", verifySystemAdmin, emailLog.sendTestEmail);
+router.get("/emails/:id", verifySystemAdmin, emailLog.getEmailDetail);
+
+// BB-139: blank New Business Requirement Details workbook (.xlsx) to send before provisioning
+const { getOnboardingWorkbook } = require("@controllers/Analytics/onboardingWorkbookController");
+router.get("/onboarding-workbook", verifySystemAdmin, getOnboardingWorkbook);
+
 // BB-132: Subscription plans showcase (read-only, any system admin). /overview before /:id.
 const planOverview = require("@controllers/Analytics/subscriptionPlanOverviewController");
 router.get("/subscription-plans/overview", verifySystemAdmin, planOverview.getPlansOverview);

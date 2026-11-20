@@ -24,7 +24,7 @@ const XL = require("@utils/xlsx/reportWorkbook");
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const BASIS_LABEL = { final: "Final — reviewed, paid hours", preliminary: "Preliminary — live punches", partial: "Partly final — some cutoffs reviewed" };
-const ROW_BASIS = { reviewed: "Reviewed", live: "Live" };
+const ROW_BASIS = { reviewed: "Reviewed", decided: "Decided", live: "Live" }; // BB-126: decided = approved, cutoff still open
 const hoursLabel = (v) => `${Number(v).toFixed(2).replace(/\.00$/, "")}h`;
 
 /**

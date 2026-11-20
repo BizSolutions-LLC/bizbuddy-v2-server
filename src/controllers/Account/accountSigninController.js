@@ -14,6 +14,7 @@ const {
 } = require("@utils/mobileDeviceLogin");
 const ERROR_CODES = require("@constants/errorCodes");
 const { checkAgentAccess } = require("@utils/systemAgent");
+const { recordSignIn, recordSignOut } = require("@services/Security/loginEventService"); // BB-137
 
 // BB-110: sign-in has no Bearer token yet, so requestLogger would record it as
 // anonymous. Tag its context (same object it logs from) so B. Buddy sign-ins
@@ -178,6 +179,10 @@ const getUserProfile = async (req, res) => {
 
 const signIn = async (req, res) => {
   console.log("## Signin Start");
+  // BB-137: record the attempt AFTER the response is sent (never changes or delays
+  // the sign-in). The steps below fill in who and what happened.
+  const audit = { user: null, outcome: null };
+  res.on("finish", () => recordSignIn(req, res.statusCode, audit));
   try {
     // Support both legacy GET (query params) and new POST (request body)
     const { email, password, companyId, deviceId, replaceDevice, agentCode, agentPin } = {
@@ -199,10 +204,13 @@ const signIn = async (req, res) => {
     });
 
     if (!user) {
+      audit.outcome = "user_not_found";
       return res.status(404).json({ message: "User not found." });
     }
+    audit.user = user;
 
     if (user.status !== "active") {
+      audit.outcome = "inactive";
       return res.status(403).json({
         message: "Account is inactive. Please contact your administrator.",
       });
@@ -210,6 +218,7 @@ const signIn = async (req, res) => {
 
     const passwordValid = await bcrypt.compare(password, user.password);
     if (!passwordValid) {
+      audit.outcome = "wrong_password";
       if (user.isSystemAgent) tagSystemAgentRequest(req, user, null);
       return res.status(401).json({ message: "Invalid credentials." });
     }
@@ -219,6 +228,7 @@ const signIn = async (req, res) => {
     let supportAgent = null;
     if (user.isSystemAgent) {
       tagSystemAgentRequest(req, user, null);
+      audit.outcome = "agent_denied"; // cleared below once the staff code + PIN pass
       if (!agentCode || !agentPin) {
         return res.status(401).json({
           message: "Enter your staff code and PIN to continue as B. Buddy.",
@@ -260,6 +270,8 @@ const signIn = async (req, res) => {
       }
     }
 
+    if (audit.outcome === "agent_denied") audit.outcome = null; // BB-137: staff code + PIN passed
+
     // Mobile sends deviceId; web omits it and keeps existing behavior.
     // B. Buddy skips the single-device lock entirely: several staff share the
     // account, so registering one phone would lock out (or sign out) the rest.
@@ -271,6 +283,7 @@ const signIn = async (req, res) => {
       replaceRegisteredDevice
     );
     if (deviceConflict) {
+      audit.outcome = String(deviceConflict.code || "device_conflict").toLowerCase();
       console.warn("[SignIn] Device conflict", {
         userId: user.id,
         email: normalizedEmail,
@@ -323,6 +336,7 @@ const signIn = async (req, res) => {
       });
     }
     const token = jwt.sign(tokenPayload, JWT_SECRET);
+    audit.outcome = "success";
 
     console.log("## Success");
     return res.status(200).json({
@@ -339,6 +353,7 @@ const signIn = async (req, res) => {
 };
 
 const signOut = async (req, res) => {
+  res.on("finish", () => recordSignOut(req, res.statusCode)); // BB-137
   try {
     const { id: userId } = req.user;
     const { deviceId } = { ...req.query, ...req.body };

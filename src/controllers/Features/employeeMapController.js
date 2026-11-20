@@ -2,6 +2,8 @@
 //
 // BB-128 (part 1): GET /api/employee-map — clock-in / clock-out locations for
 // the Employee Map (heat layer + points + work sites). Read-only.
+// BB-128 (part 2): the response includes layers.breadcrumbs (GPS tracks). Uploads go
+// through the mobile endpoint POST /api/timelogs/location-breadcrumbs.
 
 const { buildEmployeeMap, EmployeeMapError } = require("@services/Locations/employeeMapService");
 

@@ -21,7 +21,6 @@
 
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
-const { inspectFacePhoto } = require("@utils/facePhoto");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const assignments = require("@services/Features/taskReportFormAssignmentService");
 
@@ -279,21 +278,6 @@ async function openForPunch(actor, timeLogId) {
   };
 }
 
-function requireFacePhoto(file) {
-  const inspected = inspectFacePhoto(file);
-  if (!inspected.ok) throw err(400, inspected.message, "FACE_PHOTO_REQUIRED");
-  return inspected;
-}
-
-function photoData(file, inspected) {
-  if (!file || !inspected) return {};
-  return {
-    facePhotoFileName: inspected.name,
-    facePhotoMimeType: inspected.mime,
-    facePhotoBytes: file.buffer,
-  };
-}
-
 function parseAnswersField(raw) {
   if (raw == null || raw === "") return null;
   if (typeof raw === "object") return raw;
@@ -304,16 +288,18 @@ function parseAnswersField(raw) {
   }
 }
 
-/** PUT /me/punch/:timeLogId — body { answers, submit }. Saves a draft or submits (locks). */
-async function saveForPunch(actor, timeLogId, body = {}, file) {
+/**
+ * PUT /me/punch/:timeLogId — body { answers, submit }. Saves a draft or submits (locks).
+ * JSON or multipart (answers as a JSON string). BB-141: no face photo here; face
+ * capture belongs to the punch (punchFacePhotoService), not the questionnaire.
+ */
+async function saveForPunch(actor, timeLogId, body = {}) {
   const company = await loadCompany(actor.companyId);
   if (!formsOn(company)) throw err(403, "Questionnaires are turned off for your company.", "TASK_REPORT_FORMS_OFF");
   const tz = zoneOf(company);
   const punch = await loadOwnPunch(actor, timeLogId);
   const now = new Date();
   const submit = body.submit === true || body.submit === "true";
-  const inspected = submit || file ? requireFacePhoto(file) : null;
-  const photo = photoData(file, inspected);
 
   const answersInput = typeof body.answers === "string" ? parseAnswersField(body.answers) : body.answers;
   const existing = punch.taskReportFormResponse;
@@ -324,7 +310,7 @@ async function saveForPunch(actor, timeLogId, body = {}, file) {
     const answers = cleanAnswers(questions, answersInput, { submit });
     const updated = await prisma.taskReportFormResponse.update({
       where: { id: existing.id },
-      data: { answers, ...photo, ...(submit && { status: "submitted", submittedAt: now }) },
+      data: { answers, ...(submit && { status: "submitted", submittedAt: now }) },
     });
     return shapeResponse(updated, now);
   }
@@ -353,7 +339,6 @@ async function saveForPunch(actor, timeLogId, body = {}, file) {
         status: submit ? "submitted" : "draft",
         closesAt,
         submittedAt: submit ? now : null,
-        ...photo,
       },
     });
     return shapeResponse(created, now);
@@ -573,18 +558,19 @@ async function openForActivePunch(actor) {
  * Returns { apply: false } or { apply: true, response }. Throws on invalid input.
  * Does not write.
  */
-async function prepareClockOutTaskReport(actor, activeLog, { isMultipart, answersRaw, file }) {
+async function prepareClockOutTaskReport(actor, activeLog, { answersRaw }) {
   const company = await loadCompany(actor.companyId);
   if (!formsOn(company)) return { apply: false };
   const user = await loadUser(actor.id);
   const tz = zoneOf(company);
   const hit = (await assignments.resolveForPunches(user, [activeLog], tz)).get(activeLog.id);
   if (!hit) return { apply: false };
-  if (!isMultipart || answersRaw == null || answersRaw === "") {
-    throw err(400, "Finish the end-of-shift form, including the face photo, before clocking out.", "TASK_REPORT_FORMS_REQUIRED");
+  // JSON body (answers object) or multipart (answers as a JSON string). BB-141:
+  // the face photo is checked by punchFacePhotoService, not here.
+  if (answersRaw == null || answersRaw === "") {
+    throw err(400, "Finish the end-of-shift form before clocking out.", "TASK_REPORT_FORMS_REQUIRED");
   }
   const answers = parseAnswersField(answersRaw);
-  const inspected = requireFacePhoto(file);
   const form = snapshotOf(hit.form);
   const cleaned = cleanAnswers(form.questions, answers, { submit: true });
   const now = new Date();
@@ -604,7 +590,6 @@ async function prepareClockOutTaskReport(actor, activeLog, { isMultipart, answer
       status: "submitted",
       closesAt: now,
       submittedAt: now,
-      ...photoData(file, inspected),
     },
   };
 }
