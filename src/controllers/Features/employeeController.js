@@ -306,17 +306,8 @@ const createEmployee = async (req, res) => {
         subject: "Welcome to BizBuddy — your account is live",
         html,
         text: `Hi ${firstName.trim()}, your BizBuddy account is ready.\nEmail: ${cleanedEmail}\nPassword: ${password}`,
-      });
-      await prisma.emailNotificationLog.create({
-        data: {
-          notificationType: "WELCOME_EMAIL",
-          subject: "Welcome to BizBuddy — your account is live",
-          body: JSON.stringify({ firstName: firstName.trim(), companyName: company?.name || "BizBuddy" }),
-          recipientEmail: cleanedEmail,
-          recipientUserId: newEmployee.id,
-          companyId: targetCompanyId,
-          status: "sent",
-        },
+        // BB-140: logged centrally; the password is hidden in the stored copy
+        log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId: targetCompanyId, userId: newEmployee.id, triggeredBy: req.user?.id ? `user:${req.user.id}` : null, redact: [password] },
       });
       console.log(`[createEmployee] Welcome email sent to ${cleanedEmail}`);
     } catch (emailErr) {
@@ -906,37 +897,13 @@ const bulkCreateEmployees = async (req, res) => {
             subject: "Welcome to BizBuddy — your account is ready",
             html,
             text: `Hi ${firstName.trim()}, your BizBuddy account has been created.\nEmail: ${cleanedEmail}\nPassword: ${password}`,
-          });
-          await prisma.emailNotificationLog.create({
-            data: {
-              notificationType: "WELCOME_EMAIL",
-              recipientEmail: cleanedEmail,
-              recipientUserId: newEmployee.id,
-              companyId: targetCompanyId,
-              subject: "Welcome to BizBuddy — your account is ready",
-              body: JSON.stringify({ firstName: firstName.trim(), companyName }),
-              status: "sent",
-            },
+            // BB-140: logged centrally (sent or failed); the password is hidden in the stored copy
+            log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId: targetCompanyId, userId: newEmployee.id, triggeredBy: req.user?.id ? `user:${req.user.id}` : null, redact: [password] },
           });
 
           console.log(`[bulkCreateEmployees] Welcome email sent to ${cleanedEmail}`);
         } catch (emailErr) {
           console.error(`[bulkCreateEmployees] Failed to send email to ${cleanedEmail}:`, emailErr);
-
-          try {
-            await prisma.emailNotificationLog.create({
-              data: {
-                notificationType: "WELCOME_EMAIL",
-                recipientEmail: cleanedEmail,
-                recipientUserId: newEmployee.id,
-                companyId: targetCompanyId,
-                subject: "Welcome to BizBuddy — your account is ready",
-                body: JSON.stringify({ firstName: firstName.trim(), companyName }),
-                status: "failed",
-                errorMessage: emailErr.message,
-              },
-            });
-          } catch (_) {}
         }
       } catch (empErr) {
         console.error(`[bulkCreateEmployees] Error at index ${index}:`, empErr);

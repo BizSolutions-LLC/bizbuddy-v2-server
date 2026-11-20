@@ -561,6 +561,8 @@ model User {
   // lists/counts/reports/notifications. Never an employee.
   isSystemAgent            Boolean  @default(false)
   locationBreadcrumbs      LocationBreadcrumb[]
+  punchFacePhotos          PunchFacePhoto[]         // BB-141
+  loginEvents              LoginEvent[]             // BB-137
 
   @@unique([companyId, email])
   @@index([companyId, status])
@@ -751,6 +753,15 @@ model Company {
   taskReportFormAssignments TaskReportFormAssignment[]
   taskReportFormResponses   TaskReportFormResponse[]
 
+  // BB-141: face capture as proof of the punch. Only applies while
+  // taskReportEnabled is on AND taskReportMode = "forms" (never free-form).
+  // On: every clock-out needs a live photo; + ClockIn: every clock-in too.
+  // While it applies, web (browser) clock-in/out is refused (WEB_PUNCH_DISABLED).
+  taskReportFaceCapture        Boolean @default(false)
+  taskReportFaceCaptureClockIn Boolean @default(false)
+  punchFacePhotos              PunchFacePhoto[]
+  loginEvents                  LoginEvent[]        // BB-137
+
   LiveUser LiveUser[]
 
   companyCutoffSettings CompanyCutoffSettings?
@@ -768,7 +779,9 @@ model Company {
   eveningReportSentOn DateTime? @db.Date
 
   // Present in production. Keep these so db push does not drop them.
+  // BB-134: server-written device proof on each clock-in/out (deviceInfo.start/end.proof) — off by default
   punchDeviceProofEnabled   Boolean @default(false)
+  // BB-128 part 2: GPS breadcrumbs while clocked in (mobile) — off by default; interval 1–60 min
   breadcrumbsEnabled        Boolean @default(false)
   breadcrumbIntervalMinutes Int     @default(5)
   locationBreadcrumbs       LocationBreadcrumb[]
@@ -952,23 +965,43 @@ model UserActivity {
   user                User     @relation(fields: [userId], references: [id])
 }
 
+// BB-140: one row per outgoing email (every email goes through utils/mailer.sendMail,
+// which logs it via services/Analytics/emailLogService.recordEmail). Kept 1 year
+// (jobs/emailLogRetentionJob.js). The redacted copy of the email itself is in S3
+// (archiveKey in AWS_S3_EMAIL_BUCKET), deleted after 90 days by the bucket rule.
+// Rows from before BB-140 have notificationType + body (template data JSON) and
+// no copy; companyId / notificationType are optional now (password reset, tests).
 model EmailNotificationLog {
-  id               String           @id @default(cuid())
-  notificationType NotificationCode
+  id               String            @id @default(cuid())
+  notificationType NotificationCode?
+  emailType        String?           // BB-140: e.g. WELCOME_EMAIL, PASSWORD_RESET, MISSED_CLOCK_IN, morningReport
+  isTest           Boolean           @default(false) // BB-140: System Admin test send
   recipientEmail   String
   recipientUserId  String?
-  companyId        String
-  subject          String
-  body             String           @db.Text
-  sentAt           DateTime         @default(now()) @db.Timestamptz(6)
-  status           String           @default("sent") // "sent", "failed", "bounced"
+  companyId        String?
+  subject          String            // redacted
+  body             String?           @db.Text // legacy (pre-BB-140): template data as JSON
+  sentAt           DateTime          @default(now()) @db.Timestamptz(6)
+  status           String            @default("sent") // "sent", "failed"
   errorMessage     String?
-  metadata         Json?            // Store additional context (shift details, employee list, etc.)
-  
-  company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+  metadata         Json?             // Store additional context (shift details, employee list, etc.)
+  fromAddress      String?           // BB-140
+  messageId        String?           // BB-140: SMTP message id
+  accepted         Json?             // BB-140: addresses the mail server accepted
+  rejected         Json?             // BB-140: addresses the mail server rejected
+  smtpResponse     String?           // BB-140: mail server reply (or the error reply)
+  triggeredBy      String?           // BB-140: "user:<id>", "system-admin:<id>", "self-signup", …
+  sizeBytes        Int?              // BB-140: html + text size
+  redactedCount    Int               @default(0) // BB-140: values hidden in the stored copy
+  archiveKey       String?           // BB-140: S3 key of the redacted copy
+
+  company          Company?          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([companyId, notificationType, sentAt])
   @@index([recipientUserId, sentAt])
+  @@index([sentAt])
+  @@index([emailType, sentAt])
+  @@index([status, sentAt])
 }
 
 model Shift {
@@ -1109,6 +1142,7 @@ model TimeLog {
   liveUser              LiveUser?
   taskReportFormResponse TaskReportFormResponse? // BB-129 phase 2
   locationBreadcrumbs    LocationBreadcrumb[]
+  facePhotos             PunchFacePhoto[]        // BB-141
 
   @@index([isApproved])
   @@index([timeIn, isApproved])
@@ -1117,7 +1151,85 @@ model TimeLog {
   @@index([userId, timeOut])
 }
 
+// BB-137: every sign-in attempt and sign-out (Company panel → Employee Logins,
+// admins only; employees are never told it exists). Written after the response
+// is sent (services/Security/loginEventService), so it never changes a sign-in.
+// Flags are worked out when the row is written, from the history before it:
+//   platformSwitch: different platform than the user's previous successful sign-in
+//   newDevice:      a device/browser this user never signed in from before
+//   sharedDevice:   the same device/browser signed in to another account (sharedWith)
+//   failedBurst:    3+ failed attempts for the same email + company within 15 min
+// Kept 1 year (jobs/loginEventRetentionJob.js). source "backfill" = rebuilt from
+// RequestLog by scripts/backfill-bb137-login-events.js (requestLogId dedupes).
+model LoginEvent {
+  id             String   @id @default(cuid())
+  companyId      String?
+  userId         String?
+  email          String?  // as typed, lower-cased (also for unknown emails)
+  event          String   // "sign_in" | "sign_out"
+  outcome        String   // success | wrong_password | user_not_found | inactive | device_switch_cooldown | device_already_registered | agent_denied | invalid_request | error
+  platform       String   // "mobile" | "web" | "other"
+  deviceId       String?  // mobile (sent at sign-in)
+  browserId      String?  // web (random id kept by the browser)
+  ipAddress      String?
+  userAgent      String?
+  isSystemAgent  Boolean  @default(false) // B. Buddy (support) sign-ins: kept, not listed
+  platformSwitch Boolean  @default(false)
+  newDevice      Boolean  @default(false)
+  sharedDevice   Boolean  @default(false)
+  sharedWith     Json?    // other userIds that signed in from the same device/browser
+  failedBurst    Boolean  @default(false)
+  source         String   @default("live") // "live" | "backfill"
+  requestLogId   String?  @unique
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+  @@index([userId, createdAt])
+  @@index([deviceId])
+  @@index([browserId])
+  @@index([email, companyId, createdAt])
+  @@index([createdAt])
+}
+
+// BB-141: live face photo taken on the phone at clock-in / clock-out, proof of
+// the punch. The image lives in S3 (AWS_S3_BUCKET, key below, private, resized
+// ~480 px JPEG); this row keeps only the key and the capture details. Viewable
+// in cutoff approvals by admins/supervisors while the punch isn't approved
+// (computed from TimeLogApproval, so a revert makes it viewable again). S3
+// deletes the files after 90 days (bucket lifecycle rule); rows stay.
+model PunchFacePhoto {
+  id          String   @id
+  companyId   String
+  userId      String
+  timeLogId   String
+  kind        String   // "in" | "out"
+  s3Key       String
+  mimeType    String   @default("image/jpeg")
+  sizeBytes   Int
+  width       Int?
+  height      Int?
+  capturedAt  DateTime @db.Timestamptz(6) // phone clock (the punch time)
+  receivedAt  DateTime @default(now()) @db.Timestamptz(6) // server clock
+  latitude    Float?
+  longitude   Float?
+  accuracy    Float?   // metres
+  deviceInfo  Json?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timeLog TimeLog @relation(fields: [timeLogId], references: [id], onDelete: Cascade)
+
+  @@unique([timeLogId, kind])
+  @@index([companyId, capturedAt])
+  @@index([userId, capturedAt])
+}
+
 // Location samples taken during a punch. Present in production; do not drop.
+// BB-128 part 2: written by POST /api/timelogs/location-breadcrumbs (mobile),
+// read by the Employee Map layer, deleted after 90 days (jobs/breadcrumbRetentionJob.js).
 model LocationBreadcrumb {
   id           String   @id
   companyId    String
@@ -1254,6 +1366,8 @@ model TaskReportFormResponse {
   status      String    @default("draft")
   closesAt    DateTime  @db.Timestamptz(6)
   submittedAt DateTime? @db.Timestamptz(6)
+  // Unused since BB-141 (face photos moved to PunchFacePhoto on S3). Never
+  // written or read; drop in a later push once confirmed empty.
   facePhotoFileName String?
   facePhotoMimeType String?
   facePhotoBytes    Bytes?

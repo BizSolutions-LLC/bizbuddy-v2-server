@@ -7,6 +7,9 @@ const sendEveningReportJob           = require('../jobs/sendEveningReport');
 const autoClockOutJob                = require('../jobs/autoClockOutJob');
 const autoGenerateCutoffPeriodsJob   = require('../jobs/autoGenerateCutoffPeriodsJob');
 const notificationRetentionJob       = require('../jobs/notificationRetentionJob');
+const breadcrumbRetentionJob         = require('../jobs/breadcrumbRetentionJob');
+const emailLogRetentionJob           = require('../jobs/emailLogRetentionJob');
+const loginEventRetentionJob         = require('../jobs/loginEventRetentionJob');
 
 /**
  * Initialize all cron jobs for the notification system
@@ -46,6 +49,22 @@ function initializeCronJobs() {
   // Report-only until NOTIFICATION_RETENTION=on.
   cron.schedule('30 3 * * *', async () => {
     await notificationRetentionJob();
+  });
+
+  // Job 8 (BB-128 part 2): GPS breadcrumbs older than 90 days, nightly at 03:45 server time.
+  cron.schedule('45 3 * * *', async () => {
+    await breadcrumbRetentionJob();
+  });
+
+  // Job 9 (BB-140): email summary rows older than 1 year, nightly at 03:55 server time.
+  // (Email copies in S3 expire after 90 days by the bucket rule.)
+  cron.schedule('55 3 * * *', async () => {
+    await emailLogRetentionJob();
+  });
+
+  // Job 10 (BB-137): login history older than 1 year, nightly at 04:05 server time.
+  cron.schedule('5 4 * * *', async () => {
+    await loginEventRetentionJob();
   });
 }
 

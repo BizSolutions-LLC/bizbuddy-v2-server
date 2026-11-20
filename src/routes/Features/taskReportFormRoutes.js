@@ -24,6 +24,9 @@ const faceUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
+// Parses multipart saves (answers as a JSON string). BB-141: a "facePhoto" file,
+// if an older app still sends one, is accepted and ignored; face capture
+// belongs to the punch (time-in / time-out), not the questionnaire.
 function maybeFacePhoto(req, res, next) {
   if (!req.is("multipart/form-data")) return next();
   faceUpload.single("facePhoto")(req, res, (err) => {

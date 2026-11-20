@@ -4,12 +4,14 @@
 // Read-only. Uses the location the web/mobile app already saves on each punch:
 //   TimeLog.location = { start: { latitude, longitude, accuracy?, ... } | null,
 //                        end:   { ... } | null }
-// No schema change. GPS breadcrumbs (tracking during the shift) will be added
-// as another layer once the mobile developer is back; the response is shaped
-// for that (`layers`).
+// BB-128 part 2 adds `layers.breadcrumbs`: GPS points the mobile app sends
+// while the employee is clocked in (services/Locations/breadcrumbService.js),
+// one track per punch. Routes need one day or one employee; otherwise the
+// layer is null with summary.breadcrumbs.available = false.
 //
 // Scope: admin/superadmin → whole company; supervisor → their department +
-// direct reports; anyone else → 403.
+// direct reports; anyone else → only themselves (part 2: employees can see
+// their own punches and route; asking for someone else → 403).
 // Dates: one day by default, or a from/to range (max 31 days), in the company
 // time zone. A clock-in counts on the day of its timeIn, a clock-out on the
 // day of its timeOut.
@@ -17,6 +19,7 @@
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
+const { buildBreadcrumbLayer } = require("@services/Locations/breadcrumbService");
 
 const DEFAULT_TZ = "America/Los_Angeles";
 const MANAGER_ROLES = ["admin", "superadmin"];
@@ -72,7 +75,7 @@ function parseFilters(query, tz) {
 }
 
 /** Prisma `where` on User for the people this actor may see. */
-async function scopeWhere(actor) {
+async function scopeWhere(actor, filters) {
   if (MANAGER_ROLES.includes(actor.role)) return { companyId: actor.companyId };
   if (actor.role === "supervisor") {
     // req.user has no departmentId — load it.
@@ -82,7 +85,10 @@ async function scopeWhere(actor) {
       OR: [{ employmentDetail: { supervisorId: actor.id } }, ...(me?.departmentId ? [{ departmentId: me.departmentId }] : [])],
     };
   }
-  throw new EmployeeMapError(403, "Only supervisors and admins can view the Employee Map.");
+  // BB-128 part 2: employees see only their own punches and route.
+  if (filters.userId && filters.userId !== actor.id)
+    throw new EmployeeMapError(403, "You can only view your own locations.");
+  return { companyId: actor.companyId, id: actor.id };
 }
 
 /** { lat, lng, accuracy } from a saved punch location, or null if unusable. */
@@ -137,11 +143,21 @@ function toHeat(points) {
 }
 
 async function buildEmployeeMap(actor, query = {}) {
-  const company = await prisma.company.findUnique({ where: { id: actor.companyId }, select: { id: true, name: true, timeZone: true } });
+  const company = await prisma.company.findUnique({
+    where: { id: actor.companyId },
+    select: { id: true, name: true, timeZone: true, breadcrumbsEnabled: true, breadcrumbIntervalMinutes: true },
+  });
   if (!company) throw new EmployeeMapError(404, "Company not found.");
   const tz = zoneOf(company.timeZone);
   const f = parseFilters(query, tz);
-  const userScope = await scopeWhere(actor);
+  const userScope = await scopeWhere(actor, f);
+  const selfOnly = !MANAGER_ROLES.includes(actor.role) && actor.role !== "supervisor";
+  const userWhere = {
+    ...HUMAN_ONLY,
+    ...userScope,
+    ...(f.departmentId && { departmentId: f.departmentId }),
+    ...(f.userId && { id: f.userId }),
+  };
 
   const wantIn = f.type !== "out";
   const wantOut = f.type !== "in";
@@ -151,12 +167,7 @@ async function buildEmployeeMap(actor, query = {}) {
     prisma.timeLog.findMany({
       where: {
         OR: [...(wantIn ? [{ timeIn: range }] : []), ...(wantOut ? [{ timeOut: range }] : [])],
-        user: {
-          ...HUMAN_ONLY,
-          ...userScope,
-          ...(f.departmentId && { departmentId: f.departmentId }),
-          ...(f.userId && { id: f.userId }),
-        },
+        user: userWhere,
       },
       select: {
         id: true, timeIn: true, timeOut: true, punchType: true, location: true,
@@ -232,6 +243,19 @@ async function buildEmployeeMap(actor, query = {}) {
     if (wantOut && log.timeOut && log.timeOut >= f.start && log.timeOut <= f.end) addPunch(log, "out", log.timeOut, log.location?.end);
   }
 
+  // BB-128 part 2: routes only for one day or one employee (keeps responses small).
+  const routesAllowed = f.from === f.to || !!f.userId || selfOnly;
+  const crumbs = routesAllowed
+    ? await buildBreadcrumbLayer({
+        companyId: actor.companyId,
+        userWhere,
+        start: f.start,
+        end: f.end,
+        tz,
+        intervalMinutes: company.breadcrumbIntervalMinutes,
+      })
+    : null;
+
   const allPoints = [...layers.clockIn, ...layers.clockOut];
   const countLayer = (pts, miss) => ({
     punches: pts.length + miss,
@@ -248,12 +272,19 @@ async function buildEmployeeMap(actor, query = {}) {
       clockIn: wantIn ? countLayer(layers.clockIn, missing.clockIn) : null,
       clockOut: wantOut ? countLayer(layers.clockOut, missing.clockOut) : null,
       employees: employees.size,
+      breadcrumbs: {
+        enabled: company.breadcrumbsEnabled,
+        intervalMinutes: company.breadcrumbIntervalMinutes,
+        available: routesAllowed,
+        reason: routesAllowed ? null : "Pick one day or one employee to see routes.",
+        ...(crumbs ? crumbs.summary : { tracks: 0, points: 0, mockedPoints: 0, suspiciousTracks: 0, truncated: false }),
+      },
     },
     heat: toHeat(allPoints),
     layers: {
       clockIn: wantIn ? layers.clockIn : [],
       clockOut: wantOut ? layers.clockOut : [],
-      breadcrumbs: null, // BB-128 part 2 — needs the mobile app; not collected yet
+      breadcrumbs: crumbs ? crumbs.tracks : null, // BB-128 part 2
     },
     employees: [...employees.values()].sort((a, b) => a.name.localeCompare(b.name)),
   };

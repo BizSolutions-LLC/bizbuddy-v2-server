@@ -25,8 +25,10 @@ async function loadTemplate(templateName) {
  * @param {string} options.templateName - Handlebars template name (without .hbs)
  * @param {Object} options.context - Template variables
  * @param {boolean} options.isNotification - Use notification email (default: true for this service)
+ * @param {Object} options.log - BB-140 logging info, passed to sendMail (type defaults to the template name)
  */
-async function sendEmail({ to, subject, templateName, context, isNotification = true }) {
+async function sendEmail({ to, subject, templateName, context, isNotification = true, log = {} }) {
+  const logInfo = { type: templateName, ...log };
   try {
     const template = await loadTemplate(templateName);
     const html = template(context);
@@ -37,12 +39,19 @@ async function sendEmail({ to, subject, templateName, context, isNotification = 
       subject, 
       html,
       isNotification, // Will use notifications@mybizbuddy.co
+      log: logInfo,
     });
 
     console.log(`✅ Email sent to: ${to} (from: ${isNotification ? 'notifications@' : 'no-reply@'})`);
     return { success: true };
   } catch (error) {
     console.error('❌ Email send failed:', error);
+    // BB-140: a failure before sending (e.g. template error) is logged here;
+    // a send failure was already logged by sendMail.
+    if (!error.emailLogged) {
+      const { recordEmail } = require('@services/Analytics/emailLogService');
+      await recordEmail({ to, from: null, subject, status: 'failed', error, log: logInfo });
+    }
     return { success: false, error: error.message };
   }
 }

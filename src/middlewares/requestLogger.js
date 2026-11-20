@@ -42,6 +42,21 @@ function sanitizeObject(obj) {
   return sanitized;
 }
 
+// BB-128 part 2: GPS breadcrumb batches are not copied into RequestLog. They
+// would store every point twice and outlive the 90-day breadcrumb retention.
+// Only the number of samples is logged. Upload endpoint (mobile):
+// POST /api/timelogs/location-breadcrumbs, body { samples: [...] }.
+const BREADCRUMB_PATH = /^\/api\/timelogs\/location-breadcrumbs\/?(\?|$)/;
+
+function loggedBody(req) {
+  if (req.method !== "POST" && req.method !== "PUT" && req.method !== "PATCH") return null;
+  if (BREADCRUMB_PATH.test(req.originalUrl || req.url || "")) {
+    const samples = req.body?.samples;
+    return { samples: Array.isArray(samples) ? samples.length : null };
+  }
+  return sanitizeObject(req.body);
+}
+
 /**
  * Extract user context from JWT token
  */
@@ -179,10 +194,7 @@ async function saveRequestLog({ req, res, responseTime, userContext }) {
       ipAddress: getClientIp(req),
       userAgent: req.headers["user-agent"] || null,
       queryParams: Object.keys(req.query || {}).length > 0 ? sanitizeObject(req.query) : null,
-      requestBody:
-        req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
-          ? sanitizeObject(req.body)
-          : null,
+      requestBody: loggedBody(req),
       isSlowRequest,
       isFailed: isError,
       environment: process.env.NODE_ENV || "development",
@@ -271,10 +283,7 @@ async function saveRequestLog({ req, res, responseTime, userContext }) {
       ipAddress: getClientIp(req),
       userAgent: req.headers["user-agent"] || null,
       queryParams: Object.keys(req.query || {}).length > 0 ? sanitizeObject(req.query) : null,
-      requestBody:
-        req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
-          ? sanitizeObject(req.body)
-          : null,
+      requestBody: loggedBody(req),
       isSlowRequest,
       isFailed: isError,
       environment: process.env.NODE_ENV || "development",

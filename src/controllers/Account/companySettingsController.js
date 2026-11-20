@@ -102,8 +102,11 @@ exports.getSettings = async (req, res) => {
         taskReportEnabled:            true, // BB-129
         taskReportMode:               true, // BB-129 phase 1
         taskReportFormWindowHours:    true, // BB-129 phase 2
-        breadcrumbsEnabled:           true,
-        breadcrumbIntervalMinutes:    true,
+        taskReportFaceCapture:        true, // BB-141
+        taskReportFaceCaptureClockIn: true, // BB-141
+        punchDeviceProofEnabled:      true, // BB-134
+        breadcrumbsEnabled:           true, // BB-128 part 2
+        breadcrumbIntervalMinutes:    true, // BB-128 part 2
         ...COMPANY_CREDIT_SELECT,
       },
     });
@@ -193,6 +196,11 @@ exports.updateSettings = async (req, res) => {
       taskReportEnabled,
       taskReportMode,
       taskReportFormWindowHours,
+      taskReportFaceCapture,
+      taskReportFaceCaptureClockIn,
+      punchDeviceProofEnabled,
+      breadcrumbsEnabled,
+      breadcrumbIntervalMinutes,
     } = req.body;
 
     const VALID_OT_BASES = ["daily", "weekly", "cutoff"];
@@ -214,6 +222,26 @@ exports.updateSettings = async (req, res) => {
       !(Number.isInteger(taskReportFormWindowHours) && taskReportFormWindowHours >= 1 && taskReportFormWindowHours <= 2160)
     )
       return res.status(400).json({ error: "taskReportFormWindowHours must be a whole number of hours from 1 to 2160 (90 days)." });
+
+    // BB-128 part 2: breadcrumb interval, whole minutes 1–60.
+    if (
+      breadcrumbIntervalMinutes !== undefined &&
+      !(Number.isInteger(breadcrumbIntervalMinutes) && breadcrumbIntervalMinutes >= 1 && breadcrumbIntervalMinutes <= 60)
+    )
+      return res.status(400).json({ error: "breadcrumbIntervalMinutes must be a whole number of minutes from 1 to 60." });
+
+    // BB-141: face capture sub-switches. Turning documentation off (or face capture
+    // off) turns the switches under it off too. Face capture only applies in custom
+    // forms mode; in free-form mode the switches are kept but have no effect.
+    const faceCapture = {
+      ...(taskReportFaceCapture !== undefined && { taskReportFaceCapture: Boolean(taskReportFaceCapture) }),
+      ...(taskReportFaceCaptureClockIn !== undefined && { taskReportFaceCaptureClockIn: Boolean(taskReportFaceCaptureClockIn) }),
+    };
+    if (faceCapture.taskReportFaceCapture === false) faceCapture.taskReportFaceCaptureClockIn = false;
+    if (taskReportEnabled !== undefined && !taskReportEnabled) {
+      faceCapture.taskReportFaceCapture = false;
+      faceCapture.taskReportFaceCaptureClockIn = false;
+    }
 
     const leaveCredits = await _leaveCreditUpdate(req.user.companyId, req.body);
     if (leaveCredits.error) return res.status(400).json({ error: leaveCredits.error });
@@ -321,6 +349,12 @@ exports.updateSettings = async (req, res) => {
         ...(taskReportEnabled !== undefined && { taskReportEnabled: Boolean(taskReportEnabled) }),
         ...(taskReportMode !== undefined && { taskReportMode }),
         ...(taskReportFormWindowHours !== undefined && { taskReportFormWindowHours }),
+        ...faceCapture, // BB-141
+        // ── BB-134 device proof on punches ───────────────────────────────────
+        ...(punchDeviceProofEnabled !== undefined && { punchDeviceProofEnabled: Boolean(punchDeviceProofEnabled) }),
+        // ── BB-128 part 2 GPS breadcrumbs ────────────────────────────────────
+        ...(breadcrumbsEnabled !== undefined && { breadcrumbsEnabled: Boolean(breadcrumbsEnabled) }),
+        ...(breadcrumbIntervalMinutes !== undefined && { breadcrumbIntervalMinutes }),
         // ── BB-098 leave credits ─────────────────────────────────────────────
         ...leaveCredits.data,
         // ─────────────────────────────────────────────────────────────────────
@@ -358,6 +392,11 @@ exports.updateSettings = async (req, res) => {
         taskReportEnabled:             true, // BB-129
         taskReportMode:                true, // BB-129 phase 1
         taskReportFormWindowHours:     true, // BB-129 phase 2
+        taskReportFaceCapture:         true, // BB-141
+        taskReportFaceCaptureClockIn:  true, // BB-141
+        punchDeviceProofEnabled:       true, // BB-134
+        breadcrumbsEnabled:            true, // BB-128 part 2
+        breadcrumbIntervalMinutes:     true, // BB-128 part 2
         ...COMPANY_CREDIT_SELECT,
       },
     });

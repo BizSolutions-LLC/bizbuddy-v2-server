@@ -70,7 +70,7 @@ const myOpenActive = handle("myOpenActive", async (req, res) =>
 const mySave = handle("mySave", async (req, res) =>
   res.json({
     message: req.body?.submit === true || req.body?.submit === "true" ? "Questionnaire submitted." : "Questionnaire saved.",
-    data: await responseSvc.saveForPunch(req.user, req.params.timeLogId, req.body, req.file),
+    data: await responseSvc.saveForPunch(req.user, req.params.timeLogId, req.body),
   })
 );
 const myResponses = handle("myResponses", async (req, res) =>

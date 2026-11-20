@@ -32,7 +32,6 @@ router.delete("/:id/auto-breaks", authenticate, clearAutoBreaks);
 router.put("/:id/lunch-break", authenticate, upsertLunchBreak);
 router.delete("/:id/lunch-break", authenticate, deleteLunchBreak);
 router.delete("/:id", authenticate, adminDeleteTimeLog);
-router.post("/time-in", authenticate, blockSystemAgent, timeIn);
 router.post("/location-breadcrumbs", authenticate, blockSystemAgent, postLocationBreadcrumbs);
 
 const faceUpload = multer({
@@ -40,6 +39,8 @@ const faceUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
+// Multipart "facePhoto" (JPEG/PNG ≤ 5 MB) on time-in / time-out. BB-141: it is
+// required when the company's face capture applies (punchFacePhotoService).
 function maybeFacePhoto(req, res, next) {
   if (!req.is("multipart/form-data")) return next();
   faceUpload.single("facePhoto")(req, res, (err) => {
@@ -53,6 +54,7 @@ function maybeFacePhoto(req, res, next) {
   });
 }
 
+router.post("/time-in", authenticate, blockSystemAgent, maybeFacePhoto, timeIn);
 router.post("/time-out", authenticate, blockSystemAgent, maybeFacePhoto, timeOut);
 router.get("/user", authenticate, blockSystemAgent, getUserTimeLogs);
 router.delete("/delete/:id", authenticate, blockSystemAgent, deleteTimeLog);

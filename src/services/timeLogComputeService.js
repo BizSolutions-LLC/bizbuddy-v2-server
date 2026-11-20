@@ -711,9 +711,16 @@ async function computeTimeLogSummary(timeLogId) {
  * Returns null when the employee has no shift assignment of any kind.
  */
 async function resolveShiftForTimeLog(userId, timeIn, timeOut, companyTz) {
-  const tz       = resolveTimezone(companyTz);
-  const dayStart = moment(timeIn).tz(tz).startOf("day").toDate();
-  const dayEnd   = moment(timeIn).tz(tz).endOf("day").toDate();
+  const tz = resolveTimezone(companyTz);
+  // BB-129 fix: assignedDate is @db.Date (midnight UTC of the calendar date). A
+  // company-zone day range (e.g. 07:00Z–06:59Z next day for Los Angeles) skipped
+  // the punch day's shifts and picked the NEXT day's instead, for every zone west
+  // of UTC. Use the punch's local calendar date as a UTC date range, the same as
+  // computeTimeLogSummary, so the auto-break service, the Daily Task Report and the
+  // compute service all resolve the same shift.
+  const localDateStr = moment(timeIn).tz(tz).format("YYYY-MM-DD");
+  const dayStart     = new Date(`${localDateStr}T00:00:00.000Z`);
+  const dayEnd       = new Date(`${localDateStr}T23:59:59.999Z`);
 
   const userShifts = await prisma.userShift.findMany({
     where: {
@@ -735,8 +742,7 @@ async function resolveShiftForTimeLog(userId, timeIn, timeOut, companyTz) {
     });
 
     if (user) {
-      const localDateStr = moment(timeIn).tz(tz).format("YYYY-MM-DD");
-      const dayOfWeek    = moment(localDateStr).day();
+      const dayOfWeek = moment(localDateStr).day();
 
       const orConditions = [
         { assignmentType: "individual", targetId: userId },

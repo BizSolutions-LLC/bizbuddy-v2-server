@@ -11,9 +11,9 @@
 //     assignments are kept, so restoring the form brings them back.
 //   - The punch's shift is the one its clock-in/out overlaps most
 //     (matchShiftToWindow, same as cutoffs). Shift dates are read as UTC
-//     calendar dates (@db.Date), like timeLogComputeService does — NOT via
-//     resolveShiftForTimeLog, whose company-zone day range picks up the next
-//     day's shift for zones west of UTC.
+//     calendar dates (@db.Date), like timeLogComputeService does. (Until the
+//     BB-129 fix of 2026-11-20, resolveShiftForTimeLog used a company-zone day
+//     range and picked the next day's shift for zones west of UTC.)
 
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");

@@ -165,6 +165,8 @@ const signUp = async (req, res) => {
     Email: ${result.newUser.email}
     Password: ${plainPassword}
     `,
+        // BB-140: logged centrally; the password is hidden in the stored copy
+        log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId: result.newCompany?.id ?? null, userId: result.newUser.id, triggeredBy: "self-signup", redact: [plainPassword] },
       });
       // optional: log success
       console.log(`[signUp] Welcome email sent to ${result.newUser.email}`);

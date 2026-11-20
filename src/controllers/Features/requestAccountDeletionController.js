@@ -5,20 +5,10 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const { createNotification } = require("@services/notificationService");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
-const nodemailer = require("nodemailer");
+const { sendMail } = require("@utils/mailer"); // BB-140
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.dreamhost.com",
-  port: "587",
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false, 
-  },
-});
+// BB-140: emails go through utils/mailer.sendMail (same SMTP account), so they are logged.
+
 
 const generateVerificationCode = () => {
   return crypto.randomInt(100000, 999999).toString();
@@ -82,7 +72,7 @@ const sendVerificationEmail = async (email, code, userName) => {
       `,
     };
 
-    await transporter.sendMail(mailOptions);
+    await sendMail({ ...mailOptions, log: { type: "ACCOUNT_DELETION_CODE", redact: [code] } }); // BB-140: code hidden in the stored copy
     console.log(`✅ Verification email sent to: ${email}`);
     return true;
   } catch (error) {
@@ -456,5 +446,6 @@ module.exports = {
   checkEmailGenerateCode,
   verifyCode,
   confirmDeleteAccountRequest,
-  getAuthenticatedRequest
+  getAuthenticatedRequest,
+  sendVerificationEmail, // BB-140: System Admin test sends
 };

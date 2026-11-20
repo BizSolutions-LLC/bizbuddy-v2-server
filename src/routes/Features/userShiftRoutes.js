@@ -11,6 +11,7 @@ const {
     getEmployeeShifts,
     getBulkEmployeeShifts,
     getCompanyScheduleStats,
+    getShiftsInRange,
     updateUserShift,
     deleteUserShift,
   } = require("@controllers/Features/userShiftController");
@@ -22,6 +23,8 @@ router.get("/company-employees", authenticate, getCompanyEmployees);
 router.get("/employee/:employeeId", authenticate, authorizeRoles('admin', 'supervisor', 'superadmin'), getEmployeeShifts);
 router.post("/bulk", authenticate, authorizeRoles('admin', 'supervisor', 'superadmin'), getBulkEmployeeShifts);
 router.get("/company-stats", authenticate, authorizeRoles('admin', 'supervisor', 'superadmin'), getCompanyScheduleStats);
+// BB-135: whole company's shifts for a date range (Schedules List sheet view)
+router.get("/range", authenticate, authorizeRoles('admin', 'supervisor', 'superadmin'), getShiftsInRange);
 router.put("/:id", authenticate, authorizeRoles('admin', 'supervisor', 'superadmin'), updateUserShift);
 router.delete("/:id", authenticate, authorizeRoles('admin', 'supervisor', 'superadmin'), deleteUserShift);
 

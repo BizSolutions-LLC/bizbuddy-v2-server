@@ -2,6 +2,7 @@
 
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
+const { buildOtProjection } = require("@services/Schedules/otProjectionService"); // BB-135
 
 // Existing: Get current user's shifts
 const getUserShifts = async (req, res) => {
@@ -273,6 +274,92 @@ const getBulkEmployeeShifts = async (req, res) => {
   }
 };
 
+// BB-135: GET /api/usershifts/range?from=YYYY-MM-DD&to=YYYY-MM-DD[&departmentId=]
+// Every human employee's shifts in the company for a date range (Schedules List
+// sheet view). Flat list, same row format as /employee/:employeeId. All statuses,
+// cancelled included (the client hides them). Supervisors see the whole company,
+// the same as the other schedule endpoints.
+const RANGE_MAX_DAYS = 62;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseRangeDay(value) {
+  if (typeof value !== "string" || !DAY_RE.test(value)) return null;
+  // UTC midnight matches the @db.Date column exactly (no time-zone shift).
+  const d = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== value ? null : d;
+}
+
+const getShiftsInRange = async (req, res) => {
+  try {
+    const { companyId } = req.user;
+    const { from, to, departmentId, includeOt } = req.query;
+    // BB-135 Roster OT warning: "1" / "true" turns it on; anything else = off.
+    const wantOt = ["1", "true"].includes(String(includeOt ?? "").toLowerCase());
+
+    const fromDate = parseRangeDay(from);
+    const toDate = parseRangeDay(to);
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ message: "from and to are required as YYYY-MM-DD." });
+    }
+    if (toDate < fromDate) {
+      return res.status(400).json({ message: "to must be on or after from." });
+    }
+    const days = Math.round((toDate - fromDate) / 86400000) + 1;
+    if (days > RANGE_MAX_DAYS) {
+      return res.status(400).json({ message: `The range can be at most ${RANGE_MAX_DAYS} days.` });
+    }
+
+    if (departmentId) {
+      const department = await prisma.department.findFirst({
+        where: { id: String(departmentId), companyId },
+        select: { id: true },
+      });
+      if (!department) {
+        return res.status(403).json({ message: "Access denied. Department not in your company." });
+      }
+    }
+
+    const userShifts = await prisma.userShift.findMany({
+      where: {
+        assignedDate: { gte: fromDate, lte: toDate },
+        user: {
+          ...HUMAN_ONLY,
+          companyId,
+          ...(departmentId && { departmentId: String(departmentId) }),
+        },
+      },
+      include: { shift: true },
+      orderBy: [{ userId: "asc" }, { assignedDate: "asc" }, { shift: { startTime: "asc" } }],
+    });
+
+    const data = userShifts.map((us) => ({
+      ...us,
+      assignedDate: us.assignedDate.toISOString().slice(0, 10),
+      customStartTime: us.customStartTime ? us.customStartTime.toISOString() : null,
+      customEndTime: us.customEndTime ? us.customEndTime.toISOString() : null,
+      shift: {
+        ...us.shift,
+        startTime: us.shift.startTime.toISOString(),
+        endTime: us.shift.endTime.toISOString(),
+      },
+    }));
+
+    const body = { message: "User shifts retrieved successfully.", data };
+    if (wantOt) {
+      body.otProjection = await buildOtProjection({
+        companyId,
+        from,
+        to,
+        departmentId: departmentId ? String(departmentId) : null,
+      });
+    }
+    return res.status(200).json(body);
+  } catch (error) {
+    console.error("[BB-135] Error fetching shifts in range:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
 const getCompanyScheduleStats = async (req, res) => {
   try {
     const { companyId } = req.user;
@@ -438,6 +525,7 @@ module.exports = {
   getEmployeeShifts,
   getBulkEmployeeShifts,
   getCompanyScheduleStats,
+  getShiftsInRange, // BB-135
   updateUserShift,
   deleteUserShift,
 };
