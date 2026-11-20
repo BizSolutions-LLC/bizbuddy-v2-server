@@ -102,6 +102,8 @@ exports.getSettings = async (req, res) => {
         taskReportEnabled:            true, // BB-129
         taskReportMode:               true, // BB-129 phase 1
         taskReportFormWindowHours:    true, // BB-129 phase 2
+        breadcrumbsEnabled:           true,
+        breadcrumbIntervalMinutes:    true,
         ...COMPANY_CREDIT_SELECT,
       },
     });
@@ -126,6 +128,13 @@ exports.getSettings = async (req, res) => {
 
     delete formatted.timeZone;
     delete formatted.companyCutoffSettings;
+
+    formatted.breadcrumbsEnabled = company.breadcrumbsEnabled === true;
+    const breadcrumbInterval = company.breadcrumbIntervalMinutes;
+    formatted.breadcrumbIntervalMinutes =
+      Number.isInteger(breadcrumbInterval) && breadcrumbInterval >= 1
+        ? breadcrumbInterval
+        : 5;
 
     formatted.isBNC = BNC_COMPANY_IDS.has(company.id);
 

@@ -212,16 +212,26 @@ const timeIn = async (req, res) => {
       },
     });
 
-    // Register in LiveUser table for auto clock-out tracking (non-fatal)
-    createLiveUser(userId, newTimeLog.id, actualTimeIn).catch(() => {});
+    let collectUntil = null;
+    try {
+      await createLiveUser(userId, newTimeLog.id, actualTimeIn);
+      const live = await prisma.liveUser.findUnique({
+        where: { userId },
+        select: { closeAt: true },
+      });
+      collectUntil = live && live.closeAt ? live.closeAt.toISOString() : null;
+    } catch (liveErr) {
+      console.error("createLiveUser failed:", liveErr);
+    }
 
     getIO()
       .to(userId)
       .emit("timeLogUpdated", { type: "timeIn", data: newTimeLog });
 
-    return res
-      .status(201)
-      .json({ message: "Time in recorded successfully.", data: newTimeLog });
+    return res.status(201).json({
+      message: "Time in recorded successfully.",
+      data: { ...newTimeLog, collectUntil },
+    });
   } catch (err) {
     console.error("Error in timeIn:", err);
     return res.status(500).json({ message: "Internal server error." });
@@ -554,6 +564,13 @@ const getUserTimeLogs = async (req, res) => {
       });
     }
 
+    const liveUser = await prisma.liveUser.findUnique({
+      where: { userId },
+      select: { closeAt: true, timeLogId: true },
+    });
+    const collectUntil =
+      liveUser && liveUser.closeAt ? liveUser.closeAt.toISOString() : null;
+
     // ── Shape response ────────────────────────────────────────────────────────
     const isBnC = BNC_COMPANY_IDS.has(req.user.companyId);
     const data = logs.map((l) => {
@@ -585,6 +602,7 @@ const getUserTimeLogs = async (req, res) => {
       approvals:       undefined,
       overtime:        isBnC ? undefined : l.overtime,
       shiftName:       shiftNameMap[moment.tz(l.timeIn, tz).format("YYYY-MM-DD")] ?? null,
+      collectUntil:    l.status === true && liveUser && liveUser.timeLogId === l.id ? collectUntil : null,
       };
     });
 

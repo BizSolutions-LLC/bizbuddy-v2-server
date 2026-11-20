@@ -9,7 +9,7 @@
     "seed": "node src/prisma/seed.js",
     "prisma:sync": "prisma db push --accept-data-loss && prisma generate",
     "postinstall": "prisma generate",
-    "test": "node --test tests/mobileDeviceLogin.test.js tests/clockInReminderWorker.test.js tests/punchTypeUtils.test.js tests/disbursementService.test.js tests/facePhoto.test.js"
+    "test": "node --test tests/mobileDeviceLogin.test.js tests/clockInReminderWorker.test.js tests/punchTypeUtils.test.js tests/disbursementService.test.js tests/facePhoto.test.js tests/locationBreadcrumbRules.test.js"
   },
   "prisma": {
     "schema": "src/prisma/schema.prisma",
