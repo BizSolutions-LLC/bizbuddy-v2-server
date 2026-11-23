@@ -1,6 +1,6 @@
 {
   "name": "server",
-  "version": "2.11.20",
+  "version": "2.11.21",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {

@@ -71,6 +71,18 @@ app.use(requestLogger);
 app.use((req, res, next) => {
   if (req.originalUrl.startsWith("/api/payments/stripe-webhook")) {
     next();
+  } else if (req.originalUrl.startsWith("/api/public/contact")) {
+    // BB-145: public contact form, small bodies only. A body that is too big
+    // or isn't JSON gets the form's own error shape (fixed text, no echo).
+    express.json({ limit: "16kb" })(req, res, (err) => {
+      if (!err) return next();
+      const tooBig = err.type === "entity.too.large";
+      return res.status(400).json({
+        code: "VALIDATION_ERROR",
+        message: "Please check the highlighted fields.",
+        fields: tooBig ? { message: "Keep your message under 5,000 characters." } : {},
+      });
+    });
   } else if (req.originalUrl.startsWith("/api/schedule-import/confirm")) {
     // BB-103: the confirm body carries every preview item back (up to a few MB).
     express.json({ limit: "5mb" })(req, res, next);

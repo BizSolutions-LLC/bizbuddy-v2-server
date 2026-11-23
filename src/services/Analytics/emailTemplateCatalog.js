@@ -9,11 +9,14 @@
 //
 // BB-144: all twelve use the shared design (src/emails/templates); the keys and
 // labels below are unchanged so the System Admin page keeps working.
+// BB-145: + CONTACT_FORM (website contact form, sent to the test address
+// instead of CONTACT_FORM_TO).
 
 const { sendMail } = require("@utils/mailer");
 const { sendEmail } = require("@services/emailService");
 const { buildWelcomeEmail } = require("@emails/welcomeEmail");
 const { links } = require("@emails/renderEmail");
+const { sendContactEmail } = require("@services/Public/contactFormService");
 
 const COMPANY = "BizBuddy Demo Co.";
 
@@ -177,6 +180,25 @@ const TEMPLATES = [
       absent: [{ name: "Smith, John", detail: "Driver AM · 6:45 AM", status: "No-show" }],
       hours_today: "174.5h", overtime_hours: "2.4h (est.)", review_url: links.companyPunchLogs(),
     }),
+  },
+  {
+    key: "CONTACT_FORM",
+    label: "Website contact form (team inbox)",
+    from: "no-reply",
+    usedBy: "Landing page contact form (BB-145)",
+    send: async (to) => {
+      await sendContactEmail(
+        {
+          name: "Jane Visitor",
+          email: "jane.visitor@example.com",
+          company: "Acme Home Care",
+          phone: "+1 (555) 010-2030 x12",
+          teamSize: "25",
+          message: "Hi, we'd like a quote for 25 people across two sites.\nCan someone call us this week?\n\nThanks,\nJane",
+        },
+        { to: [to] },
+      );
+    },
   },
 ];
 

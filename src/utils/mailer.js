@@ -54,6 +54,9 @@ notificationTransporter.verify((error, success) => {
  * @param {string} options.text - Plain text content (optional)
  * @param {boolean} options.isNotification - Use notification email (default: false)
  * @param {string} options.from - Custom from address (optional)
+ * @param {string|Object} options.replyTo - Reply-To (optional; BB-145 contact form:
+ *   { name, address } so nodemailer never parses visitor text as an address list)
+ * @param {string|string[]} options.bcc - hidden copies (optional; BB-145)
  * @param {Object} options.log - BB-140: how to log it (all optional):
  *   { type, notificationType, companyId, userId, triggeredBy, metadata,
  *     redact: [values to hide in the stored copy: passwords, codes, tokens] }
@@ -63,7 +66,7 @@ notificationTransporter.verify((error, success) => {
  * never blocks or fails the email. Inside a System Admin test send
  * (utils/emailContext isTest) the subject gets a "[TEST] " prefix.
  */
-async function sendMail({ to, subject, html, text, isNotification = false, from, log = {} }) {
+async function sendMail({ to, subject, html, text, isNotification = false, from, replyTo, bcc, log = {} }) {
   // Choose transporter
   const transporter = isNotification ? notificationTransporter : defaultTransporter;
 
@@ -77,7 +80,9 @@ async function sendMail({ to, subject, html, text, isNotification = false, from,
 
   // Lazy: the log service loads Prisma; keep this util light for scripts.
   const { recordEmail } = require("@services/Analytics/emailLogService");
-  const base = { to, from: fromAddress, subject: finalSubject, html, text, log };
+  // Hidden copies are logged as recipients too (the stored copy lists them).
+  const loggedTo = bcc ? [].concat(to, bcc).filter(Boolean) : to;
+  const base = { to: loggedTo, from: fromAddress, subject: finalSubject, html, text, log };
 
   let info;
   try {
@@ -87,6 +92,8 @@ async function sendMail({ to, subject, html, text, isNotification = false, from,
       subject: finalSubject,
       html,
       text,
+      ...(replyTo ? { replyTo } : {}),
+      ...(bcc && [].concat(bcc).length ? { bcc } : {}),
     });
   } catch (error) {
     await recordEmail({ ...base, status: "failed", error });

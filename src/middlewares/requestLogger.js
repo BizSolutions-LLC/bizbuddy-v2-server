@@ -48,8 +48,13 @@ function sanitizeObject(obj) {
 // POST /api/timelogs/location-breadcrumbs, body { samples: [...] }.
 const BREADCRUMB_PATH = /^\/api\/timelogs\/location-breadcrumbs\/?(\?|$)/;
 
+// BB-145: the public contact form's message is kept only in the Emails log
+// (BB-140), never copied into RequestLog. IP, time and status are still logged.
+const CONTACT_PATH = /^\/api\/public\/contact\/?(\?|$)/;
+
 function loggedBody(req) {
   if (req.method !== "POST" && req.method !== "PUT" && req.method !== "PATCH") return null;
+  if (CONTACT_PATH.test(req.originalUrl || req.url || "")) return { contactForm: "[not stored]" };
   if (BREADCRUMB_PATH.test(req.originalUrl || req.url || "")) {
     const samples = req.body?.samples;
     return { samples: Array.isArray(samples) ? samples.length : null };
