@@ -164,6 +164,180 @@ async function calcRequestedHours(userId, startISO, endISO, options = {}) {
 }
 
 /**
+ * BB-124: the employee's punches that overlap the time a leave would cover.
+ *
+ * Each day's leave window follows the same branches as calcDailyHours, so we
+ * only compare against time that is actually charged:
+ *   - a day with plotted shift(s): one window per shift NOT deselected
+ *     (excludeShiftIds), read in the shift's own zone (BB-122 rule);
+ *     crossesMidnight shifts run into the next day. The entered
+ *     fromTime/toTime is ignored on these days, as it is for the hours.
+ *   - an unplotted Sat/Sun with includeWeekends=false: no window (0h).
+ *   - any other day: the entered time window (company zone) if given, else
+ *     the whole calendar day.
+ *
+ * Display: the *Local strings are written in the zone the day's leave time
+ * belongs to (the shift's zone on shift days, else the company zone), with
+ * `timeZone` + `zoneLabel` on each item. A company whose zone differs from
+ * its shifts' zone (BizSolutions LLC: company Los Angeles, shifts Manila)
+ * would otherwise see the times a calendar day off from the leave date.
+ *
+ * Punches:
+ *   - every TimeLog of the employee (TimeLog.status only means "still clocked
+ *     in"); an open punch (no timeOut) counts as running until now.
+ *   - a punch whose cutoff approvals exist and are ALL "excluded" pays 0h and
+ *     is ignored (user decision 2026-11-23).
+ * Overlap is strict: a punch ending 12:30 and a leave starting 12:30 is fine.
+ *
+ * @returns {Promise<Array>} one entry per (day, punch) pair, in date order.
+ *   Empty = no overlap.
+ */
+async function findLeavePunchOverlaps(userId, startISO, endISO, options = {}) {
+  const {
+    requestedStartTime, requestedEndTime, excludeShiftIds, includeWeekends = true, now = new Date(),
+  } = options;
+  const excludeSet = new Set(excludeShiftIds || []);
+
+  const user = await prisma.user.findUnique({
+    where:  { id: userId },
+    select: { company: { select: { timeZone: true } } },
+  });
+  const tz = user?.company?.timeZone || "America/Los_Angeles";
+
+  const startDate = moment.tz(startISO, tz).startOf("day");
+  const endDate   = moment.tz(endISO,   tz).startOf("day");
+
+  const userShifts = await prisma.userShift.findMany({
+    where: {
+      userId,
+      assignedDate: { gte: startDate.toDate(), lte: endDate.clone().endOf("day").toDate() },
+      status: { not: "cancelled" },
+    },
+    select: {
+      id:           true,
+      assignedDate: true,
+      shift: { select: { startTime: true, endTime: true, crossesMidnight: true, timeZone: true } },
+    },
+  });
+
+  // Same day grouping as calcDailyHours: assignedDate is a plain @db.Date.
+  const shiftsByDate = new Map();
+  for (const us of userShifts) {
+    if (!us.shift) continue;
+    const dateStr = us.assignedDate.toISOString().split("T")[0];
+    if (!shiftsByDate.has(dateStr)) shiftsByDate.set(dateStr, []);
+    shiftsByDate.get(dateStr).push(us);
+  }
+
+  // Time columns are @db.Time anchored to 1970-01-01 UTC — read UTC h:m:s.
+  const hhmmss = (t) => {
+    const d = new Date(t);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+  };
+  const at = (dateStr, t, zone) => moment.tz(`${dateStr} ${hhmmss(t)}`, "YYYY-MM-DD HH:mm:ss", zone);
+
+  // ── 1. Leave windows per day ────────────────────────────────────────────────
+  const windows = [];
+  const cursor = startDate.clone();
+  while (cursor.isSameOrBefore(endDate, "day")) {
+    const dateStr   = cursor.format("YYYY-MM-DD");
+    const dayShifts = shiftsByDate.get(dateStr);
+
+    if (dayShifts) {
+      for (const us of dayShifts) {
+        if (excludeSet.has(us.id)) continue;
+        const zone = us.shift.timeZone && moment.tz.zone(us.shift.timeZone) ? us.shift.timeZone : tz;
+        const from = at(dateStr, us.shift.startTime, zone);
+        let to     = at(dateStr, us.shift.endTime, zone);
+        if (us.shift.crossesMidnight || !to.isAfter(from)) to = to.add(1, "day");
+        windows.push({ date: dateStr, from: from.toDate(), to: to.toDate(), zone });
+      }
+    } else if (includeWeekends === false && (cursor.day() === 0 || cursor.day() === 6)) {
+      // 0h day — nothing charged, nothing to overlap.
+    } else if (requestedStartTime && requestedEndTime) {
+      const from = at(dateStr, requestedStartTime, tz);
+      let to     = at(dateStr, requestedEndTime, tz);
+      if (!to.isAfter(from)) to = to.add(1, "day");
+      windows.push({ date: dateStr, from: from.toDate(), to: to.toDate(), zone: tz });
+    } else {
+      windows.push({
+        date: dateStr,
+        from: cursor.clone().startOf("day").toDate(),
+        to:   cursor.clone().add(1, "day").startOf("day").toDate(),
+        zone: tz,
+      });
+    }
+    cursor.add(1, "day");
+  }
+  if (!windows.length) return [];
+
+  // ── 2. Punches touching the overall span ───────────────────────────────────
+  const spanFrom = new Date(Math.min(...windows.map((w) => w.from.getTime())));
+  const spanTo   = new Date(Math.max(...windows.map((w) => w.to.getTime())));
+  const punches = await prisma.timeLog.findMany({
+    where: {
+      userId,
+      timeIn: { lt: spanTo },
+      OR: [{ timeOut: null }, { timeOut: { gt: spanFrom } }],
+    },
+    select: { id: true, timeIn: true, timeOut: true, approvals: { select: { status: true } } },
+    orderBy: { timeIn: "asc" },
+  });
+  const counted = punches.filter((p) =>
+    !(p.approvals.length > 0 && p.approvals.every((a) => a.status === "excluded"))
+  );
+
+  // ── 3. Overlaps ─────────────────────────────────────────────────────────────
+  const fmt = (d, zone) => moment(d).tz(zone).format("YYYY-MM-DD h:mm A");
+  const out = [];
+  for (const w of windows) {
+    for (const p of counted) {
+      const pEnd = p.timeOut || now;
+      if (p.timeIn < w.to && pEnd > w.from) {
+        out.push({
+          date:           w.date,
+          timeLogId:      p.id,
+          punchIn:        p.timeIn,
+          punchOut:       p.timeOut,
+          stillClockedIn: !p.timeOut,
+          leaveFrom:      w.from,
+          leaveTo:        w.to,
+          timeZone:       w.zone,
+          zoneLabel:      zoneLabel(w.zone),
+          punchInLocal:   fmt(p.timeIn, w.zone),
+          punchOutLocal:  p.timeOut ? fmt(p.timeOut, w.zone) : null,
+          leaveFromLocal: fmt(w.from, w.zone),
+          leaveToLocal:   fmt(w.to, w.zone),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * BB-124: one readable sentence for a findLeavePunchOverlaps() result.
+ */
+// "Asia/Manila" → "Manila", "America/Los_Angeles" → "Los Angeles".
+function zoneLabel(zone) {
+  return String(zone || "").split("/").pop().replace(/_/g, " ");
+}
+
+function describeLeavePunchOverlaps(overlaps) {
+  // Drop the date prefix when it is the leave day itself.
+  const t = (local, date) => (local && local.startsWith(`${date} `) ? local.slice(date.length + 1) : local);
+  const parts = overlaps.map((o) =>
+    o.stillClockedIn
+      ? `${o.date}: you are clocked in since ${t(o.punchInLocal, o.date)} (${o.zoneLabel} time)`
+      : `${o.date}: punch ${t(o.punchInLocal, o.date)} – ${t(o.punchOutLocal, o.date)}, ` +
+        `leave ${t(o.leaveFromLocal, o.date)} – ${t(o.leaveToLocal, o.date)} (${o.zoneLabel} time)`
+  );
+  return `This leave overlaps time you already punched (${parts.join("; ")}). ` +
+    "Clock out first, choose times outside the punch, or ask your supervisor to correct the punch.";
+}
+
+/**
  * Prisma `where` fragment scoping which employees' Leave rows a management
  * user (admin/superadmin/supervisor) may view. Admins/superadmins see the
  * whole company; supervisors are restricted to their own department. A
@@ -192,4 +366,10 @@ function leaveVisibilityWhere(companyId, role, actingUserId, departmentId, relat
   return { [relationField]: { companyId } };
 }
 
-module.exports = { calcDailyHours, calcRequestedHours, leaveVisibilityWhere };
+module.exports = {
+  calcDailyHours,
+  calcRequestedHours,
+  leaveVisibilityWhere,
+  findLeavePunchOverlaps,
+  describeLeavePunchOverlaps,
+};

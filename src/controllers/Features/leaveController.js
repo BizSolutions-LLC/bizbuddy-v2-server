@@ -2,7 +2,10 @@
 
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
-const { calcDailyHours, calcRequestedHours, leaveVisibilityWhere } = require("@utils/leaveUtils");
+const {
+  calcDailyHours, calcRequestedHours, leaveVisibilityWhere,
+  findLeavePunchOverlaps, describeLeavePunchOverlaps,
+} = require("@utils/leaveUtils");
 const { previewLeaveApproval, applyLeaveApproval } = require("@services/Leave/leaveApprovalService");
 const { isTracked, fyLabel, dateColStr } = require("@services/Leave/leaveCreditService");
 const { createNotification } = require("@services/notificationService");
@@ -311,6 +314,22 @@ const submitLeaveRequest = async (req, res) => {
   }
   const includeWeekendsFlag = includeWeekends === false ? false : true;
 
+  // BB-124: refuse a leave that covers time the employee already punched
+  // (incl. still clocked in). Same window as the hours charged — see
+  // findLeavePunchOverlaps. One overlapping day blocks the whole request.
+  const punchOverlaps = await findLeavePunchOverlaps(req.user.id, fromDateStr, toDateStr, {
+    requestedStartTime,
+    requestedEndTime,
+    excludeShiftIds: sanitizedExcludedShiftIds,
+    includeWeekends: includeWeekendsFlag,
+  });
+  if (punchOverlaps.length > 0)
+    return res.status(409).json({
+      code:      "LEAVE_OVERLAPS_PUNCH",
+      message:   describeLeavePunchOverlaps(punchOverlaps),
+      conflicts: punchOverlaps,
+    });
+
   const data = await prisma.leave.create({
     data: {
       userId:     req.user.id,
@@ -392,6 +411,23 @@ const submitLeaveRequest = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// BB-124: punches overlapping an existing leave's charged time — warning
+// for approvers. Never throws: a failed check returns [] so it can't break
+// approve/preview.
+async function _leavePunchOverlaps(leave) {
+  try {
+    return await findLeavePunchOverlaps(leave.userId, leave.startDate, leave.endDate, {
+      requestedStartTime: leave.requestedStartTime,
+      requestedEndTime:   leave.requestedEndTime,
+      excludeShiftIds:    Array.isArray(leave.excludedShiftIds) ? leave.excludedShiftIds : [],
+      includeWeekends:    leave.includeWeekends !== false,
+    });
+  } catch (err) {
+    console.error("❌ BB-124 punch overlap check failed:", err);
+    return [];
+  }
+}
 
 // Loads a leave + the requester info needed for eligibility checks and
 // notifications. Returns null if no actionable (pending/pending_secondary)
@@ -582,7 +618,9 @@ const approveLeave = async (req, res) => {
     getIO().to(leave.userId).emit("leaveBalanceUpdated", { leaveId, policyId: policy.id });
   } catch (_) {}
 
-  return res.json({ data: _format(data) });
+  // BB-124: warning only, never blocks the approval.
+  const punchOverlaps = await _leavePunchOverlaps(leave);
+  return res.json({ data: _format(data), punchOverlaps });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -757,7 +795,9 @@ const previewApproval = async (req, res) => {
     return res.status(400).json({ message: "Leave policy not configured." });
 
   const preview = await previewLeaveApproval(leave, policy);
-  res.json({ data: preview });
+  // BB-124: warning only — the approver still decides.
+  const punchOverlaps = await _leavePunchOverlaps(leave);
+  res.json({ data: { ...preview, punchOverlaps } });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1421,7 +1461,16 @@ const getAffectedSchedules = async (req, res) => {
   }
   data.sort((a, b) => a.assignedDate - b.assignedDate);
 
-  return res.json({ data });
+  // BB-124: punches that would make submit refuse this request, so the form
+  // can warn first. Deselected shifts aren't known here (submit-only input),
+  // so this may list a punch that a deselection would clear.
+  const punchOverlaps = await findLeavePunchOverlaps(req.user.id, startDate, endDate, {
+    requestedStartTime,
+    requestedEndTime,
+    includeWeekends: includeWeekendsFlag,
+  }).catch(() => []);
+
+  return res.json({ data, punchOverlaps });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
