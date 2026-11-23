@@ -60,8 +60,10 @@ const employeeMapRoutes = require("@routes/Features/employeeMapRoutes"); // BB-1
 const punchFacePhotoRoutes = require("@routes/Features/punchFacePhotoRoutes"); // BB-141
 const employeeLoginRoutes = require("@routes/Security/employeeLoginRoutes"); // BB-137
 
+const contactRoutes = require("@routes/Public/contactRoutes"); // BB-145 (public, no sign-in)
 const testRoutes = require("@routes/testRoutes");
 
+router.use("/public", contactRoutes); // BB-145: POST /api/public/contact
 router.use("/account", accountRoutes);
 router.use("/company", companyRoutes);
 router.use("/departments", departmentsRoutes);

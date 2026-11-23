@@ -102,6 +102,14 @@
       "subject": "Evening attendance · {{report_date}}: {{open_count}} still clocked in",
       "preheader": "{{worked_count}} worked today, {{auto_count}} auto clock-outs, {{overtime_hours}} overtime.",
       "sent_when": "Every evening, at the time set for attendance reports."
+    },
+    {
+      "key": "contact-form",
+      "name": "Website contact form (team inbox)",
+      "file": "contact-form.html",
+      "subject": "Website inquiry: {{inquirer}}",
+      "preheader": "{{name}}{{#if company}} ({{company}}){{/if}} · {{email}}",
+      "sent_when": "BB-145: a visitor sends the contact form on mybizbuddy.co. Goes to CONTACT_FORM_TO only, Reply-To = the visitor."
     }
   ]
 }
