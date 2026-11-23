@@ -9,11 +9,10 @@
 const bcrypt = require("bcryptjs");
 const { prisma } = require("@config/connection");
 const { sendMail } = require("@utils/mailer");
-const { renderWelcome } = require("@emails/renderTemplate");
+const { buildWelcomeEmail } = require("@emails/welcomeEmail"); // BB-144
 const { BBUDDY_EMAIL, BBUDDY_PASSWORD_HASH } = require("@config/env");
 const { createSystemAgentForCompany } = require("@services/systemAgentService");
 
-const WELCOME_SUBJECT = "Welcome to BizBuddy — your account is ready";
 const OPTIONAL_FIELDS = ["dba", "phoneNumber", "addressLine1", "addressLine2", "city", "state", "postalCode", "country", "currency"];
 
 function httpError(status, message, details) {
@@ -213,11 +212,18 @@ async function sendWelcome({ ownerFirstName, companyName, ownerEmail, ownerPassw
   // BB-140: logged centrally by sendMail (sent or failed); the password is hidden
   // in the stored copy.
   try {
+    const { subject, html, text } = await buildWelcomeEmail({
+      firstName: ownerFirstName,
+      companyName,
+      email: ownerEmail,
+      password: ownerPassword,
+      role: "admin",
+    });
     await sendMail({
       to: ownerEmail,
-      subject: WELCOME_SUBJECT,
-      html: renderWelcome({ firstName: ownerFirstName, companyName, email: ownerEmail, password: ownerPassword }),
-      text: `Hi ${ownerFirstName}, your BizBuddy admin account for ${companyName} has been created.\nEmail: ${ownerEmail}\nPassword: ${ownerPassword}`,
+      subject,
+      html,
+      text,
       log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId, userId: ownerId, triggeredBy: "system-admin:provision-company", redact: [ownerPassword] },
     });
     return "sent";

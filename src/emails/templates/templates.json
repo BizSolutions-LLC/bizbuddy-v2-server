@@ -1,0 +1,107 @@
+{
+  "source": "docs/BizBuddy-email-templates.zip (2026-11-23), adapted for BB-144",
+  "footer_defaults": {
+    "support_email": "info@bizsolutions.us",
+    "support_phone": "+1 833-249-7418",
+    "support_phone_link": "+18332497418",
+    "app_url": "https://mybizbuddy.co/"
+  },
+  "templates": [
+    {
+      "key": "welcome",
+      "name": "Welcome",
+      "file": "welcome.html",
+      "subject": "Welcome to BizBuddy, {{first_name}}: your login details",
+      "preheader": "Your account for {{company_name}} is ready. Here’s how to sign in.",
+      "sent_when": "An admin creates an employee account."
+    },
+    {
+      "key": "password-reset",
+      "name": "Password reset instructions",
+      "file": "password-reset.html",
+      "subject": "Reset your BizBuddy password",
+      "preheader": "Use this link within {{expires_in}} to choose a new password.",
+      "sent_when": "A user taps “Forgot password”."
+    },
+    {
+      "key": "password-changed",
+      "name": "Password changed",
+      "file": "password-changed.html",
+      "subject": "Security alert: your BizBuddy password was changed",
+      "preheader": "If this was you, there’s nothing to do.",
+      "sent_when": "Right after any password change or reset."
+    },
+    {
+      "key": "account-deletion-code",
+      "name": "Account deletion code",
+      "file": "account-deletion-code.html",
+      "subject": "{{code}} is your code to delete your BizBuddy account",
+      "preheader": "Enter this code to confirm. Deleting your account can’t be undone.",
+      "sent_when": "A user starts deleting their account."
+    },
+    {
+      "key": "missed-clock-in",
+      "name": "Missed clock-in",
+      "file": "missed-clock-in.html",
+      "subject": "You haven’t clocked in for {{shift_name}}",
+      "preheader": "Your shift started at {{shift_start}}. Clock in now, or tell {{#if supervisor_name}}{{supervisor_name}}{{else}}your supervisor{{/if}} if you’re off.",
+      "sent_when": "A scheduled shift starts with no clock-in, after the grace period."
+    },
+    {
+      "key": "missed-clock-out",
+      "name": "Missed clock-out",
+      "file": "missed-clock-out.html",
+      "subject": "No clock-out recorded for {{shift_date}}",
+      "preheader": "{{#if shift_name}}Your {{shift_name}} shift ended at {{shift_end}}. {{/if}}Add your clock-out time so you’re paid correctly.",
+      "sent_when": "A shift ends and the employee is still clocked in, or has no clock-out."
+    },
+    {
+      "key": "clock-out-reminder",
+      "name": "Clock-out reminder",
+      "file": "clock-out-reminder.html",
+      "subject": "Reminder: automatic clock-out at {{auto_clock_out}}",
+      "preheader": "Your shift ends at {{shift_end}}. If you’re still clocked in, we’ll clock you out at {{auto_clock_out}}.",
+      "sent_when": "A set time before the automatic clock-out runs."
+    },
+    {
+      "key": "auto-clock-out-employee",
+      "name": "Automatic clock-out (employee)",
+      "file": "auto-clock-out-employee.html",
+      "subject": "You were clocked out automatically at {{auto_clock_out}}",
+      "preheader": "Check the time. If you worked a different time, send a correction{{#if correction_deadline}} by {{correction_deadline}}{{/if}}.",
+      "sent_when": "The automatic clock-out runs."
+    },
+    {
+      "key": "auto-clock-out-supervisor",
+      "name": "Automatic clock-out (supervisor)",
+      "file": "auto-clock-out-supervisor.html",
+      "subject": "{{employee_name}} was clocked out automatically on {{shift_date}}",
+      "preheader": "Clock-out set by the system at {{auto_clock_out}}. Confirm the real time before approving.",
+      "sent_when": "The automatic clock-out runs (copy to the employee’s supervisor)."
+    },
+    {
+      "key": "time-log-correction",
+      "name": "Time log correction",
+      "file": "time-log-correction.html",
+      "subject": "Your time log for {{shift_date}} was corrected",
+      "preheader": "{{edited_by}} changed your {{field_changed}}. Check the new time.",
+      "sent_when": "A supervisor or admin edits an employee’s punch."
+    },
+    {
+      "key": "attendance-morning",
+      "name": "Morning attendance report",
+      "file": "attendance-morning.html",
+      "subject": "Morning attendance · {{report_date}}: {{missing_count}} not clocked in",
+      "preheader": "{{clocked_in_count}} of {{scheduled_count}} clocked in, {{late_count}} late.",
+      "sent_when": "Every morning, at the time set for attendance reports."
+    },
+    {
+      "key": "attendance-evening",
+      "name": "Evening attendance report",
+      "file": "attendance-evening.html",
+      "subject": "Evening attendance · {{report_date}}: {{open_count}} still clocked in",
+      "preheader": "{{worked_count}} worked today, {{auto_count}} auto clock-outs, {{overtime_hours}} overtime.",
+      "sent_when": "Every evening, at the time set for attendance reports."
+    }
+  ]
+}

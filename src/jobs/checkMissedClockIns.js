@@ -119,6 +119,13 @@ async function checkMissedClockIns() {
             // Employee missed clock-in!
             console.log(`⚠️  Missed clock-in: ${userShift.user.username} (${userShift.shift.shiftName})`);
 
+            // BB-144: shift end, date and minutes late for the email.
+            const endValue = userShift.customEndTime || userShift.shift.endTime;
+            const shiftEndTime = endValue ? combineDateWithTime(userShift.assignedDate, endValue, timezone) : null;
+            if (shiftEndTime && userShift.shift.crossesMidnight && shiftEndTime.isBefore(shiftStartTime)) {
+              shiftEndTime.add(1, 'day');
+            }
+
             // BB-117: sent once per scheduled shift — the dedupe key on the inbox
             // row replaces the old "anything in the last 2 hours" lookup.
             await notifyMissedClockIn(
@@ -130,6 +137,9 @@ async function checkMissedClockIns() {
                   shiftName: userShift.shift.shiftName,
                   scheduledStart: userShift.assignedDate,
                   startTime: shiftStartTime.format('h:mm A'),
+                  endTime: shiftEndTime?.isValid() ? shiftEndTime.format('h:mm A') : null,
+                  shiftDate: shiftStartTime.format('ddd, MMM D'),
+                  minutesLate: now.diff(shiftStartTime, 'minutes'),
                 },
               },
               userShift.shift,

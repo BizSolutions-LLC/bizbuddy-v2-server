@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { sendMail } = require("@utils/mailer");
-const { renderWelcome } = require("@emails/renderTemplate");
+const { buildWelcomeEmail } = require("@emails/welcomeEmail"); // BB-144
 const { validateSupervisorId } = require("@utils/supervisorValidation");
 
 /**
@@ -295,17 +295,20 @@ const createEmployee = async (req, res) => {
         where: { id: targetCompanyId },
         select: { name: true },
       });
-      const html = renderWelcome({
+      const { subject, html, text } = await buildWelcomeEmail({
         firstName: firstName.trim(),
         companyName: company?.name || "BizBuddy",
         email: cleanedEmail,
         password,
+        createdById: req.user?.id,
+        department: newEmployee.department?.name || null,
+        role: newEmployee.role,
       });
       await sendMail({
         to: cleanedEmail,
-        subject: "Welcome to BizBuddy — your account is live",
+        subject,
         html,
-        text: `Hi ${firstName.trim()}, your BizBuddy account is ready.\nEmail: ${cleanedEmail}\nPassword: ${password}`,
+        text,
         // BB-140: logged centrally; the password is hidden in the stored copy
         log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId: targetCompanyId, userId: newEmployee.id, triggeredBy: req.user?.id ? `user:${req.user.id}` : null, redact: [password] },
       });
@@ -879,6 +882,7 @@ const bulkCreateEmployees = async (req, res) => {
             hireDate: true,
             employeeId: true,
             profile: { select: { firstName: true, lastName: true } },
+            department: { select: { name: true } }, // BB-144: welcome email
           },
         });
 
@@ -886,17 +890,20 @@ const bulkCreateEmployees = async (req, res) => {
 
         // Send credentials email (non-blocking)
         try {
-          const html = renderWelcome({
+          const { subject, html, text } = await buildWelcomeEmail({
             firstName: firstName.trim(),
             companyName,
             email: cleanedEmail,
             password,
+            createdById: req.user?.id,
+            department: newEmployee.department?.name || null,
+            role: newEmployee.role,
           });
           await sendMail({
             to: cleanedEmail,
-            subject: "Welcome to BizBuddy — your account is ready",
+            subject,
             html,
-            text: `Hi ${firstName.trim()}, your BizBuddy account has been created.\nEmail: ${cleanedEmail}\nPassword: ${password}`,
+            text,
             // BB-140: logged centrally (sent or failed); the password is hidden in the stored copy
             log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId: targetCompanyId, userId: newEmployee.id, triggeredBy: req.user?.id ? `user:${req.user.id}` : null, redact: [password] },
           });

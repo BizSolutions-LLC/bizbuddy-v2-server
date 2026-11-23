@@ -6,6 +6,8 @@ const { sendEmail } = require("./emailService");
 const { notifyUser, notifyManagement } = require("./socketService");
 const { getIO } = require("@config/socket");
 const { targetRouteFor } = require("./notificationTargets");
+const { links } = require("@emails/renderEmail"); // BB-144
+const { fmtTime, fmtDay, fmtHours, firstNameOf, fullNameOf, correctionDeadline } = require("@emails/emailFormat"); // BB-144
 
 // ── BB-117: company prefix only when it helps ───────────────────────────────
 // "[Company] " is added only when the recipient's email also has an active
@@ -211,13 +213,15 @@ async function createNotification({
 }
 
 /**
- * Send email notification and log it
+ * Send email notification and log it.
+ * BB-144: templateKey = a template in src/emails/templates (templates.json);
+ * data = its variables. subject is optional (the template has one).
  */
 async function sendEmailNotification({
   to,
   subject,
-  templateName,
-  context,
+  templateKey,
+  data,
   notificationType,
   recipientUserId,
   companyId,
@@ -249,8 +253,8 @@ async function sendEmailNotification({
     const result = await sendEmail({
       to,
       subject,
-      templateName,
-      context,
+      templateKey,
+      data,
       log: { type: notificationType, notificationType, companyId, userId: recipientUserId, metadata },
     });
 
@@ -258,6 +262,19 @@ async function sendEmailNotification({
   } catch (error) {
     console.error("❌ Error sending email notification:", error);
     throw error;
+  }
+}
+
+// BB-144: supervisor's display name for an employee (EmploymentDetail.supervisorId).
+async function supervisorNameOf(userId) {
+  try {
+    const detail = await prisma.employmentDetail.findUnique({
+      where: { userId },
+      select: { supervisor: { select: { username: true, profile: { select: { firstName: true, lastName: true } } } } },
+    });
+    return detail?.supervisor ? fullNameOf(detail.supervisor) || null : null;
+  } catch {
+    return null;
   }
 }
 
@@ -288,17 +305,17 @@ async function notifyMissedClockIn(employee, shift, company) {
   if (created && company.notifyEmployeeMissedIn && user.email) {
     await sendEmailNotification({
       to: user.email,
-      subject: "⏰ Reminder: Missing Clock-In",
-      templateName: "missedClockIn",
-      context: {
-        employeeName:
-          `${user.profile?.firstName || ""} ${user.profile?.lastName || ""}`.trim() ||
-          user.username,
-        shiftName: shiftDetails.shiftName,
-        scheduledStart: shiftDetails.startTime,
-        currentTime: new Date().toLocaleTimeString("en-US"),
-        department: user.department?.name || "N/A",
-        appUrl: process.env.CLIENT_URL,
+      templateKey: "missed-clock-in",
+      data: {
+        company_name: company.name,
+        first_name: firstNameOf(user),
+        shift_name: shiftDetails.shiftName,
+        shift_start: shiftDetails.startTime,
+        shift_end: shiftDetails.endTime,
+        shift_date: shiftDetails.shiftDate,
+        minutes_late: shiftDetails.minutesLate,
+        supervisor_name: await supervisorNameOf(user.id),
+        clock_in_url: links.punch(),
       },
       notificationType: "MISSED_CLOCK_IN",
       recipientUserId: user.id,
@@ -310,9 +327,11 @@ async function notifyMissedClockIn(employee, shift, company) {
 
 /**
  * Notify employee about missed clock-out
+ * timeLog: { id, timeIn, expectedClockOut, hoursWorked, shift?: { name, start, end } }
  */
 async function notifyMissedClockOut(employee, timeLog, company) {
   const { user } = employee;
+  const tz = company.timeZone || "America/Los_Angeles";
 
   // Internal notification. BB-117: once per punch (dedupeKey), so deleting it in
   // the app or the job's next run doesn't send it again; the email goes out only
@@ -324,7 +343,7 @@ async function notifyMissedClockOut(employee, timeLog, company) {
     notificationCode: "MISSED_CLOCK_OUT",
     dedupeKey: timeLog.id ? `MISSED_CLOCK_OUT:${user.id}:${timeLog.id}` : null,
     title: "⏰ Missed Clock-Out",
-    message: `You haven't clocked out yet. Your shift ended at ${new Date(timeLog.expectedClockOut).toLocaleTimeString("en-US", { timeZone: company.timeZone || "America/Los_Angeles" })}.`,
+    message: `You haven't clocked out yet. Your shift ended at ${new Date(timeLog.expectedClockOut).toLocaleTimeString("en-US", { timeZone: tz })}.`,
     payload: {
       timeLogId: timeLog.id,
       clockInTime: timeLog.timeIn,
@@ -336,16 +355,17 @@ async function notifyMissedClockOut(employee, timeLog, company) {
   if (created && company.notifyEmployeeMissedOut && user.email) {
     await sendEmailNotification({
       to: user.email,
-      subject: "⏰ Reminder: Missing Clock-Out",
-      templateName: "missedClockOut",
-      context: {
-        employeeName:
-          `${user.profile?.firstName || ""} ${user.profile?.lastName || ""}`.trim() ||
-          user.username,
-        clockInTime: new Date(timeLog.timeIn).toLocaleTimeString("en-US", { timeZone: company.timeZone || "America/Los_Angeles" }),
-        expectedClockOut: new Date(timeLog.expectedClockOut).toLocaleTimeString("en-US", { timeZone: company.timeZone || "America/Los_Angeles" }),
-        hoursWorked: timeLog.hoursWorked,
-        appUrl: process.env.CLIENT_URL,
+      templateKey: "missed-clock-out",
+      data: {
+        company_name: company.name,
+        first_name: firstNameOf(user),
+        shift_date: fmtDay(timeLog.timeIn, tz),
+        shift_name: timeLog.shift?.name || null,
+        shift_start: timeLog.shift?.start || null,
+        shift_end: timeLog.shift?.end || null,
+        clock_in: fmtTime(timeLog.timeIn, tz),
+        correction_url: links.myPunchLogs(),
+        correction_deadline: await correctionDeadline({ companyId: company.id, departmentId: user.departmentId, at: timeLog.timeIn, tz }),
       },
       notificationType: "MISSED_CLOCK_OUT",
       recipientUserId: user.id,
@@ -368,25 +388,27 @@ const MANAGER_SELECT = {
   role: true,
   profile: { select: { firstName: true, lastName: true } },
 };
-const managerName = (m) => m.profile?.firstName?.trim() || m.username || "there";
 function companyReportDate(company, dateKey) {
   const tz = company.timeZone || "America/Los_Angeles";
   const day = dateKey ? moment.tz(dateKey, "YYYY-MM-DD", tz) : moment().tz(tz);
-  return { dateKey: day.format("YYYY-MM-DD"), reportDate: day.format("dddd, MMMM D, YYYY") };
+  return { dateKey: day.format("YYYY-MM-DD"), reportDate: day.format("ddd, MMM D") };
 }
+const REPORT_SCOPE = "All departments";
+const reportTimeOf = (company) => moment().tz(company.timeZone || "America/Los_Angeles").format("h:mm A");
 
-async function sendMorningReport(
-  companyId,
-  missedClockIns,
-  currentlyClockedIn,
-  options = {},
-) {
+/**
+ * BB-144: report = { scheduledCount, clockedInCount, missing: [{ name, detail, status }],
+ *                    late: [{ name, detail, status }] }  (built by jobs/sendMorningReport.js)
+ */
+async function sendMorningReport(companyId, report, options = {}) {
   const company = await prisma.company.findUnique({
     where: { id: companyId },
   });
 
   if (!company?.notifyAdminMissedClocks || company.isActive === false) return;
   const { dateKey, reportDate } = companyReportDate(company, options.dateKey);
+  const missing = report.missing || [];
+  const late = report.late || [];
 
   const managementUsers = await prisma.user.findMany({
     where: {
@@ -398,6 +420,20 @@ async function sendMorningReport(
     select: MANAGER_SELECT,
   });
 
+  const data = {
+    company_name: company.name,
+    report_date: reportDate,
+    report_time: reportTimeOf(company),
+    scope: REPORT_SCOPE,
+    scheduled_count: report.scheduledCount || 0,
+    clocked_in_count: report.clockedInCount || 0,
+    late_count: late.length,
+    missing_count: missing.length,
+    missing,
+    late,
+    roster_url: links.companyPunchLogs(),
+  };
+
   const emailPromises = managementUsers.map(async (manager) => {
     // Internal notification
     const created = await createNotification({
@@ -407,10 +443,12 @@ async function sendMorningReport(
       notificationCode: "DAILY_CLOCK_IN_REPORT",
       dedupeKey: `DAILY_CLOCK_IN_REPORT:${manager.id}:${dateKey}`,
       title: "📊 Morning Clock-In Report",
-      message: `${missedClockIns.length} employees missed clock-in. ${currentlyClockedIn.length} employees are currently clocked in.`,
+      message: `${missing.length} employees missed clock-in. ${data.clocked_in_count} of ${data.scheduled_count} scheduled have clocked in (${late.length} late).`,
       payload: {
-        missedCount: missedClockIns.length,
-        clockedInCount: currentlyClockedIn.length,
+        missedCount: missing.length,
+        clockedInCount: data.clocked_in_count,
+        scheduledCount: data.scheduled_count,
+        lateCount: late.length,
       },
     });
 
@@ -418,28 +456,16 @@ async function sendMorningReport(
     if (created && manager.email) {
       await sendEmailNotification({
         to: manager.email,
-        subject: `🔔 Morning Clock-In Report - ${company.name}`,
-        templateName: "morningReport",
-        context: {
-          managerName: managerName(manager),
-          companyName: company.name,
-          reportDate,
-          timeZone: company.timeZone || "America/Los_Angeles",
-          currentYear: new Date().getFullYear(),
-          missedClockIns,
-          currentlyClockedIn,
-          missedCount: missedClockIns.length,
-          clockedInCount: currentlyClockedIn.length,
-          showAllClear:
-            missedClockIns.length === 0 && currentlyClockedIn.length === 0, // ✅ KEY FIX
-          appUrl: process.env.CLIENT_URL,
-        },
+        templateKey: "attendance-morning",
+        data,
         notificationType: "DAILY_CLOCK_IN_REPORT",
         recipientUserId: manager.id,
         companyId,
         metadata: {
-          missedCount: missedClockIns.length,
-          clockedInCount: currentlyClockedIn.length,
+          missedCount: missing.length,
+          clockedInCount: data.clocked_in_count,
+          scheduledCount: data.scheduled_count,
+          lateCount: late.length,
         },
       });
     }
@@ -450,13 +476,11 @@ async function sendMorningReport(
 
 /**
  * Send daily evening report to management
+ * BB-144: report = { workedCount, hoursToday, overtimeHours,
+ *                    open / autoOut / absent: [{ name, detail, status }],
+ *                    overdueCount }  (built by jobs/sendEveningReport.js)
  */
-async function sendEveningReport(
-  companyId,
-  missedClockOuts,
-  stillClockedIn,
-  options = {},
-) {
+async function sendEveningReport(companyId, report, options = {}) {
   const { testEmail } = options;
 
   const company = await prisma.company.findUnique({
@@ -465,6 +489,10 @@ async function sendEveningReport(
 
   if (!company?.notifyAdminMissedClocks || company.isActive === false) return;
   const { dateKey, reportDate } = companyReportDate(company, options.dateKey);
+  const open = report.open || [];
+  const autoOut = report.autoOut || [];
+  const absent = report.absent || [];
+  const overdueCount = report.overdueCount || 0;
 
   // Get management users
   const managementUsers = await prisma.user.findMany({
@@ -477,19 +505,24 @@ async function sendEveningReport(
     select: MANAGER_SELECT,
   });
 
-  const emailContext = (manager) => ({
-    managerName: managerName(manager),
-    companyName: company.name,
-    reportDate,
-    timeZone: company.timeZone || "America/Los_Angeles",
-    currentYear: new Date().getFullYear(),
-    missedClockOuts,
-    stillClockedIn,
-    missedCount: missedClockOuts.length,
-    stillClockedInCount: stillClockedIn.length,
-    showAllClear: missedClockOuts.length === 0 && stillClockedIn.length === 0,
-    appUrl: process.env.CLIENT_URL,
-  });
+  const otHours = Number(report.overtimeHours) || 0;
+  const data = {
+    company_name: company.name,
+    report_date: reportDate,
+    report_time: reportTimeOf(company),
+    scope: REPORT_SCOPE,
+    worked_count: report.workedCount || 0,
+    open_count: open.length,
+    auto_count: autoOut.length,
+    absent_count: absent.length,
+    hours_today: fmtHours(report.hoursToday || 0),
+    // Not approved yet: hours beyond the schedule, so marked as an estimate.
+    overtime_hours: otHours > 0 ? `${fmtHours(otHours)} (est.)` : "0h",
+    open,
+    auto_out: autoOut,
+    absent,
+    review_url: links.companyPunchLogs(),
+  };
 
   const emailPromises = managementUsers.map(async (manager) => {
     // Internal notification — skip in test mode to avoid polluting the DB.
@@ -503,10 +536,12 @@ async function sendEveningReport(
         notificationCode: "DAILY_CLOCK_OUT_REPORT",
         dedupeKey: `DAILY_CLOCK_OUT_REPORT:${manager.id}:${dateKey}`,
         title: "Evening Clock-Out Report",
-        message: `${missedClockOuts.length} employees missed clock-out. ${stillClockedIn.length} employees are still clocked in.`,
+        message: `${overdueCount} employees missed clock-out. ${open.length} employees are still clocked in.`,
         payload: {
-          missedCount: missedClockOuts.length,
-          stillClockedInCount: stillClockedIn.length,
+          missedCount: overdueCount,
+          stillClockedInCount: open.length,
+          autoClockOutCount: autoOut.length,
+          absentCount: absent.length,
         },
       });
     }
@@ -519,17 +554,16 @@ async function sendEveningReport(
 
     await sendEmailNotification({
       to: recipientEmail,
-      subject: testEmail
-        ? `[TEST] Evening Clock-Out Report - ${company.name}`
-        : `Evening Clock-Out Report - ${company.name}`,
-      templateName: "eveningReport",
-      context: emailContext(manager),
+      templateKey: "attendance-evening",
+      data,
       notificationType: "DAILY_CLOCK_OUT_REPORT",
       recipientUserId: manager.id,
       companyId,
       metadata: {
-        missedCount: missedClockOuts.length,
-        stillClockedInCount: stillClockedIn.length,
+        missedCount: overdueCount,
+        stillClockedInCount: open.length,
+        autoClockOutCount: autoOut.length,
+        absentCount: absent.length,
       },
     });
   });
@@ -539,12 +573,14 @@ async function sendEveningReport(
 
 /**
  * Notify employee about automatic clock-out after 5 hours
+ * timeLog: { id, timeIn, timeOut, hoursWorked }; shift (optional): { name, start, end }
  */
-async function notifyAutoClockOut({ user, timeLog }) {
+async function notifyAutoClockOut({ user, timeLog, shift = null }) {
   const companyId = user.companyId;
   const company = await prisma.company.findUnique({
     where: { id: companyId },
   });
+  const tz = company?.timeZone || "America/Los_Angeles";
 
   // 1. Internal notification (database + socket)
   const created = await createNotification({
@@ -576,27 +612,21 @@ async function notifyAutoClockOut({ user, timeLog }) {
     },
   });
 
-  // 3. Email notification
+  // 3. Email notification. BB-144: times in the company zone (they were in the
+  // server's zone before).
   if (created && user.email) {
     await sendEmailNotification({
       to: user.email,
-      subject: "⏰ Automatic Clock-Out - 5 Hour Limit Reached",
-      templateName: "autoClockOut",
-      context: {
-        employeeName:
-          `${user.profile?.firstName || ""} ${user.profile?.lastName || ""}`.trim() ||
-          user.username,
-        clockInTime: new Date(timeLog.timeIn).toLocaleString("en-US", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }),
-        clockOutTime: new Date(timeLog.timeOut).toLocaleString("en-US", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }),
-        hoursWorked: timeLog.hoursWorked,
-        companyName: company?.name || "BizBuddy",
-        appUrl: process.env.CLIENT_URL,
+      templateKey: "auto-clock-out-employee",
+      data: {
+        company_name: company?.name || "BizBuddy",
+        first_name: firstNameOf(user),
+        shift_date: fmtDay(timeLog.timeIn, tz),
+        clock_in: fmtTime(timeLog.timeIn, tz),
+        auto_clock_out: fmtTime(timeLog.timeOut, tz),
+        hours_recorded: fmtHours(timeLog.hoursWorked),
+        correction_url: links.myPunchLogs(),
+        correction_deadline: await correctionDeadline({ companyId, departmentId: user.departmentId, at: timeLog.timeIn, tz }),
       },
       notificationType: "AUTO_CLOCK_OUT",
       recipientUserId: user.id,
@@ -604,6 +634,7 @@ async function notifyAutoClockOut({ user, timeLog }) {
       metadata: {
         timeLogId: timeLog.id,
         hoursWorked: timeLog.hoursWorked,
+        shiftName: shift?.name || null,
       },
     });
   }
@@ -615,10 +646,11 @@ async function notifyAutoClockOut({ user, timeLog }) {
  *
  * @param {object} opts
  * @param {object} opts.user         — { id, email, companyId, departmentId, profile, company }
- * @param {Date}   opts.scheduledEnd — resolved shift end time
+ * @param {Date}   opts.scheduledEnd — resolved shift end time (the clock-out an auto clock-out records)
+ * @param {Date}   [opts.closeAt]    — when the automatic clock-out runs (LiveUser.closeAt)
  * @param {object} opts.timeLog      — { id, timeIn }
  */
-async function notifyClockOutWarning({ user, scheduledEnd, timeLog }) {
+async function notifyClockOutWarning({ user, scheduledEnd, closeAt = null, timeLog }) {
   const company = await prisma.company.findUnique({
     where:  { id: user.companyId },
     select: { name: true, timeZone: true },
@@ -644,23 +676,16 @@ async function notifyClockOutWarning({ user, scheduledEnd, timeLog }) {
   });
 
   if (created && user.email) {
-    const clockInStr = new Date(timeLog.timeIn).toLocaleTimeString("en-US", {
-      timeZone: tz,
-      hour:     "2-digit",
-      minute:   "2-digit",
-    });
-
     await sendEmailNotification({
       to:             user.email,
-      subject:        "Clock-Out Reminder",
-      templateName:   "clockOutWarning",
-      context: {
-        employeeName:     `${user.profile?.firstName || ""} ${user.profile?.lastName || ""}`.trim() || user.email,
-        companyName:      company?.name || "BizBuddy",
-        scheduledEndTime: endStr,
-        clockInTime:      clockInStr,
-        appUrl:           process.env.CLIENT_URL,
-        currentYear:      new Date().getFullYear(),
+      templateKey:    "clock-out-reminder",
+      data: {
+        company_name:   company?.name || "BizBuddy",
+        first_name:     firstNameOf(user),
+        shift_end:      fmtTime(scheduledEnd, tz) || "your scheduled end time",
+        // closeAt is when the job runs; without it, the shift end is the best we know.
+        auto_clock_out: fmtTime(closeAt || scheduledEnd, tz) || "the end of your shift",
+        clock_out_url:  links.punch(),
       },
       notificationType: "CLOCK_OUT_WARNING",
       recipientUserId:  user.id,
@@ -676,12 +701,13 @@ async function notifyClockOutWarning({ user, scheduledEnd, timeLog }) {
  * may not have user accounts in the system).
  *
  * @param {object}   opts
- * @param {object}   opts.user          — { id, email, username, companyId, profile, company }
- * @param {object}   opts.timeLog       — { id, timeIn, timeOut }
+ * @param {object}   opts.user          — { id, email, username, companyId, departmentId, profile, company }
+ * @param {object}   opts.timeLog       — { id, timeIn, timeOut, hoursRecorded? }
  * @param {Date}     opts.scheduledEnd  — the pre-computed shift end from LiveUser
  * @param {string[]} opts.notifyEmails  — list of recipient email addresses
+ * @param {object}   [opts.shift]       — { name, start, end } of the punch's shift
  */
-async function notifyAutoClockOutSupervisors({ user, timeLog, scheduledEnd, notifyEmails }) {
+async function notifyAutoClockOutSupervisors({ user, timeLog, scheduledEnd, notifyEmails, shift = null }) {
   if (!notifyEmails || notifyEmails.length === 0) return;
 
   const company = await prisma.company.findUnique({
@@ -690,34 +716,42 @@ async function notifyAutoClockOutSupervisors({ user, timeLog, scheduledEnd, noti
   });
 
   const tz           = company?.timeZone || "America/Los_Angeles";
-  const employeeName = `${user.profile?.firstName || ""} ${user.profile?.lastName || ""}`.trim() || user.username || user.email;
+  const employeeName = fullNameOf(user);
 
-  const fmt = (dt) =>
-    new Date(dt).toLocaleString("en-US", {
-      timeZone:   tz,
-      dateStyle:  "medium",
-      timeStyle:  "short",
-    });
+  // BB-144: greet recipients who have an account in this company by first name;
+  // a plain address gets "Hi,".
+  const accounts = await prisma.user.findMany({
+    where: { ...HUMAN_ONLY, companyId: user.companyId, email: { in: notifyEmails.map((e) => e.trim().toLowerCase()) } },
+    select: { email: true, username: true, profile: { select: { firstName: true } } },
+  });
+  const firstNameByEmail = new Map(accounts.map((a) => [a.email.toLowerCase(), a.profile?.firstName?.trim() || null]));
 
-  const clockInStr   = fmt(timeLog.timeIn);
-  const clockOutStr  = fmt(timeLog.timeOut);
-  const scheduledStr = scheduledEnd ? fmt(scheduledEnd) : fmt(timeLog.timeOut);
+  const department = user.departmentId
+    ? (await prisma.department.findUnique({ where: { id: user.departmentId }, select: { name: true } }))?.name || null
+    : null;
+
+  const hoursRecorded = timeLog.hoursRecorded ?? (timeLog.timeOut ? (new Date(timeLog.timeOut) - new Date(timeLog.timeIn)) / 36e5 : null);
+  const base = {
+    company_name:        company?.name || "BizBuddy",
+    employee_name:       employeeName,
+    employee_first_name: user.profile?.firstName?.trim() || employeeName,
+    department,
+    shift_date:          fmtDay(timeLog.timeIn, tz),
+    shift_name:          shift?.name || null,
+    shift_start:         shift?.start || null,
+    shift_end:           shift?.end || fmtTime(scheduledEnd, tz),
+    clock_in:            fmtTime(timeLog.timeIn, tz),
+    auto_clock_out:      fmtTime(timeLog.timeOut, tz),
+    hours_recorded:      fmtHours(hoursRecorded),
+    review_url:          links.companyPunchLogs(),
+  };
 
   await Promise.allSettled(
     notifyEmails.map((email) =>
       sendEmailNotification({
         to:             email,
-        subject:        `[Auto Clock-Out] ${employeeName} — ${company?.name || "BizBuddy"}`,
-        templateName:   "autoClockOutSv",
-        context: {
-          employeeName,
-          companyName:      company?.name || "BizBuddy",
-          clockInTime:      clockInStr,
-          clockOutTime:     clockOutStr,
-          scheduledEndTime: scheduledStr,
-          appUrl:           process.env.CLIENT_URL,
-          currentYear:      new Date().getFullYear(),
-        },
+        templateKey:    "auto-clock-out-supervisor",
+        data:           { ...base, first_name: firstNameByEmail.get(String(email).trim().toLowerCase()) || null },
         notificationType: "AUTO_CLOCK_OUT_SV",
         recipientUserId:  null,
         companyId:        user.companyId,

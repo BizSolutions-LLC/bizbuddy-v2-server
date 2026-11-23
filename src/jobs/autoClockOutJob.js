@@ -14,13 +14,45 @@
 //
 // All per-record errors are caught and skipped — the job never aborts mid-run.
 
+const moment                             = require("moment-timezone");
 const { prisma }                          = require("@config/connection");
+const { shiftTimeStr }                    = require("@services/attendanceReportSchedule"); // BB-144
 const { getIO }                           = require("@config/socket");
 const { computeTimeLogSummary }           = require("@services/timeLogComputeService");
 const {
   notifyClockOutWarning,
   notifyAutoClockOutSupervisors,
 }                                         = require("@services/notificationService");
+
+// BB-144: the punch's shift (name + times) for the supervisor email. assignedDate
+// holds the calendar date at UTC midnight: match the company-zone clock-in date.
+async function shiftOfPunch(userId, timeIn, timeZone) {
+  try {
+    const tz = moment.tz.zone(timeZone || "") ? timeZone : "America/Los_Angeles";
+    const ymd = moment(timeIn).tz(tz).format("YYYY-MM-DD");
+    const userShift = await prisma.userShift.findFirst({
+      where: {
+        userId,
+        status:       { not: "cancelled" },
+        assignedDate: { gte: new Date(`${ymd}T00:00:00.000Z`), lte: new Date(`${ymd}T23:59:59.999Z`) },
+      },
+      include: { shift: true },
+      orderBy: { shift: { endTime: "desc" } }, // same pick as liveUserService: the day's latest end
+    });
+    if (!userShift?.shift) return null;
+    const fmt = (v) => {
+      const t = shiftTimeStr(v);
+      return t ? moment.tz(`${ymd} ${t}`, "YYYY-MM-DD HH:mm:ss", tz).format("h:mm A") : null;
+    };
+    return {
+      name:  userShift.shift.shiftName,
+      start: fmt(userShift.customStartTime || userShift.shift.startTime),
+      end:   fmt(userShift.customEndTime || userShift.shift.endTime),
+    };
+  } catch {
+    return null;
+  }
+}
 
 async function autoClockOutJob() {
   try {
@@ -55,6 +87,7 @@ async function autoClockOutJob() {
         await notifyClockOutWarning({
           user:         lu.user,
           scheduledEnd: lu.scheduledEnd,
+          closeAt:      lu.closeAt, // BB-144: when the automatic clock-out runs
           timeLog:      lu.timeLog,
         });
         await prisma.liveUser.update({
@@ -86,6 +119,7 @@ async function autoClockOutJob() {
             company: {
               select: {
                 name:                    true,
+                timeZone:                true, // BB-144
                 autoClockOutNotifyEmails: true,
               },
             },
@@ -144,8 +178,14 @@ async function autoClockOutJob() {
         } catch (_) {}
 
         // Compute derived fields (non-fatal)
+        let hoursRecorded = null; // BB-144: net hours for the supervisor email
         try {
           await computeTimeLogSummary(lu.timeLog.id);
+          const computed = await prisma.timeLog.findUnique({
+            where:  { id: lu.timeLog.id },
+            select: { netWorkedHours: true },
+          });
+          if (computed?.netWorkedHours != null) hoursRecorded = Number(computed.netWorkedHours);
         } catch (computeErr) {
           console.error(
             `   ⚠️  computeTimeLogSummary failed for ${lu.timeLog.id}:`,
@@ -166,9 +206,11 @@ async function autoClockOutJob() {
             id:      lu.timeLog.id,
             timeIn:  lu.timeLog.timeIn,
             timeOut: resolvedTimeOut,
+            hoursRecorded,
           },
           scheduledEnd: lu.scheduledEnd,
           notifyEmails,
+          shift: await shiftOfPunch(lu.userId, lu.timeLog.timeIn, lu.user.company?.timeZone), // BB-144
         });
 
         // Remove LiveUser row

@@ -119,6 +119,10 @@ async function checkMissedClockOuts() {
           if (minutesPastShiftEnd >= gracePeriod) {
             console.log(`⚠️  Missed clock-out: ${timeLog.user.username}`);
 
+            // BB-144: the shift shown in the email.
+            const startValue = userShift.customStartTime || userShift.shift.startTime;
+            const shiftStartTime = startValue ? combineDateWithTime(userShift.assignedDate, startValue, timezone) : null;
+
             // BB-117: sent once per punch (dedupe key on the inbox row).
             await notifyMissedClockOut(
               { user: timeLog.user },
@@ -127,6 +131,11 @@ async function checkMissedClockOuts() {
                 timeIn: timeLog.timeIn,
                 expectedClockOut: shiftEndTime.toDate(),
                 hoursWorked: (timeSinceClockIn / 60).toFixed(2),
+                shift: {
+                  name: userShift.shift.shiftName,
+                  start: shiftStartTime?.isValid() ? shiftStartTime.format('h:mm A') : null,
+                  end: shiftEndTime.format('h:mm A'),
+                },
               },
               company
             );
