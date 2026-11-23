@@ -5,6 +5,9 @@ const bcrypt = require("bcryptjs");
 const { sendMail } = require("@utils/mailer"); // BB-140
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
+const { renderEmail, links } = require("@emails/renderEmail"); // BB-144
+const { fmtDateTime, fmtDuration } = require("@emails/emailFormat");
+const { describeDevice } = require("@utils/describeDevice");
 
 // ---------------------------------------------------------------------------
 // Mailer
@@ -33,107 +36,31 @@ const hashToken = (rawToken) =>
 // Emails
 // ---------------------------------------------------------------------------
 
+// BB-144: both emails use the shared design (src/emails/templates). The reset
+// link lifetime is the real one (RESET_TOKEN_MINUTES), shown in the email.
+const RESET_TOKEN_MINUTES = 5;
+const NO_REPLY_FROM = `"BizBuddy Support" <no-reply@mybizbuddy.co>`;
+
 /**
  * Send password reset instructions email.
- * Uses table-based layout for maximum email client compatibility.
+ * @param {object} [extra] { firstName, device, timeZone } (BB-144)
  */
-const sendResetPasswordEmail = async (email, rawToken, userName, companyName) => {
+const sendResetPasswordEmail = async (email, rawToken, userName, companyName, extra = {}) => {
   try {
     const baseUrl = (process.env.FRONTEND_URL || "https://mybizbuddy.co").replace(/\/$/, "");
     const resetUrl = `${baseUrl}/reset-password/confirm?token=${rawToken}`;
 
-    const mailOptions = {
-      from: `"BizBuddy Support" <no-reply@mybizbuddy.co>`,
-      to: email,
-      subject: "Your BizBuddy Account - Password Reset Instructions",
-      html: `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-</head>
-<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f6;padding:20px 0;">
-    <tr>
-      <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
+    const { subject, html, text } = renderEmail("password-reset", {
+      company_name: companyName,
+      first_name: extra.firstName || userName,
+      email,
+      reset_url: resetUrl,
+      requested_at: fmtDateTime(new Date(), extra.timeZone),
+      device: extra.device || null,
+      expires_in: fmtDuration(RESET_TOKEN_MINUTES),
+    });
 
-          <!-- HEADER -->
-          <tr>
-            <td align="center" style="background-color:#ea580c;padding:30px;border-radius:10px 10px 0 0;">
-              <h1 style="margin:0;color:#ffffff;font-size:22px;font-family:Arial,sans-serif;">
-                Password Reset Request
-              </h1>
-            </td>
-          </tr>
-
-          <!-- BODY -->
-          <tr>
-            <td style="background-color:#f9fafb;padding:30px;border-radius:0 0 10px 10px;">
-
-              <p style="margin:0 0 16px;">Hello <strong>${userName}</strong>,</p>
-              <p style="margin:0 0 24px;">
-                We received a request to reset the password for your BizBuddy account
-                ${companyName ? `at <strong>${companyName}</strong>` : ""}.
-              </p>
-
-              <!-- TABLE-BASED BUTTON -->
-              <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 24px;">
-                <tr>
-                  <td align="center" bgcolor="#ea580c" style="border-radius:8px;">
-                    <a href="${resetUrl}"
-                       target="_blank"
-                       style="display:inline-block;padding:14px 32px;color:#ffffff;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;text-decoration:none;border-radius:8px;background-color:#ea580c;mso-padding-alt:14px 32px;">
-                      Reset My Password
-                    </a>
-                  </td>
-                </tr>
-              </table>
-
-              <p style="margin:0 0 8px;">If the button above doesn't work, copy and paste this link into your browser:</p>
-
-              <!-- LINK BOX -->
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 20px;">
-                <tr>
-                  <td style="background-color:#ffffff;border:2px solid #f97316;border-radius:8px;padding:16px;word-break:break-all;text-align:center;">
-                    <a href="${resetUrl}" style="color:#f97316;font-weight:bold;font-size:13px;text-decoration:none;">${resetUrl}</a>
-                  </td>
-                </tr>
-              </table>
-
-              <!-- WARNING BOX -->
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 20px;">
-                <tr>
-                  <td style="background-color:#fef3c7;border-left:4px solid #f59e0b;border-radius:4px;padding:15px;color:#92400e;">
-                    <strong>Important:</strong><br/>
-                    This password reset link will expire in <strong>5 minutes</strong> for your security.
-                  </td>
-                </tr>
-              </table>
-
-              <p style="margin:0 0 16px;">If you did not request a password reset, please ignore this email. Your account will remain secure.</p>
-              <p style="margin:0;">Best regards,<br/><strong>BizBuddy Team</strong></p>
-
-            </td>
-          </tr>
-
-          <!-- FOOTER -->
-          <tr>
-            <td align="center" style="padding:20px;color:#6b7280;font-size:12px;font-family:Arial,sans-serif;">
-              <p style="margin:0;">This is an automated email. Please do not reply to this message.</p>
-              <p style="margin:4px 0 0;">&copy; 2026 BizBuddy. All rights reserved.</p>
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`,
-    };
-
-    await sendMail({ ...mailOptions, log: { type: "PASSWORD_RESET", redact: [rawToken, resetUrl] } }); // BB-140: link hidden in the stored copy
+    await sendMail({ from: NO_REPLY_FROM, to: email, subject, html, text, log: { type: "PASSWORD_RESET", redact: [rawToken, resetUrl] } }); // BB-140: link hidden in the stored copy
     console.log(`Reset password email sent to: ${email}`);
     return true;
   } catch (error) {
@@ -144,86 +71,21 @@ const sendResetPasswordEmail = async (email, rawToken, userName, companyName) =>
 
 /**
  * Send a security alert after a successful password reset.
+ * @param {object} [extra] { firstName, device, timeZone } (BB-144)
  */
-const sendPasswordChangedEmail = async (email, userName, companyName) => {
+const sendPasswordChangedEmail = async (email, userName, companyName, extra = {}) => {
   try {
-    const supportEmail = "support@mybizbuddy.co";
-    const changedAt = new Date().toLocaleString("en-US", {
-      dateStyle: "full",
-      timeStyle: "short",
+    const { subject, html, text } = renderEmail("password-changed", {
+      company_name: companyName,
+      first_name: extra.firstName || userName,
+      email,
+      changed_at: fmtDateTime(new Date(), extra.timeZone),
+      device: extra.device || null,
+      // No "sign out everywhere" endpoint exists: the button opens Forgot password.
+      secure_url: links.forgotPassword(),
     });
 
-    const mailOptions = {
-      from: `"BizBuddy Support" <no-reply@mybizbuddy.co>`,
-      to: email,
-      subject: "Your BizBuddy Password Has Been Changed",
-      html: `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-</head>
-<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f6;padding:20px 0;">
-    <tr>
-      <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
-
-          <!-- HEADER -->
-          <tr>
-            <td align="center" style="background-color:#ea580c;padding:30px;border-radius:10px 10px 0 0;">
-              <h1 style="margin:0;color:#ffffff;font-size:22px;font-family:Arial,sans-serif;">
-                Password Successfully Changed
-              </h1>
-            </td>
-          </tr>
-
-          <!-- BODY -->
-          <tr>
-            <td style="background-color:#f9fafb;padding:30px;border-radius:0 0 10px 10px;">
-
-              <p style="margin:0 0 16px;">Hello <strong>${userName}</strong>,</p>
-              <p style="margin:0 0 16px;">
-                Your password for your BizBuddy account
-                ${companyName ? `at <strong>${companyName}</strong>` : ""}
-                was successfully changed on <strong>${changedAt}</strong>.
-              </p>
-
-              <!-- ALERT BOX -->
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 20px;">
-                <tr>
-                  <td style="background-color:#fee2e2;border-left:4px solid #ef4444;border-radius:4px;padding:15px;color:#7f1d1d;">
-                    <strong>Wasn't you?</strong><br/>
-                    If you did not make this change, your account may be compromised.
-                    Please contact our support team immediately at
-                    <a href="mailto:${supportEmail}" style="color:#ef4444;">${supportEmail}</a>.
-                  </td>
-                </tr>
-              </table>
-
-              <p style="margin:0 0 16px;">If this was you, no further action is needed. You can now log in with your new password.</p>
-              <p style="margin:0;">Best regards,<br/><strong>BizBuddy Team</strong></p>
-
-            </td>
-          </tr>
-
-          <!-- FOOTER -->
-          <tr>
-            <td align="center" style="padding:20px;color:#6b7280;font-size:12px;font-family:Arial,sans-serif;">
-              <p style="margin:0;">This is an automated security alert. Please do not reply to this message.</p>
-              <p style="margin:4px 0 0;">&copy; 2026 BizBuddy. All rights reserved.</p>
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`,
-    };
-
-    await sendMail({ ...mailOptions, log: { type: "PASSWORD_CHANGED" } }); // BB-140
+    await sendMail({ from: NO_REPLY_FROM, to: email, subject, html, text, log: { type: "PASSWORD_CHANGED" } }); // BB-140
     console.log(`Password changed alert email sent to: ${email}`);
     return true;
   } catch (error) {
@@ -290,7 +152,7 @@ const requestPasswordReset = async (req, res) => {
     // Generate raw token — only the hash goes into the DB
     const rawToken = generateResetToken();
     const tokenHash = hashToken(rawToken);
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_MINUTES * 60 * 1000); // 5 minutes
 
     // Invalidate any existing unused tokens for this specific user account
     await prisma.passwordResetToken.updateMany({
@@ -313,7 +175,11 @@ const requestPasswordReset = async (req, res) => {
     const companyName = user.company?.name;
 
     try {
-      await sendResetPasswordEmail(normalizedEmail, rawToken, userName, companyName);
+      await sendResetPasswordEmail(normalizedEmail, rawToken, userName, companyName, {
+        firstName: user.profile?.firstName?.trim() || null,
+        device: describeDevice(req),
+        timeZone: user.company?.timeZone,
+      });
     } catch (emailError) {
       console.error("Reset email send failed:", emailError);
     }
@@ -471,7 +337,11 @@ const resetPassword = async (req, res) => {
     const companyName = resetToken.user.company?.name;
 
     try {
-      await sendPasswordChangedEmail(resetToken.user.email, userName, companyName);
+      await sendPasswordChangedEmail(resetToken.user.email, userName, companyName, {
+        firstName: resetToken.user.profile?.firstName?.trim() || null,
+        device: describeDevice(req),
+        timeZone: resetToken.user.company?.timeZone,
+      });
     } catch (emailError) {
       console.error("Password changed alert email failed:", emailError);
     }

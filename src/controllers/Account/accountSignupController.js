@@ -6,7 +6,7 @@ const { prisma } = require("@config/connection");
 const { JWT_SECRET, BBUDDY_EMAIL, BBUDDY_PASSWORD_HASH } = require("@config/env");
 const { createSystemAgentForCompany } = require("@services/systemAgentService");
 const { sendMail } = require("@utils/mailer");
-const { renderWelcome } = require("@emails/renderTemplate");
+const { buildWelcomeEmail } = require("@emails/welcomeEmail"); // BB-144
 const { getDirectSupervisors } = require("@services/Approvers/approverResolutionService");
 
 const getAllSubscriptionPlans = async (req, res) => {
@@ -150,21 +150,19 @@ const signUp = async (req, res) => {
     });
 
     try {
-      const html = renderWelcome({
+      const { subject, html, text } = await buildWelcomeEmail({
         firstName,
         companyName,
         email: result.newUser.email,
         password: plainPassword, // you decided no token TTL; you’re emailing it
+        role: result.newUser.role,
       });
     
       await sendMail({
         to: result.newUser.email,
-        subject: "Welcome to BizBuddy — your account is live",
+        subject,
         html,
-        text: `Hi ${firstName}, your BizBuddy account for ${companyName} is ready.
-    Email: ${result.newUser.email}
-    Password: ${plainPassword}
-    `,
+        text,
         // BB-140: logged centrally; the password is hidden in the stored copy
         log: { type: "WELCOME_EMAIL", notificationType: "WELCOME_EMAIL", companyId: result.newCompany?.id ?? null, userId: result.newUser.id, triggeredBy: "self-signup", redact: [plainPassword] },
       });

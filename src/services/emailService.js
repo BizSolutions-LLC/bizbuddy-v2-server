@@ -1,43 +1,29 @@
 const { sendMail } = require('@utils/mailer');
-const handlebars = require('handlebars');
-const fs = require('fs').promises;
-const path = require('path');
+const { renderEmail } = require('@emails/renderEmail');
 
 /**
- * Load and compile Handlebars template
- */
-async function loadTemplate(templateName) {
-  const templatePath = path.join(__dirname, '../templates', `${templateName}.hbs`);
-  try {
-    const templateSource = await fs.readFile(templatePath, 'utf-8');
-    return handlebars.compile(templateSource);
-  } catch (error) {
-    console.error(`❌ Template not found: ${templateName}`, error);
-    throw error;
-  }
-}
-
-/**
- * Send email with template
+ * Send an email built from one of the BB-144 templates (src/emails/templates).
  * @param {Object} options
  * @param {string} options.to - Recipient email
- * @param {string} options.subject - Email subject
- * @param {string} options.templateName - Handlebars template name (without .hbs)
- * @param {Object} options.context - Template variables
+ * @param {string} options.templateKey - Template key in templates.json (e.g. "missed-clock-in")
+ * @param {Object} options.data - Template variables (snake_case, see templates.json)
+ * @param {string} [options.subject] - Overrides the template's subject
  * @param {boolean} options.isNotification - Use notification email (default: true for this service)
- * @param {Object} options.log - BB-140 logging info, passed to sendMail (type defaults to the template name)
+ * @param {Object} options.log - BB-140 logging info, passed to sendMail (type defaults to the template key)
  */
-async function sendEmail({ to, subject, templateName, context, isNotification = true, log = {} }) {
-  const logInfo = { type: templateName, ...log };
+async function sendEmail({ to, subject, templateKey, data = {}, isNotification = true, log = {} }) {
+  const logInfo = { type: templateKey, ...log };
+  let finalSubject = subject || null;
   try {
-    const template = await loadTemplate(templateName);
-    const html = template(context);
+    const email = renderEmail(templateKey, data);
+    finalSubject = subject || email.subject;
 
     // Use notification email by default for this service
-    await sendMail({ 
-      to, 
-      subject, 
-      html,
+    await sendMail({
+      to,
+      subject: finalSubject,
+      html: email.html,
+      text: email.text,
       isNotification, // Will use notifications@mybizbuddy.co
       log: logInfo,
     });
@@ -50,7 +36,7 @@ async function sendEmail({ to, subject, templateName, context, isNotification = 
     // a send failure was already logged by sendMail.
     if (!error.emailLogged) {
       const { recordEmail } = require('@services/Analytics/emailLogService');
-      await recordEmail({ to, from: null, subject, status: 'failed', error, log: logInfo });
+      await recordEmail({ to, from: null, subject: finalSubject || templateKey, status: 'failed', error, log: logInfo });
     }
     return { success: false, error: error.message };
   }

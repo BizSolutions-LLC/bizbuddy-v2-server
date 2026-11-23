@@ -139,13 +139,10 @@ bizbuddy-v2-server/
     │   ├── schema.prisma           # Prisma schema (source of truth)
     │   └── seed.js                 # DB seed script
     ├── emails/
-    │   ├── renderTemplate.js
-    │   └── welcome_bizbuddy.html
-    └── templates/                  # Handlebars (.hbs) email templates
-        ├── autoClockOut.hbs
-        ├── missedClockIn.hbs
-        ├── missedClockOut.hbs
-        └── morningReport.hbs
+    │   ├── renderEmail.js          # BB-144: renderEmail(key, data) → subject/html/text, links, logo URL
+    │   ├── emailFormat.js          # BB-144: company-zone times, hours, correction deadline
+    │   ├── welcomeEmail.js         # BB-144: welcome email for all four senders
+    │   └── templates/              # BB-144: 12 email-safe HTML templates + templates.json (subject, preview)
 ```
 
 ---
@@ -278,7 +275,7 @@ Every company has one hidden admin, **B. Buddy** (`User.isSystemAgent = true`, `
 Three delivery channels, all triggered through `notificationService.js`:
 
 1. **In-app** — Socket.io emit to `user:{id}` room, persisted to `NotificationLog`
-2. **Email** — Nodemailer via SMTP, Handlebars templates in `src/templates/`
+2. **Email** — Nodemailer via SMTP. BB-144: every email uses one design, `src/emails/templates/*.html` (from the BizBuddy-email-templates ZIP, adapted) rendered by `@emails/renderEmail` (Handlebars, escaped; plain-text copy generated). `emailService.sendEmail({ templateKey, data })`; variables are snake_case as in `templates.json`. The logo is the web app's `https://mybizbuddy.co/logo.png` (client `public/logo.png`); optional env `EMAIL_LOGO_URL` overrides it. Button links: `renderEmail.links` (client routes listed in `docs/client-update-BB-144.md`)
 3. **Mobile push** — Firebase FCM via `src/utils/notificationFunction.js`
 
 Socket.io rooms: `user:{id}`, `company:{id}`, `company:{id}:management`

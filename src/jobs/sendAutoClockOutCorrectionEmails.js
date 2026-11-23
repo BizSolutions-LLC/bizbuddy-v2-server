@@ -19,6 +19,26 @@ const { prisma } = require("@config/connection");
 const { sendEmailNotification } = require("../services/notificationService");
 const { sendEmail } = require("../services/emailService");
 
+const { firstNameOf, fmtDay, fmtTime } = require("@emails/emailFormat"); // BB-144
+const { links } = require("@emails/renderEmail");
+
+// BB-144: the "time-log-correction" template, filled for this one case: the
+// system set a clock-out too early and it was removed.
+function correctionData({ firstName, companyName, shiftDate, autoOut }) {
+  return {
+    first_name:    firstName,
+    company_name:  companyName,
+    edited_by:     "BizBuddy",
+    shift_date:    shiftDate,
+    field_changed: "clock-out time",
+    old_value:     autoOut ? `Out ${autoOut}` : "Automatic clock-out",
+    new_value:     "Removed",
+    reason:        "The system set this clock-out too early by mistake.",
+    edited_at:     fmtDay(new Date()),
+    timelog_url:   links.myPunchLogs(),
+  };
+}
+
 const testIndex = process.argv.indexOf("--test");
 const TEST_EMAIL = testIndex !== -1 ? process.argv[testIndex + 1] : null;
 
@@ -27,18 +47,14 @@ async function sendCorrectionEmails() {
     console.log(`\n📧 [CORRECTION EMAIL] TEST MODE — sending sample to ${TEST_EMAIL}`);
     // Use sendEmail directly to skip DB logging (no real userId/companyId in test)
     await sendEmail({
-      to:           TEST_EMAIL,
-      subject:      "Time Log Correction Notice",
-      templateName: "autoClockOutCorrected",
-      context: {
-        employeeName:          "John Doe (Test)",
-        companyName:           "BizBuddy Demo Company",
-        originalDate:          "April 8, 2026",
-        clockInTime:           "Apr 8, 2026, 10:14 PM",
-        incorrectClockOutTime: "Removed (incorrectly set by system)",
-        appUrl:                process.env.CLIENT_URL,
-        currentYear:           new Date().getFullYear(),
-      },
+      to:          TEST_EMAIL,
+      templateKey: "time-log-correction",
+      data:        correctionData({
+        firstName:   "John",
+        companyName: "BizBuddy Demo Company",
+        shiftDate:   "Wed, Apr 8",
+        autoOut:     "11:30 PM",
+      }),
     });
     console.log(`   ✅ Test email sent to ${TEST_EMAIL}`);
     return;
@@ -63,7 +79,7 @@ async function sendCorrectionEmails() {
         include: {
           profile: true,
           company: {
-            select: { id: true, name: true },
+            select: { id: true, name: true, timeZone: true },
           },
         },
       },
@@ -115,28 +131,18 @@ async function sendCorrectionEmails() {
       user.username;
 
     const companyName  = user.company?.name || "BizBuddy";
-    const originalDate = new Date(log.timeIn).toLocaleDateString("en-US", {
-      dateStyle: "long",
-    });
-    const clockInTime  = new Date(log.timeIn).toLocaleString("en-US", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
+    const tz           = user.company?.timeZone;
 
     try {
       await sendEmailNotification({
-        to:           user.email,
-        subject:      "Time Log Correction Notice",
-        templateName: "autoClockOutCorrected",
-        context: {
-          employeeName,
+        to:          user.email,
+        templateKey: "time-log-correction",
+        data:        correctionData({
+          firstName: firstNameOf(user),
           companyName,
-          originalDate,
-          clockInTime,
-          incorrectClockOutTime: "Removed (incorrectly set by system)",
-          appUrl:      process.env.CLIENT_URL,
-          currentYear: new Date().getFullYear(),
-        },
+          shiftDate: fmtDay(log.timeIn, tz),
+          autoOut:   fmtTime(log.timeOut, tz),
+        }),
         notificationType: "AUTO_CLOCK_OUT",
         recipientUserId:  user.id,
         companyId:        user.companyId,

@@ -6,6 +6,8 @@ const prisma = new PrismaClient();
 const { createNotification } = require("@services/notificationService");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { sendMail } = require("@utils/mailer"); // BB-140
+const { renderEmail } = require("@emails/renderEmail"); // BB-144
+const { fmtDuration } = require("@emails/emailFormat");
 
 // BB-140: emails go through utils/mailer.sendMail (same SMTP account), so they are logged.
 
@@ -14,65 +16,24 @@ const generateVerificationCode = () => {
   return crypto.randomInt(100000, 999999).toString();
 };
 
-const sendVerificationEmail = async (email, code, userName) => {
-  try {
-    const mailOptions = {
-      from: process.env.MAIL_FROM,
-      to: email,
-      subject: "BizBuddy - Account Deletion Verification Code",
-      html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #f97316 0%, #dc2626 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
-            .code-box { background: white; border: 2px dashed #dc2626; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px; }
-            .code { font-size: 32px; font-weight: bold; color: #dc2626; letter-spacing: 8px; }
-            .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px; }
-            .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🗑️ Account Deletion Request</h1>
-            </div>
-            <div class="content">
-              <p>Hello <strong>${userName}</strong>,</p>
-              
-              <p>We received a request to delete your BizBuddy account. To proceed with this action, please use the verification code below:</p>
-              
-              <div class="code-box">
-                <div class="code">${code}</div>
-              </div>
-              
-              <p style="text-align: center; color: #6b7280; font-size: 14px;">
-                This code will expire in <strong>10 minutes</strong>
-              </p>
-              
-              <div class="warning">
-                <p style="margin: 0;"><strong>⚠️ Important:</strong></p>
-                <p style="margin: 5px 0 0 0;">Deleting your account will permanently remove all your data including time logs, projects, and settings. This action cannot be reversed.</p>
-              </div>
-              
-              <p>If you did not request account deletion, please ignore this email and your account will remain safe.</p>
-              
-              <p>Best regards,<br><strong>BizBuddy Team</strong></p>
-            </div>
-            <div class="footer">
-              <p>This is an automated email. Please do not reply to this message.</p>
-              <p>&copy; ${new Date().getFullYear()} BizBuddy. All rights reserved.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `,
-    };
+// BB-144: shared design (src/emails/templates/account-deletion-code.html); the
+// code lifetime shown is the real one.
+const DELETION_CODE_MINUTES = 10;
 
-    await sendMail({ ...mailOptions, log: { type: "ACCOUNT_DELETION_CODE", redact: [code] } }); // BB-140: code hidden in the stored copy
+/**
+ * @param {object} [extra] { firstName, companyName } (BB-144)
+ */
+const sendVerificationEmail = async (email, code, userName, extra = {}) => {
+  try {
+    const { subject, html, text } = renderEmail("account-deletion-code", {
+      company_name: extra.companyName || null,
+      first_name: extra.firstName || userName,
+      email,
+      code,
+      expires_in: fmtDuration(DELETION_CODE_MINUTES),
+    });
+
+    await sendMail({ from: process.env.MAIL_FROM, to: email, subject, html, text, log: { type: "ACCOUNT_DELETION_CODE", redact: [code] } }); // BB-140: code hidden in the stored copy
     console.log(`✅ Verification email sent to: ${email}`);
     return true;
   } catch (error) {
@@ -95,7 +56,7 @@ const checkEmailGenerateCode = async (req, res) => {
     // Find user first
     const user = await prisma.user.findFirst({
       where: { email: normalizedEmail, ...HUMAN_ONLY },
-      include: { profile: true },
+      include: { profile: true, company: { select: { name: true } } },
     });
 
     // ✅ If user doesn't exist, skip all database OTP checks
@@ -128,7 +89,7 @@ const checkEmailGenerateCode = async (req, res) => {
 
     // Generate and store a new code
     const verificationCode = generateVerificationCode();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + DELETION_CODE_MINUTES * 60 * 1000);
 
     await prisma.otp.updateMany({
       where: {
@@ -154,7 +115,10 @@ const checkEmailGenerateCode = async (req, res) => {
       user.email;
 
     try {
-      await sendVerificationEmail(normalizedEmail, verificationCode, userName);
+      await sendVerificationEmail(normalizedEmail, verificationCode, userName, {
+        firstName: user.profile?.firstName?.trim() || null,
+        companyName: user.company?.name || null,
+      });
       console.log(`✅ OTP created and email sent for: ${normalizedEmail}`);
     } catch (emailError) {
       console.error("Email send failed:", emailError);
