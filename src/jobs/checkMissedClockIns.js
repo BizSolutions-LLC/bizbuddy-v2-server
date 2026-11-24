@@ -1,34 +1,19 @@
 const { prisma } = require('@config/connection');
 const { notifyMissedClockIn } = require('@services/notificationService');
 const moment = require('moment-timezone');
+const {
+  dateKeyInTz,
+  combineAssignedDateWithTimeTz,
+} = require('@services/timeLogComputeUtils');
 
-function combineDateWithTime(date, timeValue, timezone) {
-  // Convert time to string if it's a Time object
-  let timeString;
-  
-  if (typeof timeValue === 'string') {
-    timeString = timeValue;
-  } else if (timeValue instanceof Date) {
-    // If it's a Date object, extract time
-    timeString = timeValue.toTimeString().split(' ')[0];
-  } else if (timeValue && typeof timeValue === 'object') {
-    // If it's a Time object with hours/minutes properties
-    const hours = String(timeValue.hours || timeValue.hour || 0).padStart(2, '0');
-    const minutes = String(timeValue.minutes || timeValue.minute || 0).padStart(2, '0');
-    timeString = `${hours}:${minutes}:00`;
-  } else {
-    console.error('Invalid timeValue:', timeValue);
-    timeString = '00:00:00';
-  }
+const DEFAULT_TZ = 'America/Los_Angeles';
 
-  const [hours, minutes, seconds = '00'] = timeString.split(':');
-  const dateStr = moment(date).format('YYYY-MM-DD');
-  
-  return moment.tz(
-    `${dateStr} ${hours}:${minutes}:${seconds}`,
-    'YYYY-MM-DD HH:mm:ss',
-    timezone
-  );
+// BB-148: a shift is read in its own zone (Shift.timeZone), like the "Shift
+// starting soon" reminder (clockInReminderWorker), then the company zone.
+function shiftZone(shiftTz, companyTz) {
+  if (shiftTz && moment.tz.zone(shiftTz)) return shiftTz;
+  if (companyTz && moment.tz.zone(companyTz)) return companyTz;
+  return DEFAULT_TZ;
 }
 
 /**
@@ -51,21 +36,31 @@ async function checkMissedClockIns() {
     });
 
     for (const company of companies) {
-      const timezone = company.timeZone || 'America/Los_Angeles';
-      const now = moment().tz(timezone);
+      const companyTz = shiftZone(null, company.timeZone);
+      const now = moment();
       const gracePeriod = company.clockInGracePeriod || 30; // minutes
 
-      // Calculate the time window to check
+      // The shift must have started in this window (5-minute job, 5-minute window).
       const checkStartTime = now.clone().subtract(gracePeriod + 5, 'minutes'); // Add 5 min buffer
       const checkEndTime = now.clone().subtract(gracePeriod, 'minutes');
 
-      // Find all shifts that should have started in this window
+      // BB-148: assignedDate is a calendar date (stored as UTC midnight). A shift
+      // in another zone than the company's can sit on the company's yesterday or
+      // tomorrow, so load those three dates and keep only the shifts whose start,
+      // read in the shift's own zone, falls in the window below. (Was: today in the
+      // company zone with the start read in the company zone, so a Manila 8:00 AM
+      // shift in an LA company alerted at 8:30 AM LA = 00:30 the next day in Manila.)
+      const todayKey = dateKeyInTz(now.toDate(), companyTz);
+      const fromKey = moment.utc(todayKey).subtract(1, 'day').format('YYYY-MM-DD');
+      const toKey = moment.utc(todayKey).add(1, 'day').format('YYYY-MM-DD');
+
       const shiftsToCheck = await prisma.userShift.findMany({
         where: {
           assignedDate: {
-            gte: now.clone().startOf('day').toDate(),
-            lte: now.clone().endOf('day').toDate(),
+            gte: new Date(`${fromKey}T00:00:00.000Z`),
+            lte: new Date(`${toKey}T23:59:59.999Z`),
           },
+          status: { not: 'cancelled' }, // BB-148: a cancelled shift isn't "missed"
           user: {
             companyId: company.id,
             status: 'active',
@@ -83,12 +78,15 @@ async function checkMissedClockIns() {
       });
 
       for (const userShift of shiftsToCheck) {
-        // Build shift start datetime
-        const shiftStartTime = combineDateWithTime(
-          userShift.assignedDate,
-          userShift.customStartTime || userShift.shift.startTime,
-          timezone 
-        );
+        const startValue = userShift.customStartTime || userShift.shift?.startTime;
+        if (!startValue) continue;
+
+        const tz = shiftZone(userShift.shift.timeZone, companyTz);
+
+        // Build shift start datetime in the shift's zone
+        const shiftStartTime = moment(
+          combineAssignedDateWithTimeTz(userShift.assignedDate, startValue, tz)
+        ).tz(tz);
 
         // Check if shift start time falls within our check window
         if (shiftStartTime.isBetween(checkStartTime, checkEndTime, null, '[]')) {
@@ -119,9 +117,11 @@ async function checkMissedClockIns() {
             // Employee missed clock-in!
             console.log(`⚠️  Missed clock-in: ${userShift.user.username} (${userShift.shift.shiftName})`);
 
-            // BB-144: shift end, date and minutes late for the email.
+            // BB-144: shift end, date and minutes late for the email (BB-148: shift zone).
             const endValue = userShift.customEndTime || userShift.shift.endTime;
-            const shiftEndTime = endValue ? combineDateWithTime(userShift.assignedDate, endValue, timezone) : null;
+            const shiftEndTime = endValue
+              ? moment(combineAssignedDateWithTimeTz(userShift.assignedDate, endValue, tz)).tz(tz)
+              : null;
             if (shiftEndTime && userShift.shift.crossesMidnight && shiftEndTime.isBefore(shiftStartTime)) {
               shiftEndTime.add(1, 'day');
             }
