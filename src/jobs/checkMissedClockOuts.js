@@ -1,37 +1,58 @@
 const { prisma } = require('@config/connection');
 const { notifyMissedClockOut } = require('@services/notificationService');
 const moment = require('moment-timezone');
+const {
+  dateKeyFromDbDate,
+  dateKeyInTz,
+  combineAssignedDateWithTimeTz,
+} = require('@services/timeLogComputeUtils');
+
+const DEFAULT_TZ = 'America/Los_Angeles';
+
+// BB-148: a shift is read in its own zone (Shift.timeZone), like the "Shift
+// starting soon" reminder (clockInReminderWorker), then the company zone.
+function shiftZone(shiftTz, companyTz) {
+  if (shiftTz && moment.tz.zone(shiftTz)) return shiftTz;
+  if (companyTz && moment.tz.zone(companyTz)) return companyTz;
+  return DEFAULT_TZ;
+}
 
 /**
- * Helper to combine date with time string in specific timezone
+ * BB-148: the shift a punch belongs to. A punch belongs to the shift assigned
+ * on its clock-in date in that shift's own zone (a Manila 8:00 AM punch is the
+ * previous day in LA). Several shifts that day: the one starting closest to the
+ * clock-in. Returns { userShift, tz } or null.
  */
-function combineDateWithTime(date, timeValue, timezone) {
-  // Convert time to string if it's a Time object
-  let timeString;
-  
-  if (typeof timeValue === 'string') {
-    timeString = timeValue;
-  } else if (timeValue instanceof Date) {
-    // If it's a Date object, extract time
-    timeString = timeValue.toTimeString().split(' ')[0];
-  } else if (timeValue && typeof timeValue === 'object') {
-    // If it's a Time object with hours/minutes properties
-    const hours = String(timeValue.hours || timeValue.hour || 0).padStart(2, '0');
-    const minutes = String(timeValue.minutes || timeValue.minute || 0).padStart(2, '0');
-    timeString = `${hours}:${minutes}:00`;
-  } else {
-    console.error('Invalid timeValue:', timeValue);
-    timeString = '00:00:00';
-  }
+async function shiftOfPunch(timeLog, companyTz) {
+  const companyKey = moment(timeLog.timeIn).tz(companyTz).format('YYYY-MM-DD');
+  const fromKey = moment.utc(companyKey).subtract(1, 'day').format('YYYY-MM-DD');
+  const toKey = moment.utc(companyKey).add(1, 'day').format('YYYY-MM-DD');
 
-  const [hours, minutes, seconds = '00'] = timeString.split(':');
-  const dateStr = moment(date).format('YYYY-MM-DD');
-  
-  return moment.tz(
-    `${dateStr} ${hours}:${minutes}:${seconds}`,
-    'YYYY-MM-DD HH:mm:ss',
-    timezone
-  );
+  const candidates = await prisma.userShift.findMany({
+    where: {
+      userId: timeLog.userId,
+      status: { not: 'cancelled' },
+      assignedDate: {
+        gte: new Date(`${fromKey}T00:00:00.000Z`),
+        lte: new Date(`${toKey}T23:59:59.999Z`),
+      },
+    },
+    include: { shift: true },
+  });
+
+  let best = null;
+  for (const userShift of candidates) {
+    if (!userShift.shift) continue;
+    const tz = shiftZone(userShift.shift.timeZone, companyTz);
+    if (dateKeyFromDbDate(userShift.assignedDate) !== dateKeyInTz(timeLog.timeIn, tz)) continue;
+
+    const startValue = userShift.customStartTime || userShift.shift.startTime;
+    const gap = startValue
+      ? Math.abs(combineAssignedDateWithTimeTz(userShift.assignedDate, startValue, tz).getTime() - new Date(timeLog.timeIn).getTime())
+      : Number.MAX_SAFE_INTEGER;
+    if (!best || gap < best.gap) best = { userShift, tz, gap };
+  }
+  return best ? { userShift: best.userShift, tz: best.tz } : null;
 }
 
 /**
@@ -54,7 +75,7 @@ async function checkMissedClockOuts() {
     });
 
     for (const company of companies) {
-      const timezone = company.timeZone || 'America/Los_Angeles';
+      const timezone = shiftZone(null, company.timeZone);
       const now = moment().tz(timezone);
       const gracePeriod = company.clockOutGracePeriod || 30;
 
@@ -81,32 +102,20 @@ async function checkMissedClockOuts() {
         const clockInTime = moment(timeLog.timeIn).tz(timezone);
         const timeSinceClockIn = now.diff(clockInTime, 'minutes');
 
-        // Find the shift for this time log.
-        // assignedDate is stored as UTC midnight of the calendar date (2026-06-03T00:00:00Z).
-        // startOf('day').toDate() in a negative-offset timezone (e.g. PDT = UTC-7) produces
-        // 2026-06-03T07:00:00Z — which no longer matches the stored date and instead matches
-        // the next day's assignment. Use the local date string to build a UTC-midnight range
-        // that lines up with how assignedDate is stored, regardless of timezone offset.
-        const localDateStr = clockInTime.format('YYYY-MM-DD');
-        const dayStart = new Date(`${localDateStr}T00:00:00.000Z`);
-        const dayEnd   = new Date(`${localDateStr}T23:59:59.999Z`);
+        // Find the shift for this time log (BB-148: in the shift's own zone).
+        const match = await shiftOfPunch(timeLog, timezone);
 
-        const userShift = await prisma.userShift.findFirst({
-          where: {
-            userId: timeLog.userId,
-            status: { not: 'cancelled' },
-            assignedDate: { gte: dayStart, lte: dayEnd },
-          },
-          include: { shift: true },
-        });
+        if (match) {
+          const { userShift, tz } = match;
 
-        if (userShift) {
-          // Calculate expected clock-out time WITH timezone
-          let shiftEndTime = combineDateWithTime(
-            userShift.assignedDate,
-            userShift.customEndTime || userShift.shift.endTime,
-            timezone  // ← Pass timezone to helper
-          );
+          // Calculate expected clock-out time in the shift's zone
+          let shiftEndTime = moment(
+            combineAssignedDateWithTimeTz(
+              userShift.assignedDate,
+              userShift.customEndTime || userShift.shift.endTime,
+              tz
+            )
+          ).tz(tz);
 
           // Handle shifts that cross midnight
           if (userShift.shift.crossesMidnight && shiftEndTime.isBefore(clockInTime)) {
@@ -121,7 +130,9 @@ async function checkMissedClockOuts() {
 
             // BB-144: the shift shown in the email.
             const startValue = userShift.customStartTime || userShift.shift.startTime;
-            const shiftStartTime = startValue ? combineDateWithTime(userShift.assignedDate, startValue, timezone) : null;
+            const shiftStartTime = startValue
+              ? moment(combineAssignedDateWithTimeTz(userShift.assignedDate, startValue, tz)).tz(tz)
+              : null;
 
             // BB-117: sent once per punch (dedupe key on the inbox row).
             await notifyMissedClockOut(
