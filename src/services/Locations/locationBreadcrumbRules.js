@@ -47,6 +47,17 @@ function classifySample(sample, log, now) {
   return { status: "ok", recordedAt: new Date(recordedMs) };
 }
 
+// Battery is stored as a fraction 0–1. Apps send either 0–1 (iOS, Expo) or a
+// percent 0–100 (Android). A value above 1 is read as a percent; exactly 1 = full.
+// Anything else (missing, negative, over 100, not a number) is stored as null.
+function cleanBatteryLevel(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  const fraction = n > 1 ? n / 100 : n;
+  return Math.round(fraction * 1000) / 1000;
+}
+
 function cleanSource(value) {
   if (value === "foreground" || value === "background") return value;
   return null;
@@ -58,4 +69,5 @@ module.exports = {
   coordinateError,
   classifySample,
   cleanSource,
+  cleanBatteryLevel,
 };
