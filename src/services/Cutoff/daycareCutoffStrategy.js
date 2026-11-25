@@ -14,7 +14,7 @@ const { recomputeOtForTimeLog,
         recomputeAllOtForCutoff } = require("./cutoffOtService");
 const { combineDateTime,
         fetchScheduleForDate }   = require("./shiftLookupUtils");
-const { isDriverSegmentPunchType, lastDriverSegment } = require("@utils/punchTypeUtils");
+const { isDriverSegmentPunchType, lastDriverSegment, applyTrainingHours } = require("@utils/punchTypeUtils");
 const { revertLeaveForPunch, honorPunchResult } = require("./leaveConflictCredit");
 
 // ── Strategy-level HTTP error ─────────────────────────────────────────────────
@@ -109,6 +109,21 @@ async function syncApprovedRegularToTimeLog(timeLogId, actualHours) {
   });
 }
 
+/**
+ * BB-149: approved hours for a TRAINING punch. Recomputes the TimeLog first
+ * (applyTrainingHours: clock span − coffee breaks − lunch deduction, no cap), so
+ * the punch log and the approval always show the same hours.
+ * Was min(raw span, defaultShiftHours) with no break/lunch deduction.
+ * Refuses an open punch — there are no real hours to credit yet.
+ */
+async function approvedTrainingHours(timeLog, companyId) {
+  if (!timeLog.timeOut) {
+    throw new StrategyError("This training punch has no clock-out yet. Approve it after the employee clocks out.");
+  }
+  const updated = await applyTrainingHours(timeLog.id, companyId);
+  return parseFloat(Number(updated?.netWorkedHours ?? 0).toFixed(2));
+}
+
 function calculateHours(timeIn, timeOut) {
   if (!timeIn || !timeOut) return 0;
   return (new Date(timeOut) - new Date(timeIn)) / 3600000;
@@ -171,13 +186,9 @@ async function approveSingle(approvalId, {
   const companyTz          = company?.timeZone || "America/Los_Angeles";
   const timeLog            = approval.timeLog;
 
-  // ── TRAINING: cap at defaultShiftHours; use raw if punch is shorter ─────────
+  // ── TRAINING (BB-149): real net hours, no cap ───────────────────────────────
   if (timeLog.punchType === "TRAINING") {
-    const maxHours      = parseFloat((company?.defaultShiftHours ?? 8).toString());
-    const punchDuration = timeLog.timeOut
-      ? calculateHours(timeLog.timeIn, timeLog.timeOut)
-      : maxHours;
-    const trainingHours = parseFloat(Math.min(punchDuration, maxHours).toFixed(2));
+    const trainingHours = await approvedTrainingHours(timeLog, companyId);
     const updated = await prisma.timeLogApproval.update({
       where: { id: approvalId },
       data: {
@@ -194,7 +205,7 @@ async function approveSingle(approvalId, {
     recomputeOtForTimeLog(timeLog.id, cutoffPeriodId, companyId).catch((e) =>
       console.error("[OT] recompute failed after training approve:", e.message)
     );
-    console.log("[✅ DayCare] Training record approved", approvalId, `(${trainingHours}h — punch ${punchDuration.toFixed(2)}h, cap ${maxHours}h)`);
+    console.log("[✅ DayCare] Training record approved", approvalId, `(${trainingHours}h net)`);
     return { message: "Training record approved successfully.", data: updated };
   }
 
@@ -359,7 +370,8 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
   const gracePeriodMinutes = company?.gracePeriodMinutes ?? 15;
   const graceMs            = (gracePeriodMinutes * 60 + 59) * 1000;
   const companyTz          = company?.timeZone || "America/Los_Angeles";
-  const maxTrainingHours   = parseFloat((company?.defaultShiftHours ?? 8).toString());
+  // Driver/Aide regular-segment cap (unchanged; Training no longer uses it — BB-149).
+  const maxRegularSegHours = parseFloat((company?.defaultShiftHours ?? 8).toString());
 
   const approvals = await prisma.timeLogApproval.findMany({
     where: {
@@ -379,10 +391,8 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
 
       // ── TRAINING ────────────────────────────────────────────────────────
       if (timeLog.punchType === "TRAINING") {
-        const punchDuration   = timeLog.timeOut
-          ? calculateHours(timeLog.timeIn, timeLog.timeOut)
-          : maxTrainingHours;
-        const trainingHours   = parseFloat(Math.min(punchDuration, maxTrainingHours).toFixed(2));
+        // BB-149: real net hours, no cap. An open punch throws → counted as failed.
+        const trainingHours = await approvedTrainingHours(timeLog, companyId);
         await prisma.timeLogApproval.update({
           where: { id: approval.id },
           data: {
@@ -444,7 +454,7 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
         // Regular (program) segment is fixed-rate: cap at defaultShiftHours.
         // Driving segments (driver_am, driver_pm) use actual elapsed time.
         const approvedSegHours = (approval.segmentType === "regular" && rawSegHours != null)
-          ? Math.min(rawSegHours, maxTrainingHours)
+          ? Math.min(rawSegHours, maxRegularSegHours)
           : rawSegHours;
 
         await prisma.timeLogApproval.update({

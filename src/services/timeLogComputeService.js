@@ -102,6 +102,39 @@ function lunchBreakMinutes(lunchBreak) {
   return diffMs > 0 ? diffMs / 60000 : 0;
 }
 
+/**
+ * Lunch minutes to deduct from a punch. Same rule for REGULAR and TRAINING:
+ * deductible auto lunch → its value; non-deductible auto lunch → 0;
+ * punched lunch → max(punched, company minimum); no lunch → company minimum.
+ */
+function lunchDeductionFor(log, minimumLunchMins) {
+  if (log.autoLunchDeductionMinutes != null) return log.autoLunchDeductionMinutes;
+  if (log.autoLunchApplied) return 0;
+  const lunchMins = lunchBreakMinutes(log.lunchBreak);
+  return lunchMins > 0 ? Math.max(lunchMins, minimumLunchMins) : minimumLunchMins;
+}
+
+/**
+ * BB-149: hours credited for a completed TRAINING punch.
+ * Net hours like a regular punch (clock span − coffee breaks − lunch deduction),
+ * with no shift snap and no cap (the old defaultShiftHours cap is gone).
+ * Pure — no DB. Returns null when the punch has no clock-out yet.
+ */
+function computeTrainingHours(log, company) {
+  if (!log?.timeIn || !log?.timeOut) return null;
+  const spanMs           = new Date(log.timeOut) - new Date(log.timeIn);
+  const minimumLunchMins = company?.minimumLunchMinutes ?? 60;
+  const coffeeBreakMins  = sumCoffeeBreakMinutes(log.coffeeBreaks);
+  const lunchMins        = lunchDeductionFor(log, minimumLunchMins);
+  const deductionMs      = (coffeeBreakMins + lunchMins) * 60000;
+  return {
+    grossHours:            +(Math.max(0, spanMs) / 3600000).toFixed(2),
+    netWorkedHours:        +(Math.max(0, spanMs - deductionMs) / 3600000).toFixed(2),
+    lunchDeductionMinutes: Math.round(lunchMins),
+    totalBreakMinutes:     Math.round(coffeeBreakMins), // coffee only — lunch is separate
+  };
+}
+
 // ── Segment helper ────────────────────────────────────────────────────────────
 
 /**
@@ -232,7 +265,7 @@ async function computeTimeLogSummary(timeLogId) {
   if (!log.timeOut) return null;
 
   if (log.punchType === "TRAINING") {
-    return require("@utils/punchTypeUtils").applyTrainingFlatHours(
+    return require("@utils/punchTypeUtils").applyTrainingHours(
       timeLogId,
       log.user.companyId,
     );
@@ -498,20 +531,9 @@ async function computeTimeLogSummary(timeLogId) {
 
   // ── 6b. Compute break totals ────────────────────────────────────────────────
   const coffeeBreakMins  = sumCoffeeBreakMinutes(log.coffeeBreaks);
-  const lunchMins        = lunchBreakMinutes(log.lunchBreak);
-
-  let lunchDeductionMins;
-  if (log.autoLunchDeductionMinutes != null) {
-    // Auto-injected deductible lunch — use the exact value set at injection time
-    lunchDeductionMins = log.autoLunchDeductionMinutes;
-  } else if (log.autoLunchApplied) {
-    // Auto-injected but non-deductible — paper trail only, no pay impact
-    lunchDeductionMins = 0;
-  } else if (lunchMins > 0) {
-    lunchDeductionMins = Math.max(lunchMins, minimumLunchMins);
-  } else {
-    lunchDeductionMins = minimumLunchMins;
-  }
+  // Deductible auto lunch → its value; non-deductible auto lunch → 0 (paper trail);
+  // punched lunch → max(punched, minimum); none → minimum. Shared with TRAINING (BB-149).
+  let lunchDeductionMins = lunchDeductionFor(log, minimumLunchMins);
 
   const totalBreakMins = Math.round(coffeeBreakMins + lunchDeductionMins);
 
@@ -871,4 +893,4 @@ async function resolveDriverAideSegments(driverLogs, companyId) {
   return result;
 }
 
-module.exports = { computeTimeLogSummary, resolveShiftForTimeLog, resolveDriverAideSegments };
+module.exports = { computeTimeLogSummary, resolveShiftForTimeLog, resolveDriverAideSegments, computeTrainingHours };
