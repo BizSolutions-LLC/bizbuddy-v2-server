@@ -193,83 +193,10 @@ async function calcRequestedHours(userId, startISO, endISO, options = {}) {
  *   Empty = no overlap.
  */
 async function findLeavePunchOverlaps(userId, startISO, endISO, options = {}) {
-  const {
-    requestedStartTime, requestedEndTime, excludeShiftIds, includeWeekends = true, now = new Date(),
-  } = options;
-  const excludeSet = new Set(excludeShiftIds || []);
+  const { now = new Date() } = options;
 
-  const user = await prisma.user.findUnique({
-    where:  { id: userId },
-    select: { company: { select: { timeZone: true } } },
-  });
-  const tz = user?.company?.timeZone || "America/Los_Angeles";
-
-  const startDate = moment.tz(startISO, tz).startOf("day");
-  const endDate   = moment.tz(endISO,   tz).startOf("day");
-
-  const userShifts = await prisma.userShift.findMany({
-    where: {
-      userId,
-      assignedDate: { gte: startDate.toDate(), lte: endDate.clone().endOf("day").toDate() },
-      status: { not: "cancelled" },
-    },
-    select: {
-      id:           true,
-      assignedDate: true,
-      shift: { select: { startTime: true, endTime: true, crossesMidnight: true, timeZone: true } },
-    },
-  });
-
-  // Same day grouping as calcDailyHours: assignedDate is a plain @db.Date.
-  const shiftsByDate = new Map();
-  for (const us of userShifts) {
-    if (!us.shift) continue;
-    const dateStr = us.assignedDate.toISOString().split("T")[0];
-    if (!shiftsByDate.has(dateStr)) shiftsByDate.set(dateStr, []);
-    shiftsByDate.get(dateStr).push(us);
-  }
-
-  // Time columns are @db.Time anchored to 1970-01-01 UTC — read UTC h:m:s.
-  const hhmmss = (t) => {
-    const d = new Date(t);
-    const p = (n) => String(n).padStart(2, "0");
-    return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-  };
-  const at = (dateStr, t, zone) => moment.tz(`${dateStr} ${hhmmss(t)}`, "YYYY-MM-DD HH:mm:ss", zone);
-
-  // ── 1. Leave windows per day ────────────────────────────────────────────────
-  const windows = [];
-  const cursor = startDate.clone();
-  while (cursor.isSameOrBefore(endDate, "day")) {
-    const dateStr   = cursor.format("YYYY-MM-DD");
-    const dayShifts = shiftsByDate.get(dateStr);
-
-    if (dayShifts) {
-      for (const us of dayShifts) {
-        if (excludeSet.has(us.id)) continue;
-        const zone = us.shift.timeZone && moment.tz.zone(us.shift.timeZone) ? us.shift.timeZone : tz;
-        const from = at(dateStr, us.shift.startTime, zone);
-        let to     = at(dateStr, us.shift.endTime, zone);
-        if (us.shift.crossesMidnight || !to.isAfter(from)) to = to.add(1, "day");
-        windows.push({ date: dateStr, from: from.toDate(), to: to.toDate(), zone });
-      }
-    } else if (includeWeekends === false && (cursor.day() === 0 || cursor.day() === 6)) {
-      // 0h day — nothing charged, nothing to overlap.
-    } else if (requestedStartTime && requestedEndTime) {
-      const from = at(dateStr, requestedStartTime, tz);
-      let to     = at(dateStr, requestedEndTime, tz);
-      if (!to.isAfter(from)) to = to.add(1, "day");
-      windows.push({ date: dateStr, from: from.toDate(), to: to.toDate(), zone: tz });
-    } else {
-      windows.push({
-        date: dateStr,
-        from: cursor.clone().startOf("day").toDate(),
-        to:   cursor.clone().add(1, "day").startOf("day").toDate(),
-        zone: tz,
-      });
-    }
-    cursor.add(1, "day");
-  }
+  // ── 1. Leave windows per day (shared with the leave details, see leaveDayWindows) ──
+  const windows = await leaveDayWindows(userId, startISO, endISO, options);
   if (!windows.length) return [];
 
   // ── 2. Punches touching the overall span ───────────────────────────────────
@@ -314,6 +241,132 @@ async function findLeavePunchOverlaps(userId, startISO, endISO, options = {}) {
     }
   }
   return out;
+}
+
+/**
+ * BB-124 follow-up: the time windows a leave charges, per day — the single source for the BB-124
+ * overlap block and the leave details (request details + approval preview).
+ * Same rules as calcDailyHours, which prices them:
+ *   - a day with plotted shifts: each shift NOT deselected (excludeShiftIds),
+ *     read in the shift's own zone (Shift.timeZone → company zone);
+ *     a day whose shifts are all deselected has no window (0h);
+ *   - an unplotted Sat/Sun when includeWeekends is false: no window (0h);
+ *   - any other day: the entered time window (company zone) if given, else
+ *     the whole calendar day.
+ * LeaveDay stores only date / hours / paid, so this is read live from today's
+ * shift assignments: if a day's shifts change after approval, the windows follow.
+ *
+ * @returns {Promise<Array<{ date, from: Date, to: Date, zone, zoneLabel, kind: "shift"|"requested"|"whole_day",
+ *   shiftName: string|null, startLocal: "h:mm A", endLocal: "h:mm A", hours }>>} in date order
+ */
+async function leaveDayWindows(userId, startISO, endISO, options = {}) {
+  const { requestedStartTime, requestedEndTime, excludeShiftIds, includeWeekends = true } = options;
+  const excludeSet = new Set(excludeShiftIds || []);
+
+  const user = await prisma.user.findUnique({
+    where:  { id: userId },
+    select: { company: { select: { timeZone: true } } },
+  });
+  const tz = user?.company?.timeZone || "America/Los_Angeles";
+
+  const startDate = moment.tz(startISO, tz).startOf("day");
+  const endDate   = moment.tz(endISO,   tz).startOf("day");
+
+  const userShifts = await prisma.userShift.findMany({
+    where: {
+      userId,
+      assignedDate: { gte: startDate.toDate(), lte: endDate.clone().endOf("day").toDate() },
+      status: { not: "cancelled" },
+    },
+    select: {
+      id:           true,
+      assignedDate: true,
+      shift: { select: { shiftName: true, startTime: true, endTime: true, crossesMidnight: true, timeZone: true } },
+    },
+  });
+
+  // Same day grouping as calcDailyHours: assignedDate is a plain @db.Date.
+  const shiftsByDate = new Map();
+  for (const us of userShifts) {
+    if (!us.shift) continue;
+    const dateStr = us.assignedDate.toISOString().split("T")[0];
+    if (!shiftsByDate.has(dateStr)) shiftsByDate.set(dateStr, []);
+    shiftsByDate.get(dateStr).push(us);
+  }
+
+  // Time columns are @db.Time anchored to 1970-01-01 UTC — read UTC h:m:s.
+  const hhmmss = (t) => {
+    const d = new Date(t);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+  };
+  const at = (dateStr, t, zone) => moment.tz(`${dateStr} ${hhmmss(t)}`, "YYYY-MM-DD HH:mm:ss", zone);
+  const item = (date, from, to, zone, kind, shiftName) => ({
+    date,
+    from:       from.toDate(),
+    to:         to.toDate(),
+    zone,
+    zoneLabel:  zoneLabel(zone),
+    kind,
+    shiftName:  shiftName || null,
+    startLocal: from.clone().tz(zone).format("h:mm A"),
+    endLocal:   to.clone().tz(zone).format("h:mm A"),
+    hours:      +((to - from) / 36e5).toFixed(2),
+  });
+
+  const windows = [];
+  const cursor = startDate.clone();
+  while (cursor.isSameOrBefore(endDate, "day")) {
+    const dateStr   = cursor.format("YYYY-MM-DD");
+    const dayShifts = shiftsByDate.get(dateStr);
+
+    if (dayShifts) {
+      const charged = dayShifts
+        .filter((us) => !excludeSet.has(us.id))
+        .map((us) => {
+          const zone = us.shift.timeZone && moment.tz.zone(us.shift.timeZone) ? us.shift.timeZone : tz;
+          const from = at(dateStr, us.shift.startTime, zone);
+          let to     = at(dateStr, us.shift.endTime, zone);
+          if (us.shift.crossesMidnight || !to.isAfter(from)) to = to.add(1, "day");
+          return item(dateStr, from, to, zone, "shift", us.shift.shiftName);
+        })
+        .sort((a, b) => a.from - b.from);
+      windows.push(...charged);
+    } else if (includeWeekends === false && (cursor.day() === 0 || cursor.day() === 6)) {
+      // 0h day — nothing charged, nothing to overlap.
+    } else if (requestedStartTime && requestedEndTime) {
+      const from = at(dateStr, requestedStartTime, tz);
+      let to     = at(dateStr, requestedEndTime, tz);
+      if (!to.isAfter(from)) to = to.add(1, "day");
+      windows.push(item(dateStr, from, to, tz, "requested"));
+    } else {
+      windows.push(item(dateStr, cursor.clone().startOf("day"), cursor.clone().add(1, "day").startOf("day"), tz, "whole_day"));
+    }
+    cursor.add(1, "day");
+  }
+  return windows;
+}
+
+/**
+ * Leave day rows (preview or LeaveDay) + their windows → each row gets
+ * `windows: [{ kind, shiftName, start, end, timeZone, zoneLabel, hours }]`
+ * (start/end "h:mm A" in that window's zone). A day with no window gets [].
+ */
+function attachLeaveWindows(rows, windows) {
+  const byDate = new Map();
+  for (const w of windows) {
+    if (!byDate.has(w.date)) byDate.set(w.date, []);
+    byDate.get(w.date).push({
+      kind:      w.kind,
+      shiftName: w.shiftName,
+      start:     w.startLocal,
+      end:       w.endLocal,
+      timeZone:  w.zone,
+      zoneLabel: w.zoneLabel,
+      hours:     w.hours,
+    });
+  }
+  return rows.map((r) => ({ ...r, windows: byDate.get(String(r.date).slice(0, 10)) || [] }));
 }
 
 /**
@@ -372,4 +425,6 @@ module.exports = {
   leaveVisibilityWhere,
   findLeavePunchOverlaps,
   describeLeavePunchOverlaps,
+  leaveDayWindows,
+  attachLeaveWindows,
 };

@@ -30,6 +30,8 @@ const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { calcDailyHours } = require("@utils/leaveUtils");
 const { buildPunchLogReport, reportFileName } = require("@services/Reports/punchLogReportService");
+const { resolveRange, buildAttendance, loadCompanyRules } = require("@services/Analytics/attendanceAnalyticsService");
+const { leaveDayWindows } = require("@utils/leaveUtils");
 
 const DA_TYPES = new Set(["DRIVER_AIDE", "DRIVER_AIDE_AM", "DRIVER_AIDE_PM"]);
 const calYmd = (d) => (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10);
@@ -189,12 +191,153 @@ async function approvedOvertime(report, employees) {
   return ot;
 }
 
+// ── BB-150: day labels for the Excel grid ─────────────────────────────────────
+// A day with no hours gets a label instead of a blank: the leave code (SL, VL, …;
+// unpaid flagged), HOL (company holiday), Absent (scheduled, no punch, no leave, day
+// over) or OFF (no shift on the schedule). Hours always win; labels add no hours.
+// Columns are still only the dates someone punched.
+// Scheduled / absent follow the Overview rules (attendanceAnalyticsService, BB-133:
+// UserShift rows, company zone, range clamped to today). Future days only get
+// leave / holiday labels. Excel only: the CSV keeps its blanks.
+
+const RESERVED_CODES = new Set(["HOL", "OFF", "ABS", "TR", "OT"]);
+const r2 = (v) => Math.round(v * 100) / 100;
+// Which grid cell a shift belongs to: "Driver/Aide AM Shift" → am, "… PM Shift" → pm, else regular.
+function segmentOfShift(name) {
+  const s = String(name || "").toLowerCase();
+  if (/driver|aide/.test(s) && /\bam\b/.test(s)) return "am";
+  if (/driver|aide/.test(s) && /\bpm\b/.test(s)) return "pm";
+  return "regular";
+}
+function leaveCode(name) {
+  const s = String(name || "").trim();
+  const low = s.toLowerCase();
+  if (low.includes("sick")) return "SL";
+  if (low.includes("vacation")) return "VL";
+  const code = s
+    .replace(/[^A-Za-z ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 3);
+  return code && !RESERVED_CODES.has(code) ? code : "LV";
+}
+
+/**
+ * @returns {Promise<{ dates: string[], legend: {code,name}[], labelOf: (userId, ymd) => null | { text, kind, paid } }>}
+ *   kind: "leave" | "holiday" | "absent" | "off"
+ */
+async function buildDayLabels(report, companyId, userIds, dates) {
+  // Columns stay the dates someone punched (user, 2026-11-25: no column for a day
+  // nobody worked); labels only fill an employee's empty cells on those dates.
+  const from = report.filters.rangeFrom;
+  const to = report.filters.rangeTo;
+  if (!userIds.length || !dates.length) return { dates, legend: [], labelOf: () => null };
+
+  const dbFrom = new Date(`${from}T00:00:00.000Z`);
+  const dbTo = new Date(`${to}T23:59:59.999Z`);
+  const range = resolveRange({ period: "custom", startDate: from, endDate: to }, report.company.timeZone, { maxCustomDays: 400 });
+  const rules = await loadCompanyRules(companyId);
+
+  const [attendance, leaveDays, holidays] = await Promise.all([
+    buildAttendance({ company: rules, userIds, range }),
+    prisma.leaveDay.findMany({
+      where: { date: { gte: dbFrom, lte: dbTo }, revertedAt: null, leave: { userId: { in: userIds }, status: "approved" } },
+      select: {
+        date: true, isPaid: true, hours: true,
+        leave: {
+          select: {
+            id: true, userId: true, leaveType: true, policyId: true, startDate: true, endDate: true,
+            requestedStartTime: true, requestedEndTime: true, excludedShiftIds: true, includeWeekends: true,
+          },
+        },
+      },
+    }),
+    prisma.holiday.findMany({ where: { companyId, date: { gte: dbFrom, lte: dbTo } }, select: { date: true, name: true } }),
+  ]);
+
+  const policyIds = [...new Set(leaveDays.map((l) => l.leave.policyId || l.leave.leaveType).filter(Boolean))];
+  const policies = policyIds.length
+    ? await prisma.leavePolicy.findMany({ where: { id: { in: policyIds } }, select: { id: true, leaveType: true } })
+    : [];
+  const policyName = new Map(policies.map((p) => [p.id, p.leaveType]));
+
+  // Each leave's charged windows per day (shift name + times), for the segment cell
+  // and the hover note. Same rules as the leave details (leaveUtils.leaveDayWindows).
+  const windowsByLeaveDate = new Map(); // leaveId|ymd → windows
+  const leavesById = new Map(leaveDays.map((l) => [l.leave.id, l.leave]));
+  await Promise.all(
+    [...leavesById.values()].map(async (lv) => {
+      const ws = await leaveDayWindows(lv.userId, lv.startDate, lv.endDate, {
+        requestedStartTime: lv.requestedStartTime,
+        requestedEndTime:   lv.requestedEndTime,
+        excludeShiftIds:    Array.isArray(lv.excludedShiftIds) ? lv.excludedShiftIds : [],
+        includeWeekends:    lv.includeWeekends !== false,
+      }).catch(() => []);
+      for (const w of ws) {
+        const k = `${lv.id}|${w.date}`;
+        if (!windowsByLeaveDate.has(k)) windowsByLeaveDate.set(k, []);
+        windowsByLeaveDate.get(k).push(w);
+      }
+    })
+  );
+
+  const legend = new Map(); // code → leave type name
+  const leaveBy = new Map(); // userId|ymd → { code, paid, hours, segs: Set|null, notes: string[] }
+  for (const l of leaveDays) {
+    const name = policyName.get(l.leave.policyId || l.leave.leaveType) || l.leave.leaveType || "Leave";
+    const code = leaveCode(name);
+    if (!legend.has(code)) legend.set(code, name);
+    const ymd = calYmd(l.date);
+    const k = `${l.leave.userId}|${ymd}`;
+    const ws = windowsByLeaveDate.get(`${l.leave.id}|${ymd}`) || [];
+    const shiftWs = ws.filter((w) => w.kind === "shift");
+    const prev = leaveBy.get(k) || { code: null, paid: false, hours: 0, segs: new Set(), wholeDay: false, notes: [] };
+    prev.code = !prev.code || prev.code === code ? code : `${prev.code}/${code}`;
+    prev.paid = prev.paid || l.isPaid;
+    prev.hours += n(l.hours);
+    if (shiftWs.length) shiftWs.forEach((w) => prev.segs.add(segmentOfShift(w.shiftName)));
+    else prev.wholeDay = true;
+    const when = ws.length
+      ? ws.map((w) => `${w.shiftName || (w.kind === "requested" ? "Requested time" : "Whole day")}${w.kind === "whole_day" ? "" : ` ${w.startLocal}–${w.endLocal}`}`).join(", ")
+      : "";
+    const note = `${name} ${r2(n(l.hours))}h ${l.isPaid ? "paid" : "unpaid"}${when ? ` · ${when}` : ""}`;
+    if (!prev.notes.includes(note)) prev.notes.push(note);
+    leaveBy.set(k, prev);
+  }
+  const holidaySet = new Set(holidays.map((h) => calYmd(h.date)));
+
+  const labelOf = (userId, ymd) => {
+    const leave = leaveBy.get(`${userId}|${ymd}`);
+    if (leave) {
+      return {
+        text: leave.code, kind: "leave", paid: leave.paid,
+        // AM / Regular / PM cells the leave covers; null = whole day (no shift windows)
+        segs: leave.wholeDay || !leave.segs.size ? null : [...leave.segs],
+        note: leave.notes.join("\n"),
+      };
+    }
+    if (holidaySet.has(ymd)) return { text: "HOL", kind: "holiday" };
+    if (range.empty || ymd > range.today) return null; // future: no OFF / Absent guesses
+    const day = attendance.get(userId)?.get(ymd);
+    if (day?.absent) return { text: "Absent", kind: "absent" }; // spelled out (user: "ABS" read awkwardly)
+    if (day?.worked || day?.scheduled) return null; // punched with 0 hours, or today's shift not over
+    return { text: "OFF", kind: "off" };
+  };
+
+  return { dates, legend: [...legend].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)), labelOf };
+}
+
 /**
  * @param {{ id, role, companyId, agentId? }} actor  req.user
  * @param {object} query  same as /api/reports/punch-logs (scope is always team)
- * @returns {Promise<{ report, dates, employees, grand, headers: string[], rows: string[][], fileName: (ext) => string }>}
+ * @param {{ labels?: boolean }} [opts]  BB-150: labels = true adds `xlsx` (day labels on the
+ *   punched dates) for the Excel version; the CSV fields are unchanged.
+ * @returns {Promise<{ report, dates, employees, grand, headers: string[], rows: string[][], xlsx?, fileName: (ext) => string }>}
  */
-async function buildPayrollGrid(actor, query = {}) {
+async function buildPayrollGrid(actor, query = {}, { labels = false } = {}) {
   const report = await buildPunchLogReport(actor, { ...query, scope: "team" });
   const { company, rows, fixedHours } = report;
   const defaultShift = Number(company.defaultShiftHours) || 8;
@@ -247,12 +390,14 @@ async function buildPayrollGrid(actor, query = {}) {
   const grand = { am: 0, reg: 0, pm: 0, driving: 0, tr: 0, sl: 0, ot: 0, fixedOt: 0 };
   const dataRows = [];
   const gridEmployees = []; // the same figures as numbers, for the Excel version
+  const dayLabels = labels ? await buildDayLabels(report, actor.companyId, sorted.map((u) => u.id), dates) : null;
 
   for (const u of sorted) {
     const isFixed = fixedByUser.has(u.id);
     let tAM = 0, tReg = 0, tPM = 0, tTR = 0;
     const row = ["", u.employeeId || "", nameOf(u), u.employmentDetail?.jobTitle || "—"];
     const days = [];
+    const figByDate = new Map(); // BB-150: date → { am, regular, pm }
 
     for (const d of dates) {
       const logs = byUserDate.get(`${u.id}|${d}`) || [];
@@ -280,7 +425,28 @@ async function buildPayrollGrid(actor, query = {}) {
       const cellReg = reg + tr + (isFixed ? Math.min(svSched, defaultShift) : 0);
       row.push(cell(am), cell(cellReg), cell(pm));
       days.push({ am, regular: cellReg, pm });
+      figByDate.set(d, { am, regular: cellReg, pm });
     }
+
+    // BB-150: hours where there are any, else a label.
+    const xlsxDays = dayLabels
+      ? dayLabels.dates.map((d) => {
+          const fig = figByDate.get(d);
+          if (fig && (fig.am > 0 || fig.regular > 0 || fig.pm > 0)) {
+            // Partial-day leave (e.g. sick on the Driver PM shift, AM + Regular worked):
+            // the leave code goes in the empty cell(s) of the shift(s) it covers.
+            const label = dayLabels.labelOf(u.id, d);
+            if (label?.kind === "leave" && label.segs) {
+              const segLabels = {};
+              for (const seg of label.segs) if (!(fig[seg] > 0)) segLabels[seg] = label;
+              if (Object.keys(segLabels).length) return { ...fig, segLabels };
+            }
+            return fig;
+          }
+          const label = dayLabels.labelOf(u.id, d);
+          return label ? { am: 0, regular: 0, pm: 0, label } : fig || null;
+        })
+      : null;
 
     const slH = sl.get(u.id) || 0;
     const otH = ot.get(u.id) || 0;
@@ -303,6 +469,7 @@ async function buildPayrollGrid(actor, query = {}) {
       role: row[3],
       isFixed,
       days,
+      ...(xlsxDays && { xlsxDays }),
       totals: { am: tAM, regular: tReg, pm: tPM, driving, training: tTR, sick: slH, overtime: otH, total },
     });
 
@@ -334,6 +501,7 @@ async function buildPayrollGrid(actor, query = {}) {
     // CSV (format=payroll-csv): the original two-header-row layout
     headers: dateRow,
     rows: [colRow, ...dataRows, totalRow],
+    ...(dayLabels && { xlsx: { dates: dayLabels.dates, legend: dayLabels.legend } }),
     fileName: (ext) => reportFileName(report, ext, "PunchLogs_PayrollGrid"),
   };
 }

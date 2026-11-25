@@ -14,6 +14,7 @@ const {
   getCutoffPeriods,
   getCutoffPeriodById,
   updateCutoffStatus,
+  reopenCutoffPeriod,
   finalizeCutoffPeriod,
   deleteCutoffPeriod,
   getCutoffApprovals,
@@ -228,6 +229,20 @@ router.patch(
   authenticate,
   authorizeRoles("admin", "superadmin"),
   updateCutoffStatus
+);
+
+/**
+ * @route   POST /api/cutoff-periods/:id/reopen
+ * @desc    BB-149 follow-up: reopen a processed cutoff (processed → open), with a reason.
+ *          409 REOPEN_CONFIRM_PAID when the payment date is reached, until confirmPaid: true.
+ * @body    { reason: string, confirmPaid?: boolean }
+ * @access  Admin, Superadmin (B. Buddy included)
+ */
+router.post(
+  "/:id/reopen",
+  authenticate,
+  authorizeRoles("admin", "superadmin"),
+  reopenCutoffPeriod
 );
 
 /**

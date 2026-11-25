@@ -36,8 +36,9 @@ const getPunchLogReport = async (req, res) => {
     if (!READY.includes(format)) return res.status(400).json({ message: "format must be pdf, xlsx, csv, payroll or payroll-csv." });
 
     if (format === "payroll" || format === "payroll-csv") {
-      const grid = await buildPayrollGrid(req.user, req.query);
       const xlsx = format === "payroll";
+      // BB-150: day labels (SL/VL/HOL/OFF/Absent) in empty day cells — Excel only.
+      const grid = await buildPayrollGrid(req.user, req.query, { labels: xlsx });
       const file = xlsx ? await generatePayrollGridXlsx(grid) : toCsv(grid.headers, grid.rows);
       res.setHeader("Content-Type", CONTENT_TYPE[format]);
       res.setHeader("Content-Disposition", `attachment; filename="${grid.fileName(xlsx ? "xlsx" : "csv")}"`);

@@ -11,6 +11,11 @@
 //   row 9            (merged down)      | AM | Regular | PM …       | AM | Regular | PM         |  (merged down)
 //   one row per employee, then Total. Hours are numbers (0.00); empty when 0.
 //   Saturday/Sunday date groups are tinted; ID / name / role and both header rows are frozen.
+//
+// BB-150: when the grid carries `xlsx` (buildPayrollGrid with labels), a day with no
+// hours (date columns = dates someone punched, as before) shows one label across its
+// AM / Regular / PM cells: the leave code (SL, VL, …; grey = unpaid), HOL, Absent or OFF.
+// Labels add no hours; totals are unchanged.
 
 const moment = require("moment-timezone");
 const XL = require("@utils/xlsx/reportWorkbook");
@@ -20,12 +25,23 @@ const plural = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
 const num = (v) => (v > 0 ? Math.round(v * 100) / 100 : null);
 const WEEKEND = "FFF3F4F6";
 
+// BB-150 label look: [font colour, bold, italic]
+const LABEL_LOOK = {
+  leave:   ["FF1F2937", true, false],
+  unpaid:  ["FF9CA3AF", true, false],
+  holiday: ["FF1D4ED8", true, false],
+  absent:  ["FFB91C1C", true, false],
+  off:     ["FF9CA3AF", false, true],
+};
+
 /**
  * @param {object} grid  from buildPayrollGrid
  * @returns {Promise<Buffer>}
  */
 function generatePayrollGridXlsx(grid) {
-  const { report, dates, employees, grand } = grid;
+  const { report, employees, grand } = grid;
+  const dates = grid.xlsx?.dates || grid.dates; // same punched dates; BB-150 labels ride on them
+  const dayOf = (e) => e.xlsxDays || e.days;
   const { company, requester, filters, basis } = report;
   const tz = company.timeZone;
 
@@ -121,14 +137,36 @@ function generatePayrollGridXlsx(grid) {
       style.body(c, { striped });
       if (i === 0) c.alignment = { vertical: "middle", horizontal: "center" };
     });
-    e.days.forEach((day, d) => {
+    dayOf(e).forEach((day, d) => {
       const col = firstDateCol + d * 3;
-      [day?.am, day?.regular, day?.pm].forEach((v, k) => {
-        const c = ws.getCell(row, col + k);
-        c.value = num(v || 0);
-        style.body(c, { striped, numeric: true });
+      const weekendTint = (c) => {
         if (isWeekend(dates[d]) && !striped) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: WEEKEND } };
-      });
+      };
+      const labelCell = (c, label) => {
+        c.value = label.text;
+        style.body(c, { striped });
+        const [color, bold, italic] =
+          LABEL_LOOK[label.kind === "leave" && !label.paid ? "unpaid" : label.kind] || LABEL_LOOK.off;
+        c.font = { ...c.font, bold, italic, color: { argb: color } };
+        c.alignment = { vertical: "middle", horizontal: "center" };
+        if (label.note) c.note = label.note; // hover: leave type, hours, paid, shift + times
+        weekendTint(c);
+      };
+      if (day?.label) {
+        // BB-150: one label across AM / Regular / PM.
+        ws.mergeCells(row, col, row, col + 2);
+        labelCell(ws.getCell(row, col), day.label);
+      } else {
+        // Partial-day leave: the leave code sits in the empty cell of the shift it covers.
+        ["am", "regular", "pm"].forEach((key, k) => {
+          const c = ws.getCell(row, col + k);
+          const segLabel = day?.segLabels?.[key];
+          if (segLabel) return labelCell(c, segLabel);
+          c.value = num((day && day[key]) || 0);
+          style.body(c, { striped, numeric: true });
+          weekendTint(c);
+        });
+      }
       style.groupEdge(ws.getCell(row, col));
     });
     TOTAL_KEYS.forEach((key, k) => {
@@ -158,6 +196,16 @@ function generatePayrollGridXlsx(grid) {
     `Dates are in ${tz} (the company's time zone). ${basis === "preliminary" ? "Live punches: hours can still change in cutoff review." : "Locked or processed cutoffs show the reviewed, paid hours."}`,
     "Fixed-hours employees (marked \"(fixed hours)\"): Regular = their fixed hours minus sick leave; daily cells show the hours worked, capped at one shift; Total adds their approved off-day overtime.",
     "SL is approved, paid sick leave in the range (on locked cutoffs, leave days with no punch, or whose punch was excluded in cutoff review). OT is the approved overtime recorded in cutoff review.",
+    ...(grid.xlsx
+      ? [
+          `Day labels (a day with no hours): ${[
+            ...grid.xlsx.legend.map((l) => `${l.code} - ${l.name}`),
+            "HOL - Company holiday",
+            "OFF - No shift scheduled",
+            "Absent - Scheduled, no punch, no leave",
+          ].join(" · ")}. Leave codes in grey are unpaid. A leave code in a single AM / Regular / PM cell = leave on that shift only (the rest of the day was worked); hover a leave code for its hours, shift and times. Labels add no hours; future days show only leave and holidays.`,
+        ]
+      : []),
   ].forEach((t) => {
     style.note(ws, row, noteCols, t);
     row += 1;

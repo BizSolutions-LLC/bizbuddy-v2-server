@@ -32,6 +32,9 @@ const { combineDateTime } = require("@services/Cutoff/shiftLookupUtils");
 const { calcDailyHours } = require("@utils/leaveUtils");
 const { DRIVER_SEGMENT_MAP, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
 const { generatePayrollExportForCutoffPeriod } = require("@services/Payroll/payrollExportService");
+const {
+  recordStatusEvent, historyFor, historySummary, outdatedExports, wasReopened, paymentDateReached, ymd: cutoffYmd,
+} = require("@services/Cutoff/cutoffStatusEventService");
 const { applyFixedHoursForCutoff, getFixedHoursForCutoff, updateFixedHours, getOffDayTimeLogIds } = require("@services/Cutoff/fixedHoursService");
 
 function getApprovalStrategy(companyId) {
@@ -471,6 +474,11 @@ const getCutoffPeriods = async (req, res) => {
       const key = `${row.periodStart.toISOString().slice(0, 10)}_${row.periodEnd.toISOString().slice(0, 10)}`;
       batchByPeriod.set(key, row);
     }
+    // BB-149 follow-up: reopen history + exports still holding a reopened department's old numbers.
+    const [historyById, outdatedByPeriod] = await Promise.all([
+      historyFor(cutoffPeriods.map((p) => p.id)),
+      outdatedExports(companyId, batchRows),
+    ]);
 
     // Approval stats per period
     // ✅ 'rejected' counted as 'excluded' for display consistency
@@ -492,13 +500,16 @@ const getCutoffPeriods = async (req, res) => {
 
         const periodKey = `${period.periodStart.toISOString().slice(0, 10)}_${period.periodEnd.toISOString().slice(0, 10)}`;
         const batch = batchByPeriod.get(periodKey);
+        const outdated = batch ? outdatedByPeriod.get(periodKey) : null;
         const payrollExport = {
           generated: !!batch,
           employeeCount: batch ? batch.employeeCount : null,
           generatedAt: batch ? batch.generatedAt : null,
+          outdated: !!outdated,
+          outdatedDepartments: outdated ? outdated.departments : [],
         };
 
-        return { ...period, approvalStats: stats, payrollExport };
+        return { ...period, approvalStats: stats, payrollExport, ...historySummary(historyById.get(period.id)) };
       })
     );
 
@@ -555,9 +566,11 @@ const getCutoffPeriodById = async (req, res) => {
       },
     });
 
+    // BB-149 follow-up: full status history (processed / reopened / …).
+    const history = (await historyFor([id])).get(id) || [];
     return res.status(200).json({
       message: "Cutoff period retrieved successfully.",
-      data: full,
+      data: { ...full, statusHistory: history, ...historySummary(history) },
     });
   } catch (error) {
     console.error("❌ getCutoffPeriodById:", error);
@@ -614,6 +627,14 @@ const updateCutoffStatus = async (req, res) => {
     });
 
     console.log("[✅ Cutoff status updated]", id, "→", status);
+
+    // BB-149 follow-up: status history (best effort, never blocks the change).
+    if (cutoffPeriod.status !== status) {
+      await recordStatusEvent({
+        cutoffPeriodId: id, companyId: updated.companyId || companyId,
+        fromStatus: cutoffPeriod.status, toStatus: status, actor: req.user,
+      });
+    }
 
     // BB-066: "processed" is the one truly final status — updateCutoffStatus
     // blocks any further change once a period is processed, unlike "locked"
@@ -672,15 +693,20 @@ const updateCutoffStatus = async (req, res) => {
           where: { ...HUMAN_ONLY, companyId, status: 'active' },
           select: { id: true, departmentId: true },
         });
+        // BB-149 follow-up: processed again after a reopen → "Payroll Updated",
+        // not a second "Payroll Processed".
+        const reprocessed = await wasReopened(id);
         await Promise.all(employees.map(emp =>
           createNotification({
             userId: emp.id,
             companyId,
             departmentId: emp.departmentId,
             notificationCode: 'CUTOFF_PROCESSED',
-            title: 'Payroll Processed',
-            message: `Payroll for cutoff period ${periodLabel} has been processed.`,
-            payload: { cutoffPeriodId: id, periodLabel },
+            title: reprocessed ? 'Payroll Updated' : 'Payroll Processed',
+            message: reprocessed
+              ? `Payroll for cutoff period ${periodLabel} has been updated.`
+              : `Payroll for cutoff period ${periodLabel} has been processed.`,
+            payload: { cutoffPeriodId: id, periodLabel, ...(reprocessed && { updated: true }) },
           })
         ));
       }
@@ -698,6 +724,88 @@ const updateCutoffStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ updateCutoffStatus:", error);
+    return res.status(500).json({ message: "Internal server error.", error: error.message });
+  }
+};
+
+/**
+ * POST /api/cutoff-periods/:id/reopen
+ * BB-149 follow-up: reopen a PROCESSED cutoff (processed → open). Admin / superadmin
+ * (B. Buddy included; its support staff id is stored with the event).
+ * Body: { reason: string (5–500), confirmPaid?: boolean }
+ *   - Only a processed cutoff (a locked one opens through PATCH /:id/status).
+ *   - Payment date reached (company zone) → 409 REOPEN_CONFIRM_PAID until confirmPaid: true.
+ *   - Status change + its CutoffStatusEvent row in one transaction: no audit row, no reopen.
+ * Approvals keep their decisions; payroll export rows stay (shown as outdated) until
+ * the cutoff is processed again, which rebuilds them. No employee notification.
+ */
+const reopenCutoffPeriod = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const companyId = req.user.companyId;
+    const reason = String(req.body?.reason ?? "").trim();
+    const confirmPaid = req.body?.confirmPaid === true;
+
+    if (reason.length < 5 || reason.length > 500) {
+      return res.status(400).json({ code: "REOPEN_REASON_REQUIRED", message: "Give a reason for reopening (5–500 characters)." });
+    }
+
+    const cutoffPeriod = await findCutoffForCompany(id, companyId);
+    if (!cutoffPeriod) {
+      return res.status(404).json({ message: "Cutoff period not found." });
+    }
+    if (cutoffPeriod.status !== "processed") {
+      return res.status(400).json({
+        code: "REOPEN_NOT_PROCESSED",
+        message: cutoffPeriod.status === "locked"
+          ? "This cutoff is locked, not processed: open it with the normal status change."
+          : `Only a processed cutoff can be reopened. This one is ${cutoffPeriod.status}.`,
+      });
+    }
+
+    const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timeZone: true } });
+    const paymentDate = cutoffYmd(cutoffPeriod.paymentDate);
+    const paid = paymentDateReached(cutoffPeriod.paymentDate, company?.timeZone);
+    if (paid && !confirmPaid) {
+      return res.status(409).json({
+        code: "REOPEN_CONFIRM_PAID",
+        paymentDate,
+        message:
+          `This cutoff's payment date (${paymentDate}) has been reached, so it may already be paid. ` +
+          "Reopening lets its hours change, and the new numbers can differ from what was paid. Confirm to reopen anyway.",
+      });
+    }
+
+    let updated;
+    try {
+      updated = await prisma.$transaction(async (tx) => {
+        const n = await tx.$executeRaw`
+          UPDATE "CutoffPeriod" SET "status" = 'open', "updatedAt" = NOW()
+          WHERE "id" = ${id} AND "status" = 'processed'`;
+        if (!n) throw Object.assign(new Error("status changed"), { code: "REOPEN_STATUS_CHANGED" });
+        await tx.$executeRaw`
+          INSERT INTO "CutoffStatusEvent" ("cutoffPeriodId", "companyId", "fromStatus", "toStatus", "action", "reason", "actorId", "agentId")
+          VALUES (${id}, ${cutoffPeriod.companyId || companyId}, 'processed', 'open', 'reopen', ${reason}, ${req.user.id}, ${req.user.agentId || null})`;
+        return tx.cutoffPeriod.findUnique({ where: { id } });
+      });
+    } catch (err) {
+      if (err.code === "REOPEN_STATUS_CHANGED") {
+        return res.status(409).json({ code: "REOPEN_STATUS_CHANGED", message: "The cutoff's status changed meanwhile. Reload and try again." });
+      }
+      if (/CutoffStatusEvent/.test(String(err.message))) {
+        console.error("[BB-149] reopen refused, status history table missing:", err.message);
+        return res.status(503).json({ code: "REOPEN_NOT_READY", message: "Reopening isn't available yet: the database update for it hasn't been applied." });
+      }
+      throw err;
+    }
+
+    console.log("[✅ Cutoff reopened]", id, "processed → open", paid ? "(payment date reached, confirmed)" : "", "by", req.user.id, req.user.agentId ? `(support ${req.user.agentId})` : "");
+    return res.status(200).json({
+      message: "Cutoff reopened. Its payroll export shows as outdated until it's processed again.",
+      data: { ...updated, reopen: { reason, paymentDateReached: paid, paymentDate } },
+    });
+  } catch (error) {
+    console.error("❌ reopenCutoffPeriod:", error);
     return res.status(500).json({ message: "Internal server error.", error: error.message });
   }
 };
@@ -761,6 +869,13 @@ const finalizeCutoffPeriod = async (req, res) => {
     });
 
     console.log("[✅ Cutoff finalized]", id, `— ${stats.approved} approved, ${stats.excluded} excluded`);
+
+    // BB-149 follow-up: Finalize locks the cutoff too — record it in the status history
+    // (action "finalize" so the history can say "Finalized"; best effort, never blocks).
+    await recordStatusEvent({
+      cutoffPeriodId: id, companyId: locked.companyId || companyId,
+      fromStatus: cutoffPeriod.status, toStatus: "locked", action: "finalize", actor: req.user,
+    });
 
     // Notify management that the cutoff period is locked
     try {
@@ -2207,6 +2322,7 @@ module.exports = {
   getCutoffPeriods,
   getCutoffPeriodById,
   updateCutoffStatus,
+  reopenCutoffPeriod,
   finalizeCutoffPeriod,
   deleteCutoffPeriod,
   getCutoffApprovals,
