@@ -15,11 +15,20 @@
 // Dates: one day by default, or a from/to range (max 31 days), in the company
 // time zone. A clock-in counts on the day of its timeIn, a clock-out on the
 // day of its timeOut.
+//
+// Map views (2026-11-25): the page has three tabs that load separately:
+//   GET /api/employee-map/punches → buildPunchMap   (clock-in / clock-out pins)
+//   GET /api/employee-map/routes  → buildRoutesMap  (breadcrumb tracks)
+//   GET /api/employee-map/live    → services/Locations/liveMapService.js (admins only)
+// GET /api/employee-map (buildEmployeeMap) still returns both in one response
+// until the client has switched. Every pin/person carries initials + color
+// (services/Locations/mapPeople.js).
 
 const moment = require("moment-timezone");
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { buildBreadcrumbLayer } = require("@services/Locations/breadcrumbService");
+const { personName, markerOf } = require("@services/Locations/mapPeople");
 
 const DEFAULT_TZ = "America/Los_Angeles";
 const MANAGER_ROLES = ["admin", "superadmin"];
@@ -35,11 +44,6 @@ class EmployeeMapError extends Error {
 }
 
 const zoneOf = (tz) => (tz && moment.tz.zone(tz) ? tz : DEFAULT_TZ);
-
-const personName = (u) => {
-  const name = `${u?.profile?.firstName || ""} ${u?.profile?.lastName || ""}`.trim();
-  return name || u?.email || "Unknown";
-};
 
 function parseDay(value, tz, field) {
   const m = moment.tz(String(value), "YYYY-MM-DD", true, tz);
@@ -142,7 +146,23 @@ function toHeat(points) {
   return [...bins.values()].sort((a, b) => b.weight - a.weight);
 }
 
-async function buildEmployeeMap(actor, query = {}) {
+/** The company's work sites, as every map view returns them. */
+async function loadSites(companyId) {
+  const rows = await prisma.location.findMany({
+    where: { companyId },
+    select: { id: true, name: true, latitude: true, longitude: true, radius: true },
+  });
+  return rows.map((s) => ({
+    id: s.id,
+    name: s.name,
+    latitude: Number(s.latitude),
+    longitude: Number(s.longitude),
+    radius: s.radius != null ? Number(s.radius) : null,
+  }));
+}
+
+/** Company, filters and the people this actor may see — shared by every view. */
+async function loadContext(actor, query) {
   const company = await prisma.company.findUnique({
     where: { id: actor.companyId },
     select: { id: true, name: true, timeZone: true, breadcrumbsEnabled: true, breadcrumbIntervalMinutes: true },
@@ -158,12 +178,18 @@ async function buildEmployeeMap(actor, query = {}) {
     ...(f.departmentId && { departmentId: f.departmentId }),
     ...(f.userId && { id: f.userId }),
   };
+  return { company, tz, f, userWhere, selfOnly };
+}
 
+const filtersOut = (f) => ({ from: f.from, to: f.to, type: f.type, departmentId: f.departmentId, userId: f.userId });
+
+/** Clock-in / clock-out pins, work sites, heat bins and the employee list. */
+async function punchLayers({ actor, tz, f, userWhere }) {
   const wantIn = f.type !== "out";
   const wantOut = f.type !== "in";
   const range = { gte: f.start, lte: f.end };
 
-  const [logs, siteRows] = await Promise.all([
+  const [logs, sites] = await Promise.all([
     prisma.timeLog.findMany({
       where: {
         OR: [...(wantIn ? [{ timeIn: range }] : []), ...(wantOut ? [{ timeOut: range }] : [])],
@@ -181,19 +207,8 @@ async function buildEmployeeMap(actor, query = {}) {
       },
       orderBy: { timeIn: "asc" },
     }),
-    prisma.location.findMany({
-      where: { companyId: actor.companyId },
-      select: { id: true, name: true, latitude: true, longitude: true, radius: true },
-    }),
+    loadSites(actor.companyId),
   ]);
-
-  const sites = siteRows.map((s) => ({
-    id: s.id,
-    name: s.name,
-    latitude: Number(s.latitude),
-    longitude: Number(s.longitude),
-    radius: s.radius != null ? Number(s.radius) : null,
-  }));
 
   const layers = { clockIn: [], clockOut: [] };
   const missing = { clockIn: 0, clockOut: 0 };
@@ -205,6 +220,7 @@ async function buildEmployeeMap(actor, query = {}) {
       employees.set(emp.id, {
         id: emp.id,
         name: personName(emp),
+        ...markerOf(emp),
         employeeId: emp.employeeId ?? null,
         department: emp.department?.name ?? null,
         clockIns: 0,
@@ -230,6 +246,8 @@ async function buildEmployeeMap(actor, query = {}) {
       punchType: log.punchType,
       employeeId: emp.id,
       employeeName: e.name,
+      initials: e.initials,
+      color: e.color,
       department: e.department,
       lat: c.lat,
       lng: c.lng,
@@ -243,6 +261,29 @@ async function buildEmployeeMap(actor, query = {}) {
     if (wantOut && log.timeOut && log.timeOut >= f.start && log.timeOut <= f.end) addPunch(log, "out", log.timeOut, log.location?.end);
   }
 
+  const allPoints = [...layers.clockIn, ...layers.clockOut];
+  const countLayer = (pts, miss) => ({
+    punches: pts.length + miss,
+    withLocation: pts.length,
+    withoutLocation: miss,
+    outsideSites: sites.length ? pts.filter((p) => p.insideSite === false).length : null,
+  });
+
+  return {
+    sites,
+    summary: {
+      clockIn: wantIn ? countLayer(layers.clockIn, missing.clockIn) : null,
+      clockOut: wantOut ? countLayer(layers.clockOut, missing.clockOut) : null,
+      employees: employees.size,
+    },
+    heat: toHeat(allPoints),
+    layers: { clockIn: wantIn ? layers.clockIn : [], clockOut: wantOut ? layers.clockOut : [] },
+    employees: [...employees.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
+/** Breadcrumb tracks + their summary (null tracks when the range is too wide). */
+async function routeLayer({ actor, company, tz, f, userWhere, selfOnly }) {
   // BB-128 part 2: routes only for one day or one employee (keeps responses small).
   const routesAllowed = f.from === f.to || !!f.userId || selfOnly;
   const crumbs = routesAllowed
@@ -256,38 +297,66 @@ async function buildEmployeeMap(actor, query = {}) {
       })
     : null;
 
-  const allPoints = [...layers.clockIn, ...layers.clockOut];
-  const countLayer = (pts, miss) => ({
-    punches: pts.length + miss,
-    withLocation: pts.length,
-    withoutLocation: miss,
-    outsideSites: sites.length ? pts.filter((p) => p.insideSite === false).length : null,
-  });
-
   return {
-    company: { id: company.id, name: company.name, timeZone: tz },
-    filters: { from: f.from, to: f.to, type: f.type, departmentId: f.departmentId, userId: f.userId },
-    sites,
     summary: {
-      clockIn: wantIn ? countLayer(layers.clockIn, missing.clockIn) : null,
-      clockOut: wantOut ? countLayer(layers.clockOut, missing.clockOut) : null,
-      employees: employees.size,
-      breadcrumbs: {
-        enabled: company.breadcrumbsEnabled,
-        intervalMinutes: company.breadcrumbIntervalMinutes,
-        available: routesAllowed,
-        reason: routesAllowed ? null : "Pick one day or one employee to see routes.",
-        ...(crumbs ? crumbs.summary : { tracks: 0, points: 0, mockedPoints: 0, suspiciousTracks: 0, truncated: false }),
-      },
+      enabled: company.breadcrumbsEnabled,
+      intervalMinutes: company.breadcrumbIntervalMinutes,
+      available: routesAllowed,
+      reason: routesAllowed ? null : "Pick one day or one employee to see routes.",
+      ...(crumbs
+        ? crumbs.summary
+        : { tracks: 0, points: 0, mockedPoints: 0, lowAccuracyPoints: 0, suspiciousTracks: 0, truncated: false }),
     },
-    heat: toHeat(allPoints),
-    layers: {
-      clockIn: wantIn ? layers.clockIn : [],
-      clockOut: wantOut ? layers.clockOut : [],
-      breadcrumbs: crumbs ? crumbs.tracks : null, // BB-128 part 2
-    },
-    employees: [...employees.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    tracks: crumbs ? crumbs.tracks : null,
   };
 }
 
-module.exports = { buildEmployeeMap, EmployeeMapError };
+/** Clock-in / out tab: GET /api/employee-map/punches. */
+async function buildPunchMap(actor, query = {}) {
+  const ctx = await loadContext(actor, query);
+  const punches = await punchLayers({ actor, ...ctx });
+  return {
+    company: { id: ctx.company.id, name: ctx.company.name, timeZone: ctx.tz },
+    filters: filtersOut(ctx.f),
+    ...punches,
+  };
+}
+
+/** Routes tab: GET /api/employee-map/routes. */
+async function buildRoutesMap(actor, query = {}) {
+  const ctx = await loadContext(actor, query);
+  const [routes, sites] = await Promise.all([routeLayer({ actor, ...ctx }), loadSites(actor.companyId)]);
+  return {
+    company: { id: ctx.company.id, name: ctx.company.name, timeZone: ctx.tz },
+    filters: { from: ctx.f.from, to: ctx.f.to, departmentId: ctx.f.departmentId, userId: ctx.f.userId },
+    sites, // work-site circles (2026-11-25 client request)
+    summary: routes.summary,
+    tracks: routes.tracks,
+  };
+}
+
+/** Combined response (GET /api/employee-map), kept until the client uses the tabs. */
+async function buildEmployeeMap(actor, query = {}) {
+  const ctx = await loadContext(actor, query);
+  const [punches, routes] = await Promise.all([punchLayers({ actor, ...ctx }), routeLayer({ actor, ...ctx })]);
+  return {
+    company: { id: ctx.company.id, name: ctx.company.name, timeZone: ctx.tz },
+    filters: filtersOut(ctx.f),
+    sites: punches.sites,
+    summary: { ...punches.summary, breadcrumbs: routes.summary },
+    heat: punches.heat,
+    layers: { ...punches.layers, breadcrumbs: routes.tracks }, // BB-128 part 2
+    employees: punches.employees,
+  };
+}
+
+module.exports = {
+  buildEmployeeMap,
+  buildPunchMap,
+  buildRoutesMap,
+  EmployeeMapError,
+  MANAGER_ROLES,
+  zoneOf,
+  readCoords,
+  loadSites,
+};
