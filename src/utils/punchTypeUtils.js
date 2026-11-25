@@ -49,17 +49,29 @@ function lastDriverSegment(punchType) {
   return segs ? segs[segs.length - 1] : null;
 }
 
-/** DayCare training punches: flat credit from company.defaultShiftHours. */
-async function applyTrainingFlatHours(timeLogId, companyId) {
+/**
+ * DayCare training punches (BB-149): write the real net hours to the TimeLog —
+ * clock span minus coffee breaks and lunch deduction, no shift snap, no cap.
+ * Was a flat company.defaultShiftHours (8h) whatever the punch length.
+ * scheduledHours = the same hours (training has no schedule to compare against).
+ * Returns the updated TimeLog; an open punch (no clock-out) is returned unchanged.
+ */
+async function applyTrainingHours(timeLogId, companyId) {
   const { prisma } = require("@config/connection");
-  const company = await prisma.company.findUnique({
-    where: { id: companyId },
-    select: { defaultShiftHours: true },
-  });
-  const trainingHours = parseFloat((company?.defaultShiftHours ?? 8).toString());
+  const { computeTrainingHours } = require("@services/timeLogComputeService");
+  const [log, company] = await Promise.all([
+    prisma.timeLog.findUnique({ where: { id: timeLogId } }),
+    prisma.company.findUnique({ where: { id: companyId }, select: { minimumLunchMinutes: true } }),
+  ]);
+  const hours = computeTrainingHours(log, company);
+  if (!hours) return log;
   return prisma.timeLog.update({
     where: { id: timeLogId },
-    data: { netWorkedHours: trainingHours, scheduledHours: trainingHours },
+    data: {
+      ...hours,
+      scheduledHours: hours.netWorkedHours,
+      calculatedAt:   new Date(),
+    },
   });
 }
 
@@ -67,7 +79,7 @@ module.exports = {
   VALID_PUNCH_TYPES,
   punchTypeFromReason,
   resolvePunchType,
-  applyTrainingFlatHours,
+  applyTrainingHours,
   DRIVER_SEGMENT_MAP,
   isDriverSegmentPunchType,
   lastDriverSegment,

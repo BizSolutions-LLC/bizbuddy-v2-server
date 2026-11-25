@@ -4,7 +4,7 @@ const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
 const { createNotification } = require("@services/notificationService");
 const moment = require("moment-timezone");
-const { resolvePunchType, applyTrainingFlatHours, VALID_PUNCH_TYPES, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
+const { resolvePunchType, applyTrainingHours, VALID_PUNCH_TYPES, isDriverSegmentPunchType } = require("@utils/punchTypeUtils");
 const { computeTimeLogSummary } = require("@services/timeLogComputeService");
 const { BNC_COMPANY_IDS } = require("@config/companyTypes");
 
@@ -74,7 +74,7 @@ async function createTimeLogFromRequest({ userId, companyId, timeIn, timeOut, re
   });
 
   if (punchType === "TRAINING") {
-    newTimeLog = await applyTrainingFlatHours(newTimeLog.id, companyId);
+    newTimeLog = await applyTrainingHours(newTimeLog.id, companyId);
   } else {
     // Eager compute of derived fields (netWorkedHours, etc.) so the TimeLog isn't left
     // with null hours until the next cutoff-period sweep. Non-fatal — creation itself

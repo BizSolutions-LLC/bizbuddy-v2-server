@@ -20,9 +20,9 @@ Last updated: 2026-07-03
 | **Worked Duration** | `Effective Clock-Out − Effective Clock-In`. Total elapsed working time before break deductions. |
 | **Break Duration (BR)** | Total unpaid break time deducted from Worked Duration. Derived from `TimeLog.totalBreakMinutes` + `lunchDeductionMinutes` (breaks are stored as JSON — `coffeeBreaks`, `lunchBreak` — not a relational model). |
 | **Net Worked Hours** | `Worked Duration − Break Duration`. Actual hours worked before leave/training adjustments. Maps to `TimeLog.netWorkedHours`. |
-| **Training Hours (TR)** | Training hours credited for the day. Capped at `min(Worked Duration, defaultShiftHours)`. Maps to `TimeLogApproval.actualHours` for `TRAINING`-punchType records. |
+| **Training Hours (TR)** | Training hours credited for the punch (BB-149): net hours like a regular punch — clock span minus coffee breaks and lunch deduction (company minimum lunch applies), no shift snap, **no cap**. Written to `TimeLog.netWorkedHours` and, at approval, `TimeLogApproval.actualHours` for `TRAINING`-punchType records. Before BB-149: `min(raw span, defaultShiftHours)` with no deductions (and a flat `defaultShiftHours` on the TimeLog). |
 | **Sick Leave Hours (SL)** | Approved, paid sick leave converted into hours based on the employee's scheduled shift. **Open item:** paid/unpaid status is tracked per leave *request* (`Leave.isPaid`), not per leave *type* — "sick vs. vacation" is not itself the determining factor for whether hours count here. Full leave-module semantics are scoped separately — see Open Items. |
-| **Overtime Hours (OT)** | Hours exceeding the regular work requirement for the cutoff period, after excluding non-worked paid credits (TR, paid SL) from the threshold comparison. See Formulas below. |
+| **Overtime Hours (OT)** | Hours exceeding the regular work requirement for the cutoff period. Training counts (BB-149); non-worked paid credits (paid SL) are meant to be excluded. See Formulas below. |
 | **Raw Overtime** | Time worked beyond the scheduled shift, before approval or payroll adjustment. Maps to `TimeLog.rawOtMinutes`. **Not used for payroll on cutoff-basis (80h/period) companies** — see `TIMELOG_MODULE.md`. Relevant for daily-basis (B&C) companies. |
 | **Approved Overtime** | Raw Overtime that has been approved for payroll. For cutoff-basis companies this is a period-level approval (`CutoffOtBlock.status`), not per-punch. For daily-basis (B&C) companies it is closer to a literal per-punch approved raw OT. |
 | **Time Zone** | The company's official time zone, used for all attendance and cutoff-boundary calculations (e.g. `America/Los_Angeles`). Always use `moment.tz(companyTimezone)` — never server-local time. |
@@ -41,7 +41,7 @@ Total Payable Hours   = Σ Net Worked Hours (approved, non-training/non-leave re
                        + Σ Training Hours (TR)
                        + Σ paid Leave Hours (SL, or other paid leave once leave module is scoped)
 
-OT Hours               = max(0, (Total Payable Hours − TR − SL) − Threshold)
+OT Hours               = max(0, (Total Payable Hours − SL) − Threshold)     (BB-149: TR counts)
 ```
 
 `Threshold` is the cutoff-basis OT threshold (`cutoffOtThresholdHours`, e.g. 80h for a
@@ -49,15 +49,21 @@ bi-weekly 5+5 day DayCare cutoff — 10 working days × 8h). Applies to `otBasis
 companies. B&C (`otBasis: "daily"`) uses a per-day threshold instead — see
 `CUTOFF_PERIOD_MODULE.md`.
 
-**Why TR and SL are subtracted rather than just excluded from the sum:** Training and paid
-sick leave are flat, capped, non-OT-eligible credits. If they're left inside the total that
+**BB-149 (2026-11-25): Training is no longer subtracted.** Training is now real net hours
+worked with no cap, and required training is hours worked, so it counts toward the OT
+Threshold like any other worked hour. The reasoning below now applies to paid SL only.
+
+**Why SL is subtracted rather than just excluded from the sum (originally TR too):** Paid
+sick leave is a flat, capped, non-OT-eligible credit. If they're left inside the total that
 gets compared against the fixed period Threshold, they don't just get paid their own flat
 amount — they also push other, genuinely worked hours across the OT line, generating OT
 premium the employee never actually worked for. Subtracting them before the threshold
 comparison means OT is earned only on hours actually worked beyond the period baseline.
 
-**Status: IMPLEMENTED (server, TR only).** `cutoffOtService.computeOtForCutoffBasis` and the
-`getCutoffApprovals` OT breakdown now exclude Training from the OT basis while keeping it in
+**Status:** the TR exclusion below was IMPLEMENTED in v2.10.18 and REMOVED by BB-149 —
+`cutoffOtService.computeOtForCutoffBasis` and the `getCutoffApprovals` OT breakdown now
+count Training in the OT basis (breakdown rows keep `isTraining: true` for labelling).
+History: the v2.10.18 change excluded Training from the OT basis while keeping it in
 TOTAL PAYABLE. This supersedes the OT basis logic shipped in Bug 6 (`CUTOFF_PERIOD_MODULE.md`,
 v2.10.18), which included TR in the OT basis without subtracting it back out before the
 threshold comparison — see that doc's Bug 6 entry for the full history. The **SL term is not
