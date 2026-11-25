@@ -11,6 +11,7 @@
 // same convention as the generation side.
 
 const { prisma } = require("@config/connection");
+const { outdatedExports } = require("@services/Cutoff/cutoffStatusEventService");
 
 /**
  * GET /api/payroll-export/by-cutoff-period/:id
@@ -43,7 +44,7 @@ const getPayrollExportByCutoffPeriod = async (req, res) => {
     const periodEndStr   = cutoffPeriod.periodEnd.toISOString().slice(0, 10);
 
     const rows = await prisma.$queryRaw`
-      SELECT "employeeCount", "payload", "generatedAt"
+      SELECT "periodStart", "periodEnd", "employeeCount", "payload", "generatedAt"
       FROM "PayrollExportBatch"
       WHERE "companyId" = ${cutoffPeriod.companyId}
         AND "periodStart" = ${periodStartStr}::date
@@ -57,12 +58,18 @@ const getPayrollExportByCutoffPeriod = async (req, res) => {
     }
 
     const batch = rows[0];
+    // BB-149 follow-up: a department of this period was reopened and isn't processed
+    // again yet → this export still holds its old numbers.
+    const outdated = (await outdatedExports(cutoffPeriod.companyId, [batch])).get(`${periodStartStr}_${periodEndStr}`) || null;
     return res.status(200).json({
-      message: "Payroll export retrieved.",
+      message: outdated ? "Payroll export retrieved (outdated: a department was reopened)." : "Payroll export retrieved.",
       data: {
         employeeCount: batch.employeeCount,
         generatedAt: batch.generatedAt,
         payload: batch.payload,
+        outdated: !!outdated,
+        outdatedDepartments: outdated ? outdated.departments : [],
+        reopenedAt: outdated ? outdated.reopenedAt : null,
       },
     });
   } catch (error) {

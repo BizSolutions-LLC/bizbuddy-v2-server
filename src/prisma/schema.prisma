@@ -1403,11 +1403,33 @@ model CutoffPeriod {
   approvals       TimeLogApproval[]
   otBlocks        CutoffOtBlock[]
   fixedHours      CutoffFixedHours[]
+  statusEvents    CutoffStatusEvent[]
   creator         User               @relation(fields: [createdBy], references: [id])
 
   // Indexes
   @@index([companyId, departmentId, periodStart]) // ✅ ADD THIS
   @@index([companyId, status]) // ✅ ADD THIS
+}
+
+// BB-149 follow-up: one row per cutoff status change (open → locked → processed →
+// reopened …). Created by scripts/add-cutoff-status-events-bb149.sql; read/written
+// with raw SQL (services/Cutoff/cutoffStatusEventService.js).
+model CutoffStatusEvent {
+  id             BigInt       @id @default(autoincrement())
+  cutoffPeriodId String
+  companyId      String
+  fromStatus     String
+  toStatus       String
+  action         String       // "status" | "finalize" | "reopen"
+  reason         String?
+  actorId        String?
+  agentId        String?      // B. Buddy support staff (SupportAgent.id)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+
+  cutoffPeriod   CutoffPeriod @relation(fields: [cutoffPeriodId], references: [id], onDelete: Cascade)
+
+  @@index([cutoffPeriodId, createdAt], map: "CutoffStatusEvent_cutoff_idx")
+  @@index([companyId, createdAt], map: "CutoffStatusEvent_company_idx")
 }
 
 model CutoffOtBlock {

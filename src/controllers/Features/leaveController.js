@@ -5,6 +5,7 @@ const { HUMAN_ONLY } = require("@utils/systemAgent");
 const {
   calcDailyHours, calcRequestedHours, leaveVisibilityWhere,
   findLeavePunchOverlaps, describeLeavePunchOverlaps,
+  leaveDayWindows, attachLeaveWindows,
 } = require("@utils/leaveUtils");
 const { previewLeaveApproval, applyLeaveApproval } = require("@services/Leave/leaveApprovalService");
 const { isTracked, fyLabel, dateColStr } = require("@services/Leave/leaveCreditService");
@@ -415,6 +416,23 @@ const submitLeaveRequest = async (req, res) => {
 // BB-124: punches overlapping an existing leave's charged time — warning
 // for approvers. Never throws: a failed check returns [] so it can't break
 // approve/preview.
+// BB-124 follow-up: leave days → each day's charged time windows (shift name + start–end in the
+// shift's zone, or the requested times / whole day). Display only: never blocks.
+async function _withLeaveWindows(leave, rows) {
+  try {
+    const windows = await leaveDayWindows(leave.userId, leave.startDate, leave.endDate, {
+      requestedStartTime: leave.requestedStartTime,
+      requestedEndTime:   leave.requestedEndTime,
+      excludeShiftIds:    Array.isArray(leave.excludedShiftIds) ? leave.excludedShiftIds : [],
+      includeWeekends:    leave.includeWeekends !== false,
+    });
+    return attachLeaveWindows(rows, windows);
+  } catch (err) {
+    console.error("❌ leave day windows failed:", err);
+    return rows.map((r) => ({ ...r, windows: [] }));
+  }
+}
+
 async function _leavePunchOverlaps(leave) {
   try {
     return await findLeavePunchOverlaps(leave.userId, leave.startDate, leave.endDate, {
@@ -797,7 +815,9 @@ const previewApproval = async (req, res) => {
   const preview = await previewLeaveApproval(leave, policy);
   // BB-124: warning only — the approver still decides.
   const punchOverlaps = await _leavePunchOverlaps(leave);
-  res.json({ data: { ...preview, punchOverlaps } });
+  // Each day's charged times (shift + start–end), so the approver sees them before deciding.
+  const days = await _withLeaveWindows(leave, preview.days || []);
+  res.json({ data: { ...preview, days, punchOverlaps } });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -812,7 +832,10 @@ const getLeaveDays = async (req, res) => {
 
   const leave = await prisma.leave.findUnique({
     where:  { id: leaveId },
-    select: { id: true, userId: true },
+    select: {
+      id: true, userId: true, startDate: true, endDate: true,
+      requestedStartTime: true, requestedEndTime: true, excludedShiftIds: true, includeWeekends: true,
+    },
   });
   if (!leave) return res.status(404).json({ message: "Leave request not found." });
 
@@ -853,17 +876,18 @@ const getLeaveDays = async (req, res) => {
     orderBy: [{ date: "asc" }, { isPaid: "desc" }],
   });
 
-  res.json({
-    data: days.map((d) => ({
-      date:   d.date.toISOString().slice(0, 10),
-      isPaid: d.isPaid,
-      hours:  Number(d.hours),
-      // BB-125: true when a punch on this day was honored over the leave — the
-      // hours were returned to the balance and the day no longer counts as leave.
-      reverted:   d.revertedAt != null,
-      revertedAt: d.revertedAt ? d.revertedAt.toISOString() : null,
-    })),
-  });
+  const rows = days.map((d) => ({
+    date:   d.date.toISOString().slice(0, 10),
+    isPaid: d.isPaid,
+    hours:  Number(d.hours),
+    // BB-125: true when a punch on this day was honored over the leave — the
+    // hours were returned to the balance and the day no longer counts as leave.
+    reverted:   d.revertedAt != null,
+    revertedAt: d.revertedAt ? d.revertedAt.toISOString() : null,
+  }));
+  // Each day's charged times: shift name + start–end (shift's zone), or the
+  // requested times / whole day. Read live from the day's shift assignments.
+  res.json({ data: await _withLeaveWindows(leave, rows) });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -965,6 +989,7 @@ const getPendingLeavesForApprover = async (req, res) => {
       User: {
         select: {
           id: true, email: true, username: true, role: true, departmentId: true,
+          department: { select: { id: true, name: true } }, // leave details "Department"
           profile: { select: { firstName: true, lastName: true } },
           employmentDetail: { select: { supervisorId: true } },
         },
@@ -1088,6 +1113,7 @@ const getLeavesForApprover = async (req, res) => {
         User: {
           select: {
             id: true, email: true, username: true, role: true, departmentId: true,
+            department: { select: { id: true, name: true } }, // leave details "Department"
             profile: { select: { firstName: true, lastName: true } },
           },
         },

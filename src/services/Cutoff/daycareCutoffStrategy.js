@@ -115,13 +115,62 @@ async function syncApprovedRegularToTimeLog(timeLogId, actualHours) {
  * the punch log and the approval always show the same hours.
  * Was min(raw span, defaultShiftHours) with no break/lunch deduction.
  * Refuses an open punch — there are no real hours to credit yet.
+ *
+ * BB-149 follow-up: Edit works for Training. Edited times (from the cutoff page's
+ * Edit) replace the punch times before the recompute, exactly like a Regular edit:
+ * the real punch stays in originalTimeIn/Out (only if empty), so Reset restores it.
+ * Returns { hours, clockIn, clockOut } — the times the hours were computed from.
  */
-async function approvedTrainingHours(timeLog, companyId) {
-  if (!timeLog.timeOut) {
+async function approvedTrainingHours(timeLog, companyId, { editedClockIn, editedClockOut } = {}) {
+  const clockIn  = editedClockIn  ? new Date(editedClockIn)  : new Date(timeLog.timeIn);
+  const clockOut = editedClockOut ? new Date(editedClockOut) : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
+
+  if (!clockOut) {
     throw new StrategyError("This training punch has no clock-out yet. Approve it after the employee clocks out.");
   }
+  if (isNaN(clockIn) || isNaN(clockOut)) {
+    throw new StrategyError("Edited clock-in or clock-out is not a valid date/time.");
+  }
+  if (clockOut <= clockIn) {
+    throw new StrategyError("Edited clock-out must be after clock-in.");
+  }
+  if (clockOut - clockIn > 24 * 3600000) {
+    throw new StrategyError("Edited training punch can't be longer than 24 hours.");
+  }
+
+  const changed =
+    clockIn.getTime() !== new Date(timeLog.timeIn).getTime() ||
+    !timeLog.timeOut || clockOut.getTime() !== new Date(timeLog.timeOut).getTime();
+  if (changed) {
+    await prisma.timeLog.update({
+      where: { id: timeLog.id },
+      data: {
+        originalTimeIn:  timeLog.originalTimeIn  || timeLog.timeIn,
+        originalTimeOut: timeLog.originalTimeOut || timeLog.timeOut,
+        timeIn:          clockIn,
+        timeOut:         clockOut,
+      },
+    });
+  }
+
   const updated = await applyTrainingHours(timeLog.id, companyId);
-  return parseFloat(Number(updated?.netWorkedHours ?? 0).toFixed(2));
+  return { hours: parseFloat(Number(updated?.netWorkedHours ?? 0).toFixed(2)), clockIn, clockOut };
+}
+
+/**
+ * BB-124 follow-up: Driver/Aide segment clock-out in Raw mode. Rule (user, 2026-11-25): Schedule =
+ * the company accepts the fixed segment window; Raw = what actually happened.
+ * Before this, Raw used the real clock-out only on the LAST segment, so an AM or
+ * Regular segment was paid to its end even when the employee had already left
+ * (e.g. clock-out 11:59 AM, Regular 8:00–1:30 paid 5.50h instead of 4.0h).
+ * Now in Raw a segment never ends after the real clock-out, and a segment that
+ * starts after the clock-out ends at its start (0h). Schedule is unchanged.
+ */
+function capRawSegmentOut(approvalMode, approvedIn, approvedOut, timeOut) {
+  if (approvalMode !== "raw" || !approvedOut || !timeOut) return approvedOut;
+  let out = new Date(Math.min(approvedOut.getTime(), new Date(timeOut).getTime()));
+  if (approvedIn && out < approvedIn) out = new Date(approvedIn);
+  return out;
 }
 
 function calculateHours(timeIn, timeOut) {
@@ -186,17 +235,18 @@ async function approveSingle(approvalId, {
   const companyTz          = company?.timeZone || "America/Los_Angeles";
   const timeLog            = approval.timeLog;
 
-  // ── TRAINING (BB-149): real net hours, no cap ───────────────────────────────
+  // ── TRAINING (BB-149): real net hours, no cap; Edit's times honoured ────────
   if (timeLog.punchType === "TRAINING") {
-    const trainingHours = await approvedTrainingHours(timeLog, companyId);
+    const { hours: trainingHours, clockIn, clockOut } =
+      await approvedTrainingHours(timeLog, companyId, { editedClockIn, editedClockOut });
     const updated = await prisma.timeLogApproval.update({
       where: { id: approvalId },
       data: {
         status:           "approved",
         approvedBy:       userId,
         approvedAt:       new Date(),
-        approvedClockIn:  new Date(timeLog.timeIn),
-        approvedClockOut: timeLog.timeOut ? new Date(timeLog.timeOut) : null,
+        approvedClockIn:  clockIn,
+        approvedClockOut: clockOut,
         scheduledHours:   trainingHours,
         actualHours:      trainingHours,
         ...(notes && { notes }),
@@ -392,15 +442,16 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
       // ── TRAINING ────────────────────────────────────────────────────────
       if (timeLog.punchType === "TRAINING") {
         // BB-149: real net hours, no cap. An open punch throws → counted as failed.
-        const trainingHours = await approvedTrainingHours(timeLog, companyId);
+        // Bulk approve has no Edit, so the punch's own times are used.
+        const { hours: trainingHours, clockIn, clockOut } = await approvedTrainingHours(timeLog, companyId);
         await prisma.timeLogApproval.update({
           where: { id: approval.id },
           data: {
             status:           "approved",
             approvedBy:       userId,
             approvedAt:       new Date(),
-            approvedClockIn:  new Date(timeLog.timeIn),
-            approvedClockOut: timeLog.timeOut ? new Date(timeLog.timeOut) : null,
+            approvedClockIn:  clockIn,
+            approvedClockOut: clockOut,
             scheduledHours:   trainingHours,
             actualHours:      trainingHours,
             ...(notes && { notes }),
@@ -431,11 +482,13 @@ async function approveBulk(cutoffPeriodId, timeLogIds, { action, approvalMode, u
             ? new Date(Math.max(new Date(timeLog.timeIn).getTime(), new Date(approval.segmentStart).getTime()))
             : new Date(timeLog.timeIn);
         const isLastSegment = approval.segmentType === lastDriverSegment(timeLog.punchType);
-        const approvedOut = (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
-          ? new Date(timeLog.timeOut)
-          : approval.segmentEnd
-            ? new Date(approval.segmentEnd)
-            : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
+        const approvedOut = capRawSegmentOut(approvalMode, approvedIn,
+          (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
+            ? new Date(timeLog.timeOut)
+            : approval.segmentEnd
+              ? new Date(approval.segmentEnd)
+              : (timeLog.timeOut ? new Date(timeLog.timeOut) : null),
+          timeLog.timeOut);
 
         // Raw mode: grace-period snap affects the hours computation only — approvedIn
         // (displayed/stored clock-in) stays the actual punch.
@@ -636,13 +689,16 @@ async function approveDriverSegment(approval, { approvalMode, userId, notes, cut
   // The chronologically-last segment for this punch type — Raw pays through actual
   // clock-out (no subsequent segment to capture that time). For DRIVER_AIDE that's
   // driver_pm; for DRIVER_AIDE_AM (no PM route that day) it's regular instead.
-  // Earlier segments still cap at segmentEnd to avoid double-counting.
+  // Earlier segments still cap at segmentEnd to avoid double-counting — and, in Raw,
+  // at the real clock-out when the employee left before the segment ended.
   const isLastSegment = approval.segmentType === lastDriverSegment(timeLog.punchType);
-  const approvedOut = (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
-    ? new Date(timeLog.timeOut)
-    : approval.segmentEnd
-      ? new Date(approval.segmentEnd)
-      : (timeLog.timeOut ? new Date(timeLog.timeOut) : null);
+  const approvedOut = capRawSegmentOut(approvalMode, approvedIn,
+    (approvalMode === "raw" && isLastSegment && timeLog.timeOut)
+      ? new Date(timeLog.timeOut)
+      : approval.segmentEnd
+        ? new Date(approval.segmentEnd)
+        : (timeLog.timeOut ? new Date(timeLog.timeOut) : null),
+    timeLog.timeOut);
 
   // Raw mode: grace-period snap affects the hours computation only — approvedIn
   // (displayed/stored clock-in) stays the actual punch. If the punch falls within
