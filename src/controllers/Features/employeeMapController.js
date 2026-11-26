@@ -10,6 +10,7 @@
 
 const { buildEmployeeMap, buildPunchMap, buildRoutesMap, EmployeeMapError } = require("@services/Locations/employeeMapService");
 const { buildLiveMap } = require("@services/Locations/liveMapService");
+const { locateEmployee, locateAll } = require("@services/Locations/locateRequestService");
 
 const handle = (label, build) => async (req, res) => {
   try {
@@ -26,4 +27,25 @@ const getPunchMap = handle("getPunchMap", buildPunchMap);
 const getRoutesMap = handle("getRoutesMap", buildRoutesMap);
 const getLiveMap = handle("getLiveMap", buildLiveMap);
 
-module.exports = { getEmployeeMap, getPunchMap, getRoutesMap, getLiveMap };
+// BB-128 phase 3b "Locate now": silent push to the phone(s), answer shows on GET /live.
+const locateNow = async (req, res) => {
+  try {
+    return res.json({ data: await locateEmployee(req.user, req.params.employeeId) });
+  } catch (err) {
+    if (err instanceof EmployeeMapError) return res.status(err.status).json({ message: err.message });
+    console.error("[BB-128] locateNow error:", err);
+    return res.status(500).json({ message: "Failed to send the locate request." });
+  }
+};
+
+const locateEveryone = async (req, res) => {
+  try {
+    return res.json({ data: await locateAll(req.user, req.body || {}) });
+  } catch (err) {
+    if (err instanceof EmployeeMapError) return res.status(err.status).json({ message: err.message });
+    console.error("[BB-128] locateEveryone error:", err);
+    return res.status(500).json({ message: "Failed to send the locate requests." });
+  }
+};
+
+module.exports = { getEmployeeMap, getPunchMap, getRoutesMap, getLiveMap, locateNow, locateEveryone };

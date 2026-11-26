@@ -6,6 +6,54 @@ const {
   loadCreditCompany,
   normalizeCreditSettings,
 } = require("@services/Leave/leaveCreditService");
+const {
+  AREAS: SETTINGS_AREAS,
+  recordDiff,
+  listHistory,
+} = require("@services/Company/companySettingsEventService");
+
+// BB-151: the fields PATCH /api/company-settings writes and returns; also the
+// "before" snapshot for the settings history.
+const SETTINGS_SELECT = {
+  id: true,
+  defaultShiftHours: true,
+  minimumLunchMinutes: true,
+  gracePeriodMinutes: true,
+  otBasis: true,
+  dailyOtThresholdHours: true,
+  weeklyOtThresholdHours: true,
+  cutoffOtThresholdHours: true,
+  country: true,
+  currency: true,
+  language: true,
+  timeZone: true,
+  driverAideThresholdMinutes:    true,
+  shiftAssignmentWindowMinutes:  true,
+  earlyClockInGraceMinutes:      true,
+  earlyClockOutGraceMinutes:     true,
+  autoClockOutWarningHours:      true,
+  autoClockOutGraceHours:        true,
+  autoClockOutNotifyEmails:      true,
+  multiApprovalEnabled:          true,
+  secondaryApproverId:           true,
+  leaveConflictAutoRevert:       true,
+  autoBreakBasis:                true,
+  autoLunchEnabled:              true,
+  autoCoffeeEnabled:             true,
+  ettEnabled:                    true,
+  suiEnabled:                    true,
+  cutoffPageView:                true,
+  taskReportEnabled:             true, // BB-129
+  taskReportMode:                true, // BB-129 phase 1
+  taskReportFormWindowHours:     true, // BB-129 phase 2
+  taskReportFaceCapture:         true, // BB-141
+  taskReportFaceCaptureClockIn:  true, // BB-141
+  punchDeviceProofEnabled:       true, // BB-134
+  breadcrumbsEnabled:            true, // BB-128 part 2
+  breadcrumbIntervalMinutes:     true, // BB-128 part 2
+  ...COMPANY_CREDIT_SELECT,
+};
+const CUTOFF_FIELDS = ["seedStartDate", "durationDays", "paymentOffsetDays"];
 
 // BB-098: leave credit settings, returned by GET and PATCH alike.
 const _formatLeaveCredits = (c) => ({
@@ -246,6 +294,12 @@ exports.updateSettings = async (req, res) => {
     const leaveCredits = await _leaveCreditUpdate(req.user.companyId, req.body);
     if (leaveCredits.error) return res.status(400).json({ error: leaveCredits.error });
 
+    // BB-151: snapshot for the settings history.
+    const [before, cutoffBefore] = await Promise.all([
+      prisma.company.findUnique({ where: { id: req.user.companyId }, select: SETTINGS_SELECT }),
+      prisma.companyCutoffSettings.findUnique({ where: { companyId: req.user.companyId } }),
+    ]);
+
     const updated = await prisma.company.update({
       where: { id: req.user.companyId },
       data: {
@@ -359,46 +413,7 @@ exports.updateSettings = async (req, res) => {
         ...leaveCredits.data,
         // ─────────────────────────────────────────────────────────────────────
       },
-      select: {
-        companyCutoffSettings: true,
-        id: true,
-        defaultShiftHours: true,
-        minimumLunchMinutes: true,
-        gracePeriodMinutes: true,
-        otBasis: true,
-        dailyOtThresholdHours: true,
-        weeklyOtThresholdHours: true,
-        cutoffOtThresholdHours: true,
-        country: true,
-        currency: true,
-        language: true,
-        timeZone: true,
-        driverAideThresholdMinutes:    true,
-        shiftAssignmentWindowMinutes:  true,
-        earlyClockInGraceMinutes:      true,
-        earlyClockOutGraceMinutes:     true,
-        autoClockOutWarningHours:      true,
-        autoClockOutGraceHours:        true,
-        autoClockOutNotifyEmails:      true,
-        multiApprovalEnabled:          true,
-        secondaryApproverId:           true,
-        leaveConflictAutoRevert:       true,
-        autoBreakBasis:                true,
-        autoLunchEnabled:              true,
-        autoCoffeeEnabled:             true,
-        ettEnabled:                    true,
-        suiEnabled:                    true,
-        cutoffPageView:                true,
-        taskReportEnabled:             true, // BB-129
-        taskReportMode:                true, // BB-129 phase 1
-        taskReportFormWindowHours:     true, // BB-129 phase 2
-        taskReportFaceCapture:         true, // BB-141
-        taskReportFaceCaptureClockIn:  true, // BB-141
-        punchDeviceProofEnabled:       true, // BB-134
-        breadcrumbsEnabled:            true, // BB-128 part 2
-        breadcrumbIntervalMinutes:     true, // BB-128 part 2
-        ...COMPANY_CREDIT_SELECT,
-      },
+      select: { companyCutoffSettings: true, ...SETTINGS_SELECT },
     });
 
     // Upsert cutoff settings if provided
@@ -427,6 +442,17 @@ exports.updateSettings = async (req, res) => {
       where: { companyId: req.user.companyId },
     });
 
+    // BB-151: one history row per page area that changed (none when nothing changed).
+    const { companyCutoffSettings: _ignored, ...updatedSettings } = updated;
+    await recordDiff({
+      req, companyId: req.user.companyId, area: "general",
+      before, after: updatedSettings, fields: Object.keys(SETTINGS_SELECT),
+    });
+    await recordDiff({
+      req, companyId: req.user.companyId, area: "cutoff",
+      before: cutoffBefore, after: cutoff, fields: CUTOFF_FIELDS,
+    });
+
     res.json({
       data: {
         ...updated,
@@ -443,6 +469,25 @@ exports.updateSettings = async (req, res) => {
   } catch (e) {
     console.error("updateSettings error:", e);
     res.status(400).json({ error: e.message });
+  }
+};
+
+// BB-151: GET /api/company-settings/history (admin/superadmin, route-guarded).
+// Query: from, to (YYYY-MM-DD or ISO), area, field, actorId, limit (≤ 100), cursor.
+exports.getSettingsHistory = async (req, res) => {
+  try {
+    const { from, to, area, field, actorId, limit, cursor } = req.query;
+    if (area && !SETTINGS_AREAS.includes(area))
+      return res.status(400).json({ error: `area must be one of: ${SETTINGS_AREAS.join(", ")}` });
+    for (const [k, v] of Object.entries({ from, to }))
+      if (v && Number.isNaN(new Date(v).getTime()))
+        return res.status(400).json({ error: `${k} must be a date (YYYY-MM-DD)` });
+
+    const page = await listHistory(req.user.companyId, { from, to, area, field, actorId, limit, cursor });
+    return res.json({ data: page.items, meta: { nextCursor: page.nextCursor, available: page.available } });
+  } catch (e) {
+    console.error("getSettingsHistory error:", e);
+    return res.status(500).json({ error: "Failed to load the settings history" });
   }
 };
 
@@ -511,6 +556,12 @@ exports.updateCheckSettings = async (req, res) => {
       }
     }
 
+    // BB-151: snapshot for the settings history.
+    const before = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { checkTemplate: true, checkPositions: true },
+    });
+
     const updatedCompany = await prisma.company.update({
       where: { id: companyId },
       data: {
@@ -522,6 +573,8 @@ exports.updateCheckSettings = async (req, res) => {
         checkPositions: true,
       },
     });
+
+    await recordDiff({ req, companyId, area: "check", before, after: updatedCompany });
 
     return res.status(200).json({
       success: true,
