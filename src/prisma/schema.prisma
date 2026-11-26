@@ -761,6 +761,7 @@ model Company {
   taskReportFaceCaptureClockIn Boolean @default(false)
   punchFacePhotos              PunchFacePhoto[]
   loginEvents                  LoginEvent[]        // BB-137
+  settingsEvents               CompanySettingsEvent[] // BB-151
 
   LiveUser LiveUser[]
 
@@ -1430,6 +1431,25 @@ model CutoffStatusEvent {
 
   @@index([cutoffPeriodId, createdAt], map: "CutoffStatusEvent_cutoff_idx")
   @@index([companyId, createdAt], map: "CutoffStatusEvent_company_idx")
+}
+
+// BB-151: Company Settings history, one row per settings save that changed
+// something (who, B. Buddy staff id, which page, each field old → new). Created by
+// scripts/add-company-settings-events-bb151.sql; read/written with raw SQL
+// (services/Company/companySettingsEventService.js). Kept forever.
+model CompanySettingsEvent {
+  id        BigInt   @id @default(autoincrement())
+  companyId String
+  area      String   // general | cutoff | notifications | check | payroll | profile | leaveCredits
+  changes   Json     // [{ field, from, to }]
+  actorId   String?
+  agentId   String?  // B. Buddy support staff (SupportAgent.id)
+  ip        String?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt], map: "CompanySettingsEvent_company_idx")
 }
 
 model CutoffOtBlock {

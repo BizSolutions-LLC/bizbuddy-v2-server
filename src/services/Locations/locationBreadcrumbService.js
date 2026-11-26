@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { prisma } = require("@config/connection");
 const { checkBatchShape, classifySample, cleanSource, cleanBatteryLevel } = require("./locationBreadcrumbRules");
+const { markAnswered } = require("./locateRequestService"); // BB-128 phase 3b
 
 function optionalNumber(value) {
   if (value == null || value === "") return null;
@@ -62,6 +63,8 @@ async function saveBreadcrumbs(user, body) {
   // 3. One insert for the new ones. skipDuplicates covers a retry racing this one.
   const rows = [];
   for (const { index, sample, recordedAt } of accepted) {
+    // BB-128 phase 3b: a "Locate now" answer (saved or duplicate) closes that request.
+    if (sample.source === "locate" && sample.requestId) markAnswered(sample.requestId, sample.timeLogId, recordedAt);
     const key = pairKey(sample.timeLogId, recordedAt);
     if (seen.has(key)) {
       results[index] = { status: "duplicate" };

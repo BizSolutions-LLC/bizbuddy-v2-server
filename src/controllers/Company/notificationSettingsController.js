@@ -1,4 +1,5 @@
 const { prisma } = require('@config/connection');
+const { recordDiff } = require('@services/Company/companySettingsEventService'); // BB-151
 
 /**
  * Get company notification settings
@@ -63,6 +64,17 @@ const getSettingsNotification = async (req, res) => {
   }
 };
 
+// BB-151: the fields the notification settings page writes (history snapshot).
+const NOTIFICATION_SELECT = {
+  clockInGracePeriod: true,
+  clockOutGracePeriod: true,
+  notifyEmployeeMissedIn: true,
+  notifyEmployeeMissedOut: true,
+  notifyAdminMissedClocks: true,
+  morningReportTime: true,
+  eveningReportTime: true,
+};
+
 /**
  * Update company notification settings
  */
@@ -114,8 +126,12 @@ const updateSettingsNotification = async (req, res) => {
       });
     }
 
+    // BB-151: snapshot for the settings history.
+    const before = await prisma.company.findUnique({ where: { id: companyId }, select: NOTIFICATION_SELECT });
+
     const updated = await prisma.company.update({
       where: { id: companyId },
+      select: NOTIFICATION_SELECT,
       data: {
         clockInGracePeriod: parseInt(clockInGracePeriod),
         clockOutGracePeriod: parseInt(clockOutGracePeriod),
@@ -126,6 +142,8 @@ const updateSettingsNotification = async (req, res) => {
         eveningReportTime,
       },
     });
+
+    await recordDiff({ req, companyId, area: "notifications", before, after: updated });
 
     console.log('✅ Notification settings updated successfully');
 

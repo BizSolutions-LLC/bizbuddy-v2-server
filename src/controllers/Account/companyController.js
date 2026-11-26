@@ -1,6 +1,7 @@
 // src/controllers/Account/companyController.js
 const { prisma } = require("@config/connection");
 const { HUMAN_ONLY } = require("@utils/systemAgent");
+const { recordDiff } = require("@services/Company/companySettingsEventService"); // BB-151
 
 const currentSubSelect = {
   take: 1,
@@ -169,26 +170,34 @@ const updateCompany = async (req, res) => {
       if (einExists) return res.status(409).json({ message: "Another company already uses this EIN." });
     }
 
+    const data = {
+      name: name?.trim(),
+      dba: dba?.trim(),
+      ein: ein?.trim(),
+      stateTaxIds,
+      addressLine1: addressLine1?.trim(),
+      addressLine2: addressLine2?.trim(),
+      city: city?.trim(),
+      state: state?.trim(),
+      postalCode: postalCode?.trim(),
+      country: country?.trim(),
+      phoneNumber: phoneNumber?.trim(),
+      businessEmail: businessEmail?.trim().toLowerCase(),
+      websiteUrl: websiteUrl?.trim(),
+      currency: currency?.trim(),
+      language: language?.trim(),
+    };
     const updated = await prisma.company.update({
       where: { id: companyId },
-      data: {
-        name: name?.trim(),
-        dba: dba?.trim(),
-        ein: ein?.trim(),
-        stateTaxIds,
-        addressLine1: addressLine1?.trim(),
-        addressLine2: addressLine2?.trim(),
-        city: city?.trim(),
-        state: state?.trim(),
-        postalCode: postalCode?.trim(),
-        country: country?.trim(),
-        phoneNumber: phoneNumber?.trim(),
-        businessEmail: businessEmail?.trim().toLowerCase(),
-        websiteUrl: websiteUrl?.trim(),
-        currency: currency?.trim(),
-        language: language?.trim(),
-      },
+      data,
       select: baseSelect,
+    });
+
+    // BB-151: settings history (before = the row read above; after = it + what was written).
+    const written = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
+    await recordDiff({
+      req, companyId, area: "profile",
+      before: company, after: { ...company, ...written }, fields: Object.keys(written),
     });
 
     return res.status(200).json({ message: "Company updated successfully.", data: updated });

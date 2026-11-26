@@ -116,20 +116,48 @@ function distanceMeters(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Nearest work site and whether the point is inside its radius. */
+/**
+ * Work-site status of a point, among sites WITH a radius (BB-128 Live, 2026-11-26):
+ * inside a site → that site (inside several: the closest center); else the site
+ * whose EDGE is nearest. Before 2026-11-26 the nearest CENTER was picked and then
+ * checked, which marked a point outside when it sat inside a big site next to a
+ * small one. Returns null when no site has a radius.
+ * @returns {{ site, inside: boolean, centerMeters: number, edgeMeters: number }|null}
+ */
+function siteState(sites, lat, lng) {
+  let inside = null;
+  let nearest = null;
+  for (const s of sites) {
+    if (s.radius == null) continue;
+    const center = distanceMeters(lat, lng, s.latitude, s.longitude);
+    const edge = center - s.radius;
+    if (edge <= 0) {
+      if (!inside || center < inside.centerMeters) inside = { site: s, inside: true, centerMeters: center, edgeMeters: 0 };
+    } else if (!nearest || edge < nearest.edgeMeters) {
+      nearest = { site: s, inside: false, centerMeters: center, edgeMeters: edge };
+    }
+  }
+  return inside || nearest;
+}
+
+/** Work site for a punch pin (/punches): siteState, or the nearest center when no site has a radius. */
 function matchSite(sites, lat, lng) {
+  const state = siteState(sites, lat, lng);
+  if (state) {
+    return {
+      siteId: state.site.id,
+      siteName: state.site.name,
+      distanceMeters: Math.round(state.centerMeters), // to the site's center (unchanged meaning)
+      insideSite: state.inside,
+    };
+  }
   let best = null;
   for (const s of sites) {
     const d = distanceMeters(lat, lng, s.latitude, s.longitude);
     if (!best || d < best.distance) best = { site: s, distance: d };
   }
   if (!best) return { siteId: null, siteName: null, distanceMeters: null, insideSite: null };
-  return {
-    siteId: best.site.id,
-    siteName: best.site.name,
-    distanceMeters: Math.round(best.distance),
-    insideSite: best.site.radius != null ? best.distance <= best.site.radius : null,
-  };
+  return { siteId: best.site.id, siteName: best.site.name, distanceMeters: Math.round(best.distance), insideSite: null };
 }
 
 /** Groups points on a ~11 m grid: [{ lat, lng, weight }], heaviest first. */
@@ -359,4 +387,6 @@ module.exports = {
   zoneOf,
   readCoords,
   loadSites,
+  distanceMeters,
+  siteState,
 };

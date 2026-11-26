@@ -58,8 +58,9 @@ function cleanBatteryLevel(value) {
   return Math.round(fraction * 1000) / 1000;
 }
 
+// "locate" = one fix taken because the admin asked for it on the Live map (BB-128 phase 3b).
 function cleanSource(value) {
-  if (value === "foreground" || value === "background") return value;
+  if (value === "foreground" || value === "background" || value === "locate") return value;
   return null;
 }
 

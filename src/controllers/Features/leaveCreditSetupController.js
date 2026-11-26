@@ -19,7 +19,12 @@ const {
   buildSetupPreview,
   initializeCredits,
   expireDueCredits,
+  COMPANY_CREDIT_SELECT,
 } = require("@services/Leave/leaveCreditService");
+const { recordDiff } = require("@services/Company/companySettingsEventService"); // BB-151
+
+// BB-151: leave credit fields compared for the settings history.
+const CREDIT_FIELDS = Object.keys(COMPANY_CREDIT_SELECT).filter((k) => k !== "id" && k !== "timeZone");
 
 function _toggles(body, company) {
   return {
@@ -81,6 +86,7 @@ const applySetup = async (req, res) => {
     }
 
     const fresh = await loadCreditCompany(prisma, company.id);
+    await recordDiff({ req, companyId: company.id, area: "leaveCredits", before: company, after: fresh, fields: CREDIT_FIELDS });
     res.json({ data: { applied, settings: fresh } });
   } catch (error) {
     console.error("leave credit applySetup error:", error);

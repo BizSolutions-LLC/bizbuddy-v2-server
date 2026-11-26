@@ -1,6 +1,7 @@
 // src/controllers/PayrollSystem/companySettingsController.js
 
 const { prisma } = require("@config/connection");
+const { recordDiff } = require("@services/Company/companySettingsEventService"); // BB-151
 
 const VALIDATION_RULES = {
   MAX_LABEL_LENGTH: 100,
@@ -359,6 +360,9 @@ exports.updatePayrollConfig = async (req, res) => {
       updateData.futaRate = rate;
     }
 
+    // BB-151: snapshot for the settings history (null = first save).
+    const before = await prisma.payrollConfiguration.findUnique({ where: { companyId } });
+
     // Update or create
     const payrollConfig = await prisma.payrollConfiguration.upsert({
       where: { companyId },
@@ -377,6 +381,11 @@ exports.updatePayrollConfig = async (req, res) => {
         ...DEDUCTION_RATE_DEFAULTS,
         ...validatedDeductionRates,
       }
+    });
+
+    await recordDiff({
+      req, companyId, area: "payroll", before, after: payrollConfig,
+      fields: ["payFrequency", "ptoEnabled", "ptoLabel", "futaEnabled", "sutaEnabled", "futaRate", "ficaRate", "medicareRate", "sdiRate"],
     });
 
     return res.status(200).json({
@@ -430,18 +439,24 @@ exports.updateCompanyInfo = async (req, res) => {
     if (state) updateData.state = state.trim();
     if (zip) updateData.postalCode = zip.trim();
 
+    const profileSelect = {
+      id: true,
+      name: true,
+      addressLine1: true,
+      city: true,
+      state: true,
+      postalCode: true,
+    };
+    // BB-151: snapshot for the settings history.
+    const before = await prisma.company.findUnique({ where: { id: companyId }, select: profileSelect });
+
     const company = await prisma.company.update({
       where: { id: companyId },
       data: updateData,
-      select: {
-        id: true,
-        name: true,
-        addressLine1: true,
-        city: true,
-        state: true,
-        postalCode: true,
-      }
+      select: profileSelect,
     });
+
+    await recordDiff({ req, companyId, area: "profile", before, after: company });
 
     return res.status(200).json({
       success: true,
