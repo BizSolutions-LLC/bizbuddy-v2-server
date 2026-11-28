@@ -1580,6 +1580,8 @@ model TimeLogApproval {
   actualHours       Decimal?     @db.Decimal(5, 2)
   segmentStart      DateTime?    @db.Timestamptz(6)  // start of this segment window (DRIVER_AIDE only)
   segmentEnd        DateTime?    @db.Timestamptz(6)  // end of this segment window (DRIVER_AIDE only)
+  approvalMode      String?      // BB-121: "schedule" | "raw" | "edit" — how the day was approved
+  approvedShiftId   String?      // BB-121: Shift.id the day was approved against (multi-shift picker)
 
   @@index([cutoffPeriodId, status])
   @@index([timeLogId])
