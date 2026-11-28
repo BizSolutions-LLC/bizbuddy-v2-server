@@ -40,10 +40,12 @@ async function historyFor(cutoffPeriodIds) {
   try {
     rows = await prisma.$queryRaw`
       SELECT e."cutoffPeriodId", e."fromStatus", e."toStatus", e."action", e."reason", e."createdAt", e."actorId", e."agentId",
-             p."firstName", p."lastName", u."email", u."isSystemAgent"
+             p."firstName", p."lastName", u."email", u."isSystemAgent",
+             sa."code" AS "agentCode"
       FROM "CutoffStatusEvent" e
       LEFT JOIN "User" u ON u."id" = e."actorId"
       LEFT JOIN "UserProfile" p ON p."userId" = u."id"
+      LEFT JOIN "SupportAgent" sa ON sa."id" = e."agentId"
       WHERE e."cutoffPeriodId" IN (${Prisma.join(cutoffPeriodIds)})
       ORDER BY e."createdAt" ASC, e."id" ASC`;
   } catch (err) {
@@ -52,7 +54,12 @@ async function historyFor(cutoffPeriodIds) {
     return out;
   }
   for (const r of rows) {
-    const name = `${r.firstName || ""} ${r.lastName || ""}`.trim() || r.email || null;
+    // BB-151 follow-up: support events read "B. Buddy (123)" — last 3
+    // characters of the staff code only (same as settings history).
+    const supportCode = r.isSystemAgent && r.agentCode ? String(r.agentCode).slice(-3) : null;
+    const name = r.isSystemAgent
+      ? (supportCode ? `B. Buddy (${supportCode})` : "B. Buddy")
+      : `${r.firstName || ""} ${r.lastName || ""}`.trim() || r.email || null;
     out.get(r.cutoffPeriodId)?.push({
       fromStatus: r.fromStatus,
       toStatus: r.toStatus,
@@ -61,6 +68,7 @@ async function historyFor(cutoffPeriodIds) {
       at: r.createdAt,
       by: r.actorId ? { id: r.actorId, name } : null,
       bySupport: !!r.isSystemAgent, // B. Buddy (support staff id stays in the audit log)
+      supportCode,
     });
   }
   return out;
@@ -72,7 +80,7 @@ function historySummary(events = []) {
   const last = reopens[reopens.length - 1] || null;
   return {
     reopenCount: reopens.length,
-    lastReopen: last ? { at: last.at, by: last.by, bySupport: last.bySupport, reason: last.reason } : null,
+    lastReopen: last ? { at: last.at, by: last.by, bySupport: last.bySupport, supportCode: last.supportCode, reason: last.reason } : null,
   };
 }
 
