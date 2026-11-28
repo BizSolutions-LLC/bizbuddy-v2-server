@@ -152,6 +152,8 @@ const clientIp = (req) => req?.ip || req?.socket?.remoteAddress || null;
 /** One history row. Logged, never throws. Nothing written when nothing changed. */
 async function recordSettingsChange({ companyId, area, changes, actor, ip = null }) {
   if (!companyId || !changes?.length) return;
+  // BB-151 follow-up: dev/local changes are testing noise — not recorded.
+  if (process.env.NODE_ENV === "development") return;
   try {
     await prisma.$executeRaw`
       INSERT INTO "CompanySettingsEvent" ("companyId", "area", "changes", "actorId", "agentId", "ip")
@@ -200,10 +202,12 @@ async function listHistory(companyId, opts = {}) {
   try {
     rows = await prisma.$queryRaw`
       SELECT e."id", e."area", e."changes", e."actorId", e."agentId", e."createdAt",
-             p."firstName", p."lastName", u."email", u."role", u."isSystemAgent"
+             p."firstName", p."lastName", u."email", u."role", u."isSystemAgent",
+             sa."code" AS "agentCode"
       FROM "CompanySettingsEvent" e
       LEFT JOIN "User" u ON u."id" = e."actorId"
       LEFT JOIN "UserProfile" p ON p."userId" = u."id"
+      LEFT JOIN "SupportAgent" sa ON sa."id" = e."agentId"
       WHERE ${Prisma.join(where, " AND ")}
       ORDER BY e."id" DESC
       LIMIT ${limit + 1}`;
@@ -215,14 +219,20 @@ async function listHistory(companyId, opts = {}) {
 
   const page = rows.slice(0, limit);
   const items = page.map((r) => {
-    const name = `${r.firstName || ""} ${r.lastName || ""}`.trim() || r.email || null;
     const changes = Array.isArray(r.changes) ? r.changes : [];
+    // BB-151 follow-up: support rows read "B. Buddy (123)" — last 3 characters
+    // of the staff code only (the code is half of the B. Buddy sign-in).
+    const supportCode = r.isSystemAgent && r.agentCode ? String(r.agentCode).slice(-3) : null;
+    const name = r.isSystemAgent
+      ? (supportCode ? `B. Buddy (${supportCode})` : "B. Buddy")
+      : `${r.firstName || ""} ${r.lastName || ""}`.trim() || r.email || null;
     return {
       id: String(r.id),
       at: r.createdAt,
       area: r.area,
       by: r.actorId ? { id: r.actorId, name, role: r.role || null } : null,
       bySupport: !!r.isSystemAgent, // B. Buddy (support staff id stays in the table)
+      supportCode,
       changes: changes.map((c) => ({ ...c, label: labelFor(c.field) })),
     };
   });
