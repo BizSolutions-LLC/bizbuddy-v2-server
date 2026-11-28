@@ -75,15 +75,14 @@ The GET endpoints are unchanged. Please hide or disable these save buttons for s
 ## Mobile
 None expected. Please confirm with the mobile dev that the app never calls the endpoints in section 3 as a supervisor or employee.
 
-## Follow-up (2026-11-27): B. Buddy code + no dev history
+## Follow-up (2026-11-27): B. Buddy code
 - **Who on support rows:**
   - `GET /api/company-settings/history` rows made by support now return `by.name: "B. Buddy (123)"`, using the last 3 characters of the staff code, plus a new field `supportCode: "123"`.
   - Older rows, or rows with no staff code, return plain `"B. Buddy"` with `supportCode: null`.
   - `bySupport` is unchanged.
 - **Web change:** if the page shows "BizBuddy Support" whenever `bySupport` is true, show `by.name` instead.
-- **Dev/local:** when the server runs with `NODE_ENV=development`, settings changes save as usual but no history row is written. Production records as before.
+- **Dev/local:** history is recorded everywhere, dev/local included (local uses the production database, so its changes are real).
 - **Cutoff status history (same naming):** support events now return `by.name: "B. Buddy (123)"` (or `"B. Buddy"`) and `supportCode`:
   - `GET /api/cutoff-periods`: `lastReopen`.
   - `GET /api/cutoff-periods/:id`: `statusHistory[]`. Its fields are `fromStatus` / `toStatus` / `action`, not `from` / `to`.
   - Web: `actorLabel` should show `by.name` for support events.
-  - Cutoff status events are still recorded in dev/local, because reopen depends on them.

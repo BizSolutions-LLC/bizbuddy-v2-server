@@ -152,8 +152,6 @@ const clientIp = (req) => req?.ip || req?.socket?.remoteAddress || null;
 /** One history row. Logged, never throws. Nothing written when nothing changed. */
 async function recordSettingsChange({ companyId, area, changes, actor, ip = null }) {
   if (!companyId || !changes?.length) return;
-  // BB-151 follow-up: dev/local changes are testing noise — not recorded.
-  if (process.env.NODE_ENV === "development") return;
   try {
     await prisma.$executeRaw`
       INSERT INTO "CompanySettingsEvent" ("companyId", "area", "changes", "actorId", "agentId", "ip")
